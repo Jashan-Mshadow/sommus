@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**29 tools on the laptop node**, plus live web search:
+**36 tools on the laptop node**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -32,6 +32,10 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | Clipboard | read, write |
 | Reminders | create (syncs to iPhone), list |
 | System | battery, Wi-Fi status and toggle, sleep, notifications |
+| Browser | list Chrome tabs, read a tab's text, switch tabs |
+| Seeing & typing | **screenshot** (returned as an image the model actually looks at), type any text, any keystroke |
+| Downloads | fetch a file straight to disk |
+| Messaging | send an iMessage (always confirms first) |
 | Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
 | Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
 
@@ -67,6 +71,7 @@ through MCP annotations, and every call is logged with its tier, so the gate can
 | read | runs | runs | `get_battery`, `list_apps`, `read_file` |
 | reversible | runs | runs | `set_volume`, `open_app`, `press_keys`, `create_reminder` |
 | destructive | runs | asks y/N first | `quit_app`, `sleep_computer`, `set_wifi` |
+| always_ask | **asks every time** | asks every time | `send_message` — it reaches another person |
 | blocked | never runs, hidden from the model | same | set per tool in `config.toml` |
 
 A tool with no annotations counts as destructive. There is deliberately no shell tool: every action
@@ -85,7 +90,9 @@ uv run sommus
 
 **macOS Accessibility permission** (for `media_control`, `press_keys` and `lock_screen`): System Settings →
 Privacy & Security → Accessibility → enable the terminal app you run Sommus from, then restart it.
-Reminders and Spotify/Music prompt separately the first time they're used (Privacy & Security → Automation).
+Reminders, Messages and Spotify/Music prompt separately the first time they're used (Privacy & Security →
+Automation). **Screen Recording** is needed for `screenshot`, and reading a Chrome tab's *text* needs
+Chrome's View → Developer → Allow JavaScript from Apple Events (titles and URLs work without it).
 
 In the chat: `/tools`, `/cost`, `/new`, `/quit`. Ctrl+C cancels a reply.
 
@@ -116,7 +123,7 @@ uv run sommus eval --only volume    # just the commands mentioning "volume"
 uv run sommus eval --live           # really run every tool (it will sleep the laptop)
 ```
 
-Currently **31/31** at $0.015 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+Currently **37/37** at $0.021 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
 so model and effort changes can be compared.
 
 ## Layout
