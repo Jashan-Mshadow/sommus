@@ -168,7 +168,7 @@ class Brain:
             output, is_error, decision = f"Unknown tool '{name}'.", True, "unknown"
         elif tier is Tier.BLOCKED:
             output, is_error, decision = "This action is blocked by the permission policy.", True, "blocked"
-        elif tier is Tier.DESTRUCTIVE and not await confirm(name, input):
+        elif tier is Tier.DESTRUCTIVE and self.cfg.ask_before_destructive and not await confirm(name, input):
             output, is_error, decision = f"{self.cfg.user} declined this action.", True, "declined"
         else:
             output, is_error = await self.hub.call(name, input)

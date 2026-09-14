@@ -28,6 +28,7 @@ class Config:
     nodes: tuple[NodeConfig, ...]
     overrides: dict[str, Tier]
     data_dir: Path
+    ask_before_destructive: bool = False
 
 
 def load(path: Path | None = None) -> Config:
@@ -43,4 +44,5 @@ def load(path: Path | None = None) -> Config:
         nodes=tuple(NodeConfig(n["name"], n["module"]) for n in raw.get("nodes", [])),
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},
         data_dir=ROOT / "data",
+        ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),
     )

@@ -10,7 +10,6 @@ What a session looks like (illustrative):
 ```
 you › study mode: close messages, open obsidian, volume 10
   → quit_app(name="Messages")
-    Allow quit_app? [y/N] y
     ✓ Asked Messages to quit.
   → open_app(name="Obsidian")
     ✓ Opened Obsidian.
@@ -40,14 +39,16 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ### Permission tiers
 
-Every tool declares a tier through MCP annotations. The brain enforces it in code, not in the prompt.
+Sommus runs with full permission by default: it acts without asking. Every tool still declares a tier
+through MCP annotations, and every call is logged with its tier, so the gate can be switched back on
+(`[safety] ask_before_destructive = true`) when riskier tools arrive — email, files, voice.
 
-| Tier | Behaviour | Examples |
-|---|---|---|
-| read | runs immediately | `get_battery`, `list_apps` |
-| reversible | runs, reports back | `set_volume`, `open_app`, `lock_screen` |
-| destructive | asks first | `quit_app`, `sleep_computer` |
-| blocked | never runs, hidden from the model | set in `config.toml` |
+| Tier | Full permission (default) | `ask_before_destructive = true` | Examples |
+|---|---|---|---|
+| read | runs | runs | `get_battery`, `list_apps` |
+| reversible | runs | runs | `set_volume`, `open_app`, `lock_screen` |
+| destructive | runs | asks y/N first | `quit_app`, `sleep_computer` |
+| blocked | never runs, hidden from the model | same | set per tool in `config.toml` |
 
 A tool with no annotations counts as destructive. There is deliberately no shell tool: every action
 takes typed arguments, and AppleScript gets user text through `argv`, never string formatting.

@@ -12,6 +12,11 @@ max_steps = 12
 name = "laptop"
 module = "sommus.nodes.laptop.server"
 
+[safety]
+# false: Sommus acts without asking (Jashan's choice, 2026-09-14).
+# true: destructive tools (quit_app, sleep_computer...) wait for a y/N first.
+ask_before_destructive = false
+
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]
 # open_url = "destructive"

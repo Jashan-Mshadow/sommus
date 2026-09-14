@@ -92,7 +92,7 @@ def build_node():
     return node, calls
 
 
-def config(tmp_path: Path, overrides=None) -> Config:
+def config(tmp_path: Path, overrides=None, ask=True) -> Config:
     return Config(
         name="Sommus",
         user="Jashan",
@@ -102,17 +102,18 @@ def config(tmp_path: Path, overrides=None) -> Config:
         nodes=(),
         overrides=overrides or {},
         data_dir=tmp_path,
+        ask_before_destructive=ask,
     )
 
 
 @asynccontextmanager
-async def make_brain(tmp_path, *responses, overrides=None):
+async def make_brain(tmp_path, *responses, overrides=None, ask=True):
     """Hub + brain in the test's own task (MCP clients must close in the task that opened them)."""
     node, calls = build_node()
     async with NodeHub((), Policy(overrides or {})) as hub:
         await hub.add("test", Client(node))
         claude = FakeClaude(*responses)
-        yield Brain(config(tmp_path, overrides), hub, Store(tmp_path / "test.db"), client=claude), claude, calls
+        yield Brain(config(tmp_path, overrides, ask), hub, Store(tmp_path / "test.db"), client=claude), claude, calls
 
 
 async def run(brain, text, confirm):
@@ -164,6 +165,17 @@ async def test_declined_destructive_tool_never_runs(tmp_path):
         assert finished.decision == "declined" and finished.is_error
         result = claude.requests[1]["messages"][-1]["content"][0]
         assert result["is_error"] is True and "declined" in result["content"]
+
+
+async def test_full_permission_mode_runs_destructive_tools_without_asking(tmp_path):
+    async with make_brain(tmp_path, tool_call("wipe", {"target": "cache"}), text_reply("Done."), ask=False) as (
+        brain,
+        _,
+        calls,
+    ):
+        await run(brain, "wipe the cache", never_confirm)
+        assert calls == ["wipe cache"]
+        assert "full permission" in brain.system
 
 
 async def test_approved_destructive_tool_runs(tmp_path):
