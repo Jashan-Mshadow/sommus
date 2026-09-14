@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**55 tools across three nodes**, plus live web search:
+**58 tools across three nodes**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -36,7 +36,9 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | System | battery, Wi-Fi status and toggle, sleep, notifications |
 | Browser | list Chrome tabs, read a tab's text, list its links, click a link or button, switch tabs |
 | Seeing & typing | **screenshot** (an image the model looks at), click at its coordinates, type any text, any keystroke, wait |
-| Downloads | fetch a file straight to disk |
+| Documents | read a PDF as text — scanned pages go through macOS Vision OCR |
+| Contacts | look up anyone's number or email from the Contacts app |
+| Downloads | fetch a file straight to disk, or save a logged-in page with Cmd+S |
 | Messaging | send an iMessage (always confirms first), write or send a Gmail |
 | Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
 | Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
@@ -48,7 +50,7 @@ It answers questions as readily as it acts, and when there's no exact tool it tr
 
 | Node | Tools | Setup |
 |---|---|---|
-| **laptop** | 43 — sound, display, apps, browser, screen, shell, files, clipboard, reminders, shortcuts | macOS permissions (below) |
+| **laptop** | 46 — sound, display, apps, browser, screen, shell, PDFs, contacts, files, clipboard, reminders, shortcuts | macOS permissions (below) |
 | **vault** | 6 — search, read, list, append, add a to-do, commit the notes repo | none |
 | **gmail** | 6 — search, read, send, reply, draft, mark read | app password in `.env` |
 
@@ -159,7 +161,7 @@ uv run sommus eval --only volume    # just the commands mentioning "volume"
 uv run sommus eval --live           # really run every tool (it will sleep the laptop)
 ```
 
-Currently **42/42** on Sonnet 5 at low effort, ~$0.009 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+Currently **46/46** on Sonnet 5 at low effort, ~$0.0095 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
 so model and effort changes can be compared.
 
 ## Layout
