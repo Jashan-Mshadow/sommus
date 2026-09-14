@@ -19,7 +19,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import macos
+from sommus.nodes.laptop import apps, files, macos
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -173,6 +173,169 @@ def sleep_computer() -> str:
     """Put the whole MacBook to sleep. Sommus stops responding until the lid is opened or a key is pressed."""
     macos.sleep_computer()
     return "Going to sleep."
+
+
+# ---------------------------------------------------------------- display, wi-fi, keys
+
+
+@tool(READ)
+def get_brightness() -> str:
+    """Get the built-in display's brightness as a percentage."""
+    return f"Brightness {macos.brightness()}%."
+
+
+@tool(REVERSIBLE)
+def set_brightness(level: int) -> str:
+    """Set the built-in display's brightness (external monitors aren't supported).
+
+    Args:
+        level: Brightness from 0 (darkest) to 100 (brightest).
+    """
+    return f"Brightness {macos.set_brightness(level)}%."
+
+
+@tool(READ)
+def get_wifi() -> str:
+    """Check whether Wi-Fi is on and which network the Mac is joined to."""
+    on, ssid = macos.wifi_status()
+    if not on:
+        return "Wi-Fi is off."
+    return f"Wi-Fi is on, connected to {ssid}." if ssid else "Wi-Fi is on but not joined to a network."
+
+
+@tool(DESTRUCTIVE)
+def set_wifi(on: bool) -> str:
+    """Turn Wi-Fi on or off. Turning it off cuts the internet, including Sommus's own connection.
+
+    Args:
+        on: True to turn Wi-Fi on, False to turn it off.
+    """
+    on_now, ssid = macos.set_wifi(on)
+    return f"Wi-Fi is now {'on' if on_now else 'off'}{f', on {ssid}' if ssid else ''}."
+
+
+@tool(REVERSIBLE)
+def press_keys(combo: str) -> str:
+    """Send a keyboard shortcut to whatever app is in front — for actions with no dedicated tool.
+
+    Args:
+        combo: Keys joined by "+", e.g. "cmd+s", "cmd+shift+t", "cmd+w", "escape", "left".
+    """
+    return f"Pressed {macos.press_keys(combo)}."
+
+
+# ---------------------------------------------------------------- music, shortcuts, reminders
+
+
+@tool(READ)
+def get_now_playing() -> str:
+    """Get the track and artist currently playing in Spotify or Music."""
+    return apps.now_playing()
+
+
+@tool(READ)
+def list_shortcuts() -> str:
+    """List the macOS Shortcuts available to run. Use this to find capabilities Sommus has no tool for."""
+    names = apps.list_shortcuts()
+    return f"{len(names)} shortcuts: {', '.join(names)}." if names else "No shortcuts found."
+
+
+@tool(REVERSIBLE)
+def run_shortcut(name: str) -> str:
+    """Run one of the user's macOS Shortcuts. This covers things with no dedicated tool, such as Focus modes.
+
+    Args:
+        name: The shortcut's name — call list_shortcuts first if unsure.
+    """
+    return f"Ran the '{apps.run_shortcut(name)}' shortcut."
+
+
+@tool(REVERSIBLE)
+def create_reminder(title: str, due: str | None = None, list_name: str | None = None) -> str:
+    """Add a reminder in the Reminders app. Unlike a notification, this persists and syncs to the iPhone.
+
+    Args:
+        title: What to be reminded about.
+        due: Optional date and time as "2026-09-14 20:00". Omit for a reminder with no time.
+        list_name: Optional Reminders list; omitted means the default list.
+    """
+    return f"Reminder added: {apps.create_reminder(title, due, list_name)}."
+
+
+@tool(READ)
+def list_reminders(limit: int = 10) -> str:
+    """List the user's unfinished reminders.
+
+    Args:
+        limit: How many to return (default 10).
+    """
+    names = apps.list_reminders(limit)
+    return "Reminders: " + "; ".join(names) if names else "Nothing on the reminders list."
+
+
+# ---------------------------------------------------------------- clipboard, files
+
+
+@tool(READ)
+def get_clipboard() -> str:
+    """Read what's currently on the clipboard."""
+    text = files.clipboard_get()
+    return f"Clipboard: {text}" if text.strip() else "The clipboard is empty."
+
+
+@tool(REVERSIBLE)
+def set_clipboard(text: str) -> str:
+    """Put text on the clipboard, ready to paste.
+
+    Args:
+        text: The text to copy.
+    """
+    files.clipboard_set(text)
+    return "Copied to the clipboard."
+
+
+@tool(READ)
+def find_files(query: str, limit: int = 10, folder: str | None = None) -> str:
+    """Search the Mac for files and folders by name (Spotlight).
+
+    Args:
+        query: Part of the file name, e.g. "ECE 150", "resume", "lab 2".
+        limit: How many results (default 10).
+        folder: Optional folder to search inside, e.g. "~/Documents".
+    """
+    found = files.find_files(query, limit, folder)
+    return "Found:\n" + "\n".join(str(p) for p in found) if found else f"Nothing named like '{query}'."
+
+
+@tool(READ)
+def read_file(path: str) -> str:
+    """Read a text file, or list a folder's contents. Long files are truncated.
+
+    Args:
+        path: Full path, e.g. "~/Documents/notes.md".
+    """
+    return files.read_text_file(path)
+
+
+@tool(REVERSIBLE)
+def append_to_file(path: str, text: str) -> str:
+    """Add a line to the end of a text file, creating the file if needed.
+
+    Args:
+        path: Full path to the file.
+        text: The line to append.
+    """
+    return f"Added to {files.append_text_file(path, text)}."
+
+
+@tool(REVERSIBLE)
+def open_file(path: str) -> str:
+    """Open a file or folder in its default app (Finder for folders, Preview for PDFs...).
+
+    Args:
+        path: Full path to the file or folder.
+    """
+    return f"Opened {files.open_path(path)}."
 
 
 def main() -> None:

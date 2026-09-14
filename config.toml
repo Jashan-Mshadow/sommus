@@ -6,6 +6,9 @@ model = "claude-opus-5"
 effort = "medium"
 # Most model↔tool round trips allowed per command.
 max_steps = 12
+# Let Sommus search the web for things it doesn't know (weather, news, facts).
+# Runs on Anthropic's servers; ~1¢ per search on top of tokens.
+web_search = true
 
 # Each node is an MCP server, launched as `python -m <module>`.
 [[nodes]]

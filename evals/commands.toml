@@ -80,11 +80,59 @@ confirm = true
 text = "is it loud right now"
 expect = ["get_volume"]
 
-# Things Sommus can't do yet — it should say so, not improvise.
+# --- added 2026-09-14 with the second batch of tools
+
 [[command]]
-text = "set my brightness to 50%"
+text = "set my brightness to 40"
+expect = ["set_brightness"]
+
+[[command]]
+text = "screen's too dim"
+expect = ["set_brightness"]
+
+[[command]]
+text = "what wifi am I on"
+expect = ["get_wifi"]
+
+[[command]]
+text = "what's playing right now"
+expect = ["get_now_playing"]
+
+[[command]]
+text = "what shortcuts do I have"
+expect = ["list_shortcuts"]
+
+[[command]]
+text = "remind me to email WARG tonight at 8"
+expect = ["create_reminder"]
+
+[[command]]
+text = "what's on my clipboard"
+expect = ["get_clipboard"]
+
+[[command]]
+text = "find my resume tex file"
+expect = ["find_files"]
+
+[[command]]
+text = "press escape for me"
+expect = ["press_keys"]
+
+# --- answering, not acting: it should look things up instead of refusing
+
+[[command]]
+text = "what's the weather in Waterloo right now"
+expect = ["web_search"]
+
+[[command]]
+text = "explain what a semaphore is in one sentence"
 expect = []
 
 [[command]]
-text = "connect my bluetooth speaker"
+text = "what's 17% of 340"
 expect = []
+
+# No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
+# or say what's missing — both are fine, so no expectation is set.
+[[command]]
+text = "connect my bluetooth speaker"

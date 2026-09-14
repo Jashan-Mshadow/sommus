@@ -28,11 +28,11 @@ def _run(args: list[str], timeout: float = 10) -> str:
     return proc.stdout.strip()
 
 
-def _osascript(*lines: str, argv: tuple[str, ...] = ()) -> str:
+def _osascript(*lines: str, argv: tuple[str, ...] = (), timeout: float = 10) -> str:
     args = ["osascript"]
     for line in lines:
         args += ["-e", line]
-    return _run([*args, *argv])
+    return _run([*args, *argv], timeout=timeout)
 
 
 # ---------------------------------------------------------------- battery
@@ -229,6 +229,158 @@ def lock_screen() -> None:
         event = Quartz.CGEventCreateKeyboardEvent(None, q_key, down)
         Quartz.CGEventSetFlags(event, flags)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+
+
+# ---------------------------------------------------------------- brightness
+# macOS ships no brightness command. This is Apple's private DisplayServices
+# framework — the same call the brightness keys use. Built-in display only.
+
+
+def _display_services():
+    import ctypes
+
+    try:
+        lib = ctypes.CDLL("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices")
+    except OSError as e:
+        raise ActionError("This Mac doesn't expose brightness control.") from e
+    lib.DisplayServicesGetBrightness.argtypes = [ctypes.c_uint32, ctypes.POINTER(ctypes.c_float)]
+    lib.DisplayServicesSetBrightness.argtypes = [ctypes.c_uint32, ctypes.c_float]
+    return lib, ctypes
+
+
+MAIN_DISPLAY = 1
+
+
+def brightness() -> int:
+    lib, ctypes = _display_services()
+    level = ctypes.c_float()
+    if lib.DisplayServicesGetBrightness(MAIN_DISPLAY, ctypes.byref(level)) != 0:
+        raise ActionError("Couldn't read the display brightness.")
+    return round(level.value * 100)
+
+
+def set_brightness(level: int) -> int:
+    if not 0 <= level <= 100:
+        raise ActionError("Brightness must be between 0 and 100.")
+    lib, _ = _display_services()
+    if lib.DisplayServicesSetBrightness(MAIN_DISPLAY, level / 100) != 0:
+        raise ActionError("Couldn't set the display brightness (external displays aren't supported).")
+    return level
+
+
+# ---------------------------------------------------------------- wi-fi
+
+
+def wifi_status() -> tuple[bool, str | None]:
+    on = "On" in _run(["networksetup", "-getairportpower", "en0"])
+    ssid = None
+    if on:
+        summary = _run(["ipconfig", "getsummary", "en0"])
+        match = re.search(r"^\s*SSID\s*:\s*(.+)$", summary, re.MULTILINE)
+        ssid = match.group(1).strip() if match else None
+    return on, ssid
+
+
+def set_wifi(on: bool) -> tuple[bool, str | None]:
+    _run(["networksetup", "-setairportpower", "en0", "on" if on else "off"])
+    return wifi_status()
+
+
+# ---------------------------------------------------------------- keyboard shortcuts
+
+KEY_CODES = {
+    "a": 0,
+    "b": 11,
+    "c": 8,
+    "d": 2,
+    "e": 14,
+    "f": 3,
+    "g": 5,
+    "h": 4,
+    "i": 34,
+    "j": 38,
+    "k": 40,
+    "l": 37,
+    "m": 46,
+    "n": 45,
+    "o": 31,
+    "p": 35,
+    "q": 12,
+    "r": 15,
+    "s": 1,
+    "t": 17,
+    "u": 32,
+    "v": 9,
+    "w": 13,
+    "x": 7,
+    "y": 16,
+    "z": 6,
+    "0": 29,
+    "1": 18,
+    "2": 19,
+    "3": 20,
+    "4": 21,
+    "5": 23,
+    "6": 22,
+    "7": 26,
+    "8": 28,
+    "9": 25,
+    "space": 49,
+    "return": 36,
+    "enter": 36,
+    "tab": 48,
+    "delete": 51,
+    "escape": 53,
+    "esc": 53,
+    "left": 123,
+    "right": 124,
+    "down": 125,
+    "up": 126,
+    "comma": 43,
+    "period": 47,
+    "slash": 44,
+    "grave": 50,
+    "minus": 27,
+    "equal": 24,
+    "brightnessup": 144,
+    "brightnessdown": 145,
+    "f11": 103,
+    "f12": 111,
+}
+
+
+def press_keys(combo: str) -> str:
+    """'cmd+s', 'cmd+shift+t', 'escape' — a real keystroke to the focused app."""
+    import Quartz
+
+    _require_event_access()
+    parts = [p.strip().lower() for p in combo.replace(" ", "").split("+") if p.strip()]
+    modifiers = {
+        "cmd": Quartz.kCGEventFlagMaskCommand,
+        "command": Quartz.kCGEventFlagMaskCommand,
+        "shift": Quartz.kCGEventFlagMaskShift,
+        "alt": Quartz.kCGEventFlagMaskAlternate,
+        "option": Quartz.kCGEventFlagMaskAlternate,
+        "ctrl": Quartz.kCGEventFlagMaskControl,
+        "control": Quartz.kCGEventFlagMaskControl,
+        "fn": Quartz.kCGEventFlagMaskSecondaryFn,
+    }
+    flags = 0
+    key = None
+    for part in parts:
+        if part in modifiers:
+            flags |= modifiers[part]
+        elif part in KEY_CODES:
+            key = KEY_CODES[part]
+        else:
+            raise ActionError(f"Unknown key '{part}' in '{combo}'.")
+    if key is None:
+        raise ActionError(f"No main key in '{combo}' — try something like 'cmd+s'.")
+    for down in (True, False):
+        event = Quartz.CGEventCreateKeyboardEvent(None, key, down)
+        Quartz.CGEventSetFlags(event, flags)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+    return combo
 
 
 # ---------------------------------------------------------------- power

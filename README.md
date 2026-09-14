@@ -19,6 +19,25 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
   4 steps · 9,812 in (7,904 cached) · 212 out · $0.0141
 ```
 
+## What it can do
+
+**29 tools on the laptop node**, plus live web search:
+
+| Area | Tools |
+|---|---|
+| Sound | volume, mute, play/pause/skip, what's playing |
+| Display | brightness, screen off, lock |
+| Apps | list open apps, open, quit, focus, any keyboard shortcut |
+| Web & files | open a URL, Spotlight search, read a file or folder, append a line, open a file |
+| Clipboard | read, write |
+| Reminders | create (syncs to iPhone), list |
+| System | battery, Wi-Fi status and toggle, sleep, notifications |
+| Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
+| Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
+
+It answers questions as readily as it acts, and when there's no exact tool it tries the nearest route
+(a Shortcut, a keystroke, opening the right settings pane) before saying it can't.
+
 ## Architecture
 
 ```
@@ -45,9 +64,9 @@ through MCP annotations, and every call is logged with its tier, so the gate can
 
 | Tier | Full permission (default) | `ask_before_destructive = true` | Examples |
 |---|---|---|---|
-| read | runs | runs | `get_battery`, `list_apps` |
-| reversible | runs | runs | `set_volume`, `open_app`, `lock_screen` |
-| destructive | runs | asks y/N first | `quit_app`, `sleep_computer` |
+| read | runs | runs | `get_battery`, `list_apps`, `read_file` |
+| reversible | runs | runs | `set_volume`, `open_app`, `press_keys`, `create_reminder` |
+| destructive | runs | asks y/N first | `quit_app`, `sleep_computer`, `set_wifi` |
 | blocked | never runs, hidden from the model | same | set per tool in `config.toml` |
 
 A tool with no annotations counts as destructive. There is deliberately no shell tool: every action
@@ -64,8 +83,9 @@ uv run sommus check         # verifies the key, nodes, and macOS permissions
 uv run sommus
 ```
 
-**macOS Accessibility permission** (for `media_control` and `lock_screen`): System Settings →
+**macOS Accessibility permission** (for `media_control`, `press_keys` and `lock_screen`): System Settings →
 Privacy & Security → Accessibility → enable the terminal app you run Sommus from, then restart it.
+Reminders and Spotify/Music prompt separately the first time they're used (Privacy & Security → Automation).
 
 In the chat: `/tools`, `/cost`, `/new`, `/quit`. Ctrl+C cancels a reply.
 
@@ -96,7 +116,7 @@ uv run sommus eval --only volume    # just the commands mentioning "volume"
 uv run sommus eval --live           # really run every tool (it will sleep the laptop)
 ```
 
-Target: 18/20. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+Currently **31/31** at $0.015 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
 so model and effort changes can be compared.
 
 ## Layout
@@ -106,7 +126,7 @@ src/sommus/
 ├── brain/        loop.py · nodes.py · permissions.py · prompt.py · store.py
 ├── interfaces/   cli.py
 ├── evals/        runner.py
-└── nodes/laptop/ server.py (MCP tools) · macos.py (actions)
+└── nodes/laptop/ server.py (MCP tools) · macos.py (system) · apps.py (music, Shortcuts, Reminders) · files.py
 evals/commands.toml   the 20 commands Phase 1 must handle
 tests/                agent loop + permission gate against a fake Claude and a real in-process node
 ```

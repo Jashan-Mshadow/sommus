@@ -22,6 +22,12 @@ from sommus.config import Config
 # Models that accept the server-side refusal fallback.
 FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 
+# Runs on Anthropic's servers — there is no local function to implement, and results
+# arrive inside the same response. The basic variant on purpose: the 2026 one adds
+# server-side result filtering (and a code-execution harness) worth ~3,150 extra input
+# tokens on *every* command, measured, which isn't worth it for a personal assistant.
+WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+
 
 @dataclass(frozen=True)
 class TextDelta:
@@ -80,7 +86,7 @@ class Brain:
             # the last block — the user's message — writing a fresh entry every turn, which
             # measured at ~85% of the cost per command.
             system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            tools=self.hub.api_tools(),
+            tools=[*self.hub.api_tools(), *([WEB_SEARCH_TOOL] if self.cfg.web_search else [])],
             messages=self.messages,
             thinking={"type": "adaptive"},
             output_config={"effort": self.cfg.effort},
@@ -112,6 +118,10 @@ class Brain:
 
                 usage.add(response.usage)
                 self.messages.append({"role": "assistant", "content": response.content})
+
+                for block in response.content:
+                    if block.type == "server_tool_use":  # ran on Anthropic's side; nothing to execute
+                        yield ToolStarted(block.name, dict(block.input), None)
 
                 if response.stop_reason == "tool_use":
                     results = []

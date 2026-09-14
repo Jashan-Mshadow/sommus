@@ -25,11 +25,14 @@ from sommus.brain.permissions import Tier
 from sommus.brain.store import Store
 from sommus.config import ROOT, Config
 
+# Server-side helpers the search tool drives itself — not Sommus's choices.
+IGNORED_TOOLS = {"code_execution"}
+
 
 @dataclass(frozen=True)
 class Case:
     text: str
-    expect: tuple[str, ...]
+    expect: tuple[str, ...] | None  # None = no expectation: any sensible answer passes
 
 
 @dataclass
@@ -43,23 +46,26 @@ class Result:
 
     @property
     def missing(self) -> list[str]:
-        return [tool for tool in self.case.expect if tool not in self.called]
+        return [tool for tool in (self.case.expect or ()) if tool not in self.called]
 
     @property
     def extra(self) -> list[str]:
-        return [tool for tool in self.called if tool not in self.case.expect]
+        expected = self.case.expect or ()
+        return [t for t in self.called if t not in expected and t not in IGNORED_TOOLS]
 
     @property
     def passed(self) -> bool:
+        if self.case.expect is None:
+            return not self.notices  # open-ended: anything that didn't error
         if not self.case.expect:
-            return not self.called  # should have said "I can't do that"
+            return not [t for t in self.called if t not in IGNORED_TOOLS]  # must answer, not act
         return not self.missing
 
 
 def load_cases(path: Path | None = None) -> list[Case]:
     path = path or ROOT / "evals" / "commands.toml"
     raw = tomllib.loads(path.read_text())
-    return [Case(text=c["text"], expect=tuple(c.get("expect", []))) for c in raw["command"]]
+    return [Case(text=c["text"], expect=tuple(c["expect"]) if "expect" in c else None) for c in raw["command"]]
 
 
 class SimulatingHub:
@@ -127,7 +133,7 @@ def save(results: list[Result], live: bool, cfg: Config) -> Path:
                 "cases": [
                     {
                         "text": r.case.text,
-                        "expect": list(r.case.expect),
+                        "expect": list(r.case.expect) if r.case.expect is not None else None,
                         "called": r.called,
                         "missing": r.missing,
                         "extra": r.extra,

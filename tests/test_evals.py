@@ -79,3 +79,16 @@ async def test_results_are_saved_as_json(tmp_path):
 
     saved = json.loads(path.read_text())
     assert saved["passed"] == 1 and saved["total"] == 1 and saved["cases"][0]["called"] == ["peek"]
+
+
+def test_an_open_ended_case_passes_on_any_answer():
+    case = evals.Case(text="connect my speaker", expect=None)
+    assert evals.Result(case=case, called=["open_file"]).passed
+    assert evals.Result(case=case, called=[]).passed
+    assert not evals.Result(case=case, notices=["API error 500"]).passed
+
+
+def test_server_side_helpers_are_not_counted_as_extra_tools():
+    case = evals.Case(text="weather?", expect=("web_search",))
+    r = evals.Result(case=case, called=["code_execution", "web_search", "code_execution"])
+    assert r.passed and r.extra == []
