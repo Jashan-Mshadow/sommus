@@ -386,7 +386,7 @@ def press_keys(combo: str) -> str:
     return combo
 
 
-def type_text(text: str) -> int:
+def type_text(text: str, press_return: bool = False) -> int:
     """Type a literal string into the focused app, unicode included."""
     import Quartz
 
@@ -400,6 +400,8 @@ def type_text(text: str) -> int:
             Quartz.CGEventKeyboardSetUnicodeString(event, len(chunk), chunk)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
         time.sleep(0.012)  # let the target app keep up
+    if press_return:
+        press_keys("return")
     return len(text)
 
 
@@ -464,6 +466,25 @@ def click(x: int, y: int, double: bool = False) -> tuple[int, int]:
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
             time.sleep(0.02)
     return x, y
+
+
+# ---------------------------------------------------------------- shell
+
+BLOCKED_COMMANDS = ("sudo", "su ")  # would sit waiting for a password nobody can type
+
+
+def run_shell(command: str, timeout: float = 60) -> tuple[str, int]:
+    """Run a shell command and return its combined output and exit code."""
+    if any(command.strip().startswith(blocked) for blocked in BLOCKED_COMMANDS):
+        raise ActionError("Commands needing sudo can't run here — they'd wait forever for a password.")
+    try:
+        proc = subprocess.run(
+            ["/bin/zsh", "-lc", command], capture_output=True, text=True, timeout=timeout, cwd=Path.home()
+        )
+    except subprocess.TimeoutExpired as e:
+        raise ActionError(f"'{command}' was still running after {timeout:g}s and was stopped.") from e
+    output = (proc.stdout + proc.stderr).strip()
+    return output, proc.returncode
 
 
 # ---------------------------------------------------------------- power

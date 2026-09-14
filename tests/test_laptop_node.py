@@ -5,6 +5,7 @@ from sommus.nodes.laptop.server import server
 
 EXPECTED_TIERS = {
     "get_battery": "read",
+    "run_shell": "destructive",
     "list_page_links": "read",
     "click_page_link": "reversible",
     "compose_email": "reversible",
@@ -94,3 +95,23 @@ async def test_list_apps_marks_protected_apps(monkeypatch):
         result = await client.call_tool("list_apps", {})
     assert "Terminal (protected, can't be quit)" in result.content[0].text
     assert "Notes," in result.content[0].text or "Notes." in result.content[0].text
+
+
+async def test_run_shell_returns_output_and_exit_code():
+    async with Client(server) as client:
+        ok = await client.call_tool("run_shell", {"command": "echo hello"})
+        failed = await client.call_tool("run_shell", {"command": "exit 3"})
+    assert ok.content[0].text.strip() == "hello"
+    assert "Exit code 3" in failed.content[0].text
+
+
+async def test_run_shell_refuses_sudo():
+    async with Client(server) as client:
+        result = await client.call_tool("run_shell", {"command": "sudo whoami"})
+    assert result.is_error and "sudo" in result.content[0].text
+
+
+async def test_run_shell_stops_a_hanging_command():
+    async with Client(server) as client:
+        result = await client.call_tool("run_shell", {"command": "sleep 5", "timeout": 0.5})
+    assert result.is_error and "was stopped" in result.content[0].text

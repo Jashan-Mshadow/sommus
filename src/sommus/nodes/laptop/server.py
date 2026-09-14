@@ -413,13 +413,33 @@ def focus_browser_tab(tab: str) -> str:
 
 
 @tool(REVERSIBLE)
-def type_text(text: str) -> str:
-    """Type text into whatever app has focus, character by character — for writing into any app.
+def type_text(text: str, press_return: bool = False) -> str:
+    """Type text into whatever app has focus — for writing into any app.
+
+    Don't use this to run shell commands; use run_shell, which returns the actual output.
 
     Args:
         text: The literal text to type.
+        press_return: True to press Return afterwards (submits the line).
     """
-    return f"Typed {macos.type_text(text)} characters."
+    typed = macos.type_text(text, press_return)
+    return f"Typed {typed} characters{' and pressed Return' if press_return else ''}."
+
+
+@tool(DESTRUCTIVE)
+def run_shell(command: str, timeout: float = 60) -> str:
+    """Run a shell command and read its output. The way to do anything with no dedicated tool.
+
+    Commands run as Jashan from his home folder. sudo won't work — there's nobody to type a password.
+
+    Args:
+        command: The command line, e.g. "ls ~/Downloads", "git -C ~/x status", "brew list | head".
+        timeout: Seconds to allow before giving up (default 60).
+    """
+    output, code = macos.run_shell(command, timeout)
+    if code != 0:
+        return f"Exit code {code}:\n{output or '(no output)'}"
+    return output or "(done, no output)"
 
 
 @tool(READ)

@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**53 tools across three nodes**, plus live web search:
+**55 tools across three nodes**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -48,7 +48,7 @@ It answers questions as readily as it acts, and when there's no exact tool it tr
 
 | Node | Tools | Setup |
 |---|---|---|
-| **laptop** | 41 — sound, display, apps, browser, screen, files, clipboard, reminders, shortcuts | macOS permissions (below) |
+| **laptop** | 43 — sound, display, apps, browser, screen, shell, files, clipboard, reminders, shortcuts | macOS permissions (below) |
 | **vault** | 6 — search, read, list, append, add a to-do, commit the notes repo | none |
 | **gmail** | 6 — search, read, send, reply, draft, mark read | app password in `.env` |
 
@@ -106,8 +106,12 @@ through MCP annotations, and every call is logged with its tier, so the gate can
 | always_ask | **asks every time** | asks every time | `send_message` — it reaches another person |
 | blocked | never runs, hidden from the model | same | set per tool in `config.toml` |
 
-A tool with no annotations counts as destructive. There is deliberately no shell tool: every action
-takes typed arguments, and AppleScript gets user text through `argv`, never string formatting.
+A tool with no annotations counts as destructive.
+
+`run_shell` exists after an experiment in going without it: with no shell tool, Sommus typed a command
+into Terminal with `type_text` instead — same power, no output, no exit code, no log, and it reported
+success for something that never ran. A real tool is the safer of the two. AppleScript still receives
+user text through `argv`, never string formatting, and every call is logged.
 
 ## Setup
 

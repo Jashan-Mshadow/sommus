@@ -181,6 +181,10 @@ expect = ["read_note"]
 text = "any unread emails from today"
 expect = ["search_email"]
 
+[[command]]
+text = "how much disk space do I have left"
+expect = ["run_shell"]
+
 # No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
 # or say what's missing — both are fine, so no expectation is set.
 [[command]]
