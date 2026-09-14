@@ -138,16 +138,17 @@ expect = []
 text = "what tabs do I have open in chrome"
 expect = ["list_browser_tabs"]
 
+# Depends on which tabs happen to be open, so no expectation: reading the tab and
+# saying it isn't open are both right.
 [[command]]
 text = "read me the MATH 115 tab"
-expect = ["read_browser_tab"]
 
 [[command]]
 text = "look at my screen and tell me which app is in front"
 expect = ["screenshot"]
 
 [[command]]
-text = "type my email address into this box"
+text = "type my email address wherever my cursor is"
 expect = ["type_text"]
 
 [[command]]
@@ -157,6 +158,10 @@ expect = ["download_url"]
 [[command]]
 text = "text 555-0100 that I'm running late"
 expect = ["send_message"]
+
+[[command]]
+text = "email j9multan@uwaterloo.ca, subject Meeting, remind him about our 4:30 meeting today"
+expect = ["compose_email"]
 
 # No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
 # or say what's missing — both are fine, so no expectation is set.

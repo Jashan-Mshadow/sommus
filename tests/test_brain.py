@@ -168,3 +168,17 @@ async def test_the_cache_breakpoint_sits_on_the_stable_prefix(tmp_path):
         assert "cache_control" not in request
         assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
         assert request["system"][0]["text"] == brain.system
+
+
+async def test_only_the_newest_screenshot_stays_in_context(tmp_path):
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "x"}}
+    async with make_brain(tmp_path) as (brain, _, _):
+        brain.messages = [
+            {"role": "user", "content": [{"type": "tool_result", "content": [dict(image)]}]},
+            {"role": "user", "content": [{"type": "tool_result", "content": [dict(image)]}]},
+            {"role": "user", "content": [{"type": "tool_result", "content": [dict(image)]}]},
+        ]
+        brain._prune_images()
+
+        kinds = [m["content"][0]["content"][0]["type"] for m in brain.messages]
+        assert kinds == ["text", "text", "image"]  # only the last one survives

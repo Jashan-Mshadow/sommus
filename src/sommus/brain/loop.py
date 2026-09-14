@@ -75,6 +75,9 @@ Event = TextDelta | ToolStarted | ToolFinished | Notice | TurnDone
 ConfirmFn = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
 
+IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a browser task
+
+
 class Brain:
     def __init__(self, cfg: Config, hub: NodeHub, store: Store, client: anthropic.AsyncAnthropic | None = None):
         self.cfg = cfg
@@ -151,6 +154,7 @@ class Brain:
                         )
                     # All results go back in one message, so parallel calls keep working.
                     self.messages.append({"role": "user", "content": results})
+                    self._prune_images()
                     continue
 
                 if response.stop_reason == "pause_turn":
@@ -187,6 +191,27 @@ class Brain:
             self.store.finish_turn(turn_id, "".join(reply), status, self.cfg.model, usage)
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
+
+    def _prune_images(self) -> None:
+        """Replace all but the newest screenshot with a placeholder.
+
+        One browser task measured 180k input tokens in a single turn, almost all of it
+        old screenshots being resent. Only the latest one is ever useful.
+        """
+        kept = 0
+        for message in reversed(self.messages):
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                inner = block.get("content") if isinstance(block, dict) else None
+                if not isinstance(inner, list):
+                    continue
+                for index, part in enumerate(inner):
+                    if isinstance(part, dict) and part.get("type") == "image":
+                        kept += 1
+                        if kept > IMAGES_KEPT:
+                            inner[index] = {"type": "text", "text": "[earlier screenshot dropped to save context]"}
 
     async def _run_tool(self, turn_id: int, name: str, input: dict[str, Any], confirm: ConfirmFn) -> ToolResult:
         tier = self.hub.tier(name)

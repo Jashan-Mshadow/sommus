@@ -5,6 +5,11 @@ from sommus.nodes.laptop.server import server
 
 EXPECTED_TIERS = {
     "get_battery": "read",
+    "list_page_links": "read",
+    "click_page_link": "reversible",
+    "compose_email": "reversible",
+    "click": "reversible",
+    "wait": "read",
     "list_browser_tabs": "read",
     "read_browser_tab": "read",
     "focus_browser_tab": "reversible",

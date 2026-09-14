@@ -5,8 +5,9 @@ model = "claude-sonnet-5"
 # low | medium | high | xhigh | max — lower is faster and cheaper.
 # Sonnet 5 + low chosen 2026-09-14 for cost; see the eval numbers in the vault plan.
 effort = "low"
-# Most model↔tool round trips allowed per command.
-max_steps = 12
+# Most model↔tool round trips allowed per command. Browser work needs room:
+# 12 wasn't enough to open LEARN, find a PDF and write notes from it.
+max_steps = 20
 # Let Sommus search the web for things it doesn't know (weather, news, facts).
 # Runs on Anthropic's servers; ~1¢ per search on top of tokens.
 web_search = true

@@ -98,6 +98,104 @@ def read_tab(query: str) -> tuple[Tab, str]:
     return tab, text[:MAX_PAGE_CHARS] + ("\n[truncated]" if len(text) > MAX_PAGE_CHARS else "")
 
 
+def _js(tab: Tab, expression: str, timeout: float = 30) -> str:
+    """Run JavaScript in a tab.
+
+    AppleScript string literals can't contain real newlines, so the source is
+    collapsed to one line first — a multi-line script silently returns nothing.
+    """
+    one_line = " ".join(expression.split())
+    escaped = one_line.replace("\\", "\\\\").replace('"', '\\"')
+    return _script(f'execute tab {tab.index} of window {tab.window} javascript "{escaped}"', timeout=timeout)
+
+
+# D2L, Gmail and Google Docs build their UI from web components, so links live inside
+# shadow roots that a plain querySelectorAll never sees. Both scripts below walk into them.
+DEEP_WALK = r"""
+function walk(root, out) {
+  var sel = 'a[href], button, [role=link], [role=button], input[type=submit]';
+  out.push.apply(out, Array.from(root.querySelectorAll(sel)));
+  Array.from(root.querySelectorAll('*')).forEach(function (e) { if (e.shadowRoot) { walk(e.shadowRoot, out); } });
+  return out;
+}
+function label(n) {
+  return ((n.innerText || n.value || n.getAttribute('aria-label') || n.title || '').trim()).replace(/\s+/g, ' ');
+}
+"""
+
+LINKS_JS = (
+    DEEP_WALK
+    + """
+walk(document, []).map(function (n) {
+  var t = label(n).slice(0, 120);
+  return t ? t + ' -> ' + (n.href || '(button)') : '';
+}).filter(Boolean).slice(0, %d).join('\\n')
+"""
+)
+
+CLICK_JS = (
+    DEEP_WALK
+    + """
+(function () {
+  var needle = %s.toLowerCase();
+  var hit = walk(document, []).find(function (n) { return label(n).toLowerCase().indexOf(needle) !== -1; });
+  if (!hit) { return 'NOTFOUND'; }
+  if (hit.href) { window.location.href = hit.href; return 'NAVIGATED ' + hit.href; }
+  hit.click();
+  return 'CLICKED ' + label(hit).slice(0, 80);
+})()
+"""
+)
+
+
+def list_links(query: str, contains: str | None = None, limit: int = 60) -> tuple[Tab, list[str]]:
+    """Every link and button on the page as 'text -> url', so pages can be navigated by URL."""
+    tab = find_tab(query)
+    raw = _js(tab, LINKS_JS % max(limit * 4, 120))
+    links = [line.strip() for line in raw.splitlines() if line.strip()]
+    if contains:
+        needle = contains.casefold()
+        links = [line for line in links if needle in line.casefold()]
+    return tab, links[:limit]
+
+
+def click_link(query: str, text: str) -> tuple[Tab, str]:
+    """Click a link or button by its visible text — what a mouse would do, without a mouse."""
+    tab = find_tab(query)
+    result = _js(tab, CLICK_JS % _json_string(text))
+    if result.strip() == "NOTFOUND":
+        _, links = list_links(query, limit=40)
+        raise ActionError(
+            f"Nothing on '{tab.title}' matching '{text}'. Links and buttons on the page:\n" + "\n".join(links[:25])
+        )
+    return tab, result.strip()
+
+
+def _json_string(value: str) -> str:
+    import json
+
+    return json.dumps(value)
+
+
+GMAIL_COMPOSE = "https://mail.google.com/mail/u/0/?view=cm&fs=1"
+
+
+def compose_gmail(to: str, subject: str, body: str, send: bool = False) -> str:
+    """Open a pre-filled Gmail compose window; optionally press Cmd+Enter to send it."""
+    import time
+    from urllib.parse import quote
+
+    from sommus.nodes.laptop.macos import _run, press_keys
+
+    url = f"{GMAIL_COMPOSE}&to={quote(to)}&su={quote(subject)}&body={quote(body)}"
+    _run(["open", url])
+    if not send:
+        return f"Draft open to {to}. Say send when you want it gone."
+    time.sleep(4)  # the compose window has to exist before the keystroke lands
+    press_keys("cmd+return")
+    return f"Sent to {to}."
+
+
 def focus_tab(query: str) -> Tab:
     tab = find_tab(query)
     _script(f"set active tab index of window {tab.window} to {tab.index}\nset index of window {tab.window} to 1")

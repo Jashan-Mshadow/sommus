@@ -360,6 +360,45 @@ def read_browser_tab(tab: str) -> str:
     return f"{found.title} ({found.url}):\n\n{text}"
 
 
+@tool(READ)
+def list_page_links(tab: str, contains: str | None = None) -> str:
+    """List a page's links and buttons as "text -> url". Use this instead of guessing where to click.
+
+    Args:
+        tab: Tab number, window.tab, or text from its title or URL.
+        contains: Optional filter, e.g. "L3" or "download".
+    """
+    found, links = browser.list_links(tab, contains)
+    if not links:
+        return f"No links{f' matching {contains!r}' if contains else ''} on '{found.title}'."
+    return f"Links on {found.title}:\n" + "\n".join(links)
+
+
+@tool(REVERSIBLE)
+def click_page_link(tab: str, text: str) -> str:
+    """Click a link or button on a page by its visible text — works inside web apps like LEARN and Gmail.
+
+    Args:
+        tab: Tab number, window.tab, or text from its title or URL.
+        text: Visible text of the link or button, e.g. "MATH117-L3-F26-Fong".
+    """
+    found, result = browser.click_link(tab, text)
+    return f"{result} (on {found.title})"
+
+
+@tool(REVERSIBLE)
+def compose_email(to: str, subject: str, body: str, send: bool = False) -> str:
+    """Write an email in Gmail. There is no Mail app tool — Gmail in the browser is how email works here.
+
+    Args:
+        to: Recipient address.
+        subject: Subject line.
+        body: Message text.
+        send: False opens a draft for review; True sends it immediately.
+    """
+    return browser.compose_gmail(to, subject, body, send)
+
+
 @tool(REVERSIBLE)
 def focus_browser_tab(tab: str) -> str:
     """Bring a Chrome tab to the front.
@@ -384,9 +423,41 @@ def type_text(text: str) -> str:
 
 
 @tool(READ)
-def screenshot() -> Image:
-    """Take a screenshot and look at it. Use this to see the state of an app that has no tool."""
-    return Image(path=macos.screenshot())
+def screenshot() -> list:
+    """Take a screenshot and look at it. Use this to see an app's state, then click what you see.
+
+    Click coordinates refer to this image.
+    """
+    path, width, height = macos.screenshot()
+    return [Image(path=path), f"Screenshot is {width}x{height}; click coordinates refer to this image."]
+
+
+@tool(REVERSIBLE)
+def click(x: int, y: int, double: bool = False) -> str:
+    """Click somewhere on screen, using coordinates from the most recent screenshot.
+
+    Args:
+        x: Horizontal position in the screenshot.
+        y: Vertical position in the screenshot.
+        double: True for a double-click.
+    """
+    at = macos.click(x, y, double)
+    return f"{'Double-clicked' if double else 'Clicked'} at {at[0]}, {at[1]}."
+
+
+@tool(READ)
+def wait(seconds: float) -> str:
+    """Pause before the next step — for pages, apps or downloads that need a moment.
+
+    Args:
+        seconds: How long to wait, up to 10.
+    """
+    import time
+
+    if not 0 < seconds <= 10:
+        raise ToolError("Wait between 0 and 10 seconds.")
+    time.sleep(seconds)
+    return f"Waited {seconds:g}s."
 
 
 @tool(REVERSIBLE)

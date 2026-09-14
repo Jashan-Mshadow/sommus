@@ -406,7 +406,17 @@ def type_text(text: str) -> int:
 # ---------------------------------------------------------------- screen
 
 
-def screenshot(max_width: int = 1200) -> Path:
+_last_shot: tuple[int, int] | None = None  # size of the most recent screenshot, for click mapping
+
+
+def screen_size() -> tuple[int, int]:
+    import Quartz
+
+    display = Quartz.CGMainDisplayID()
+    return Quartz.CGDisplayPixelsWide(display), Quartz.CGDisplayPixelsHigh(display)
+
+
+def screenshot(max_width: int = 1200) -> tuple[Path, int, int]:
     """Capture the screen to a temp JPEG, downscaled so it costs few tokens."""
     path = Path(tempfile.gettempdir()) / "sommus-screen.jpg"
     try:
@@ -422,7 +432,38 @@ def screenshot(max_width: int = 1200) -> Path:
             "(System Settings → Privacy & Security → Screen Recording)."
         )
     _run(["sips", "-Z", str(max_width), "-s", "formatOptions", "70", str(path)], timeout=20)
-    return path
+    dimensions = _run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", str(path)], timeout=20)
+    width = int(re.search(r"pixelWidth: (\d+)", dimensions).group(1))
+    height = int(re.search(r"pixelHeight: (\d+)", dimensions).group(1))
+    global _last_shot
+    _last_shot = (width, height)
+    return path, width, height
+
+
+def click(x: int, y: int, double: bool = False) -> tuple[int, int]:
+    """Click at coordinates from the most recent screenshot (scaled back to screen points)."""
+    import Quartz
+
+    _require_event_access()
+    screen_w, screen_h = screen_size()
+    if _last_shot:
+        scale = screen_w / _last_shot[0]
+        x, y = round(x * scale), round(y * scale)
+    if not (0 <= x <= screen_w and 0 <= y <= screen_h):
+        raise ActionError(f"({x}, {y}) is off screen — the screen is {screen_w}x{screen_h} points.")
+    for event_type in (Quartz.kCGEventMouseMoved, Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+        event = Quartz.CGEventCreateMouseEvent(None, event_type, (x, y), Quartz.kCGMouseButtonLeft)
+        if double and event_type != Quartz.kCGEventMouseMoved:
+            Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, 2)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        time.sleep(0.02)
+    if double:
+        for event_type in (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp):
+            event = Quartz.CGEventCreateMouseEvent(None, event_type, (x, y), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, 2)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            time.sleep(0.02)
+    return x, y
 
 
 # ---------------------------------------------------------------- power
