@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from mcp import Client, StdioServerParameters, types
+from mcp.client.stdio import get_default_environment
 
 from sommus.brain.permissions import Policy, Tier
 from sommus.config import NodeConfig
@@ -35,7 +36,11 @@ class NodeHub:
     async def __aenter__(self) -> NodeHub:
         try:
             for node in self._node_configs:
-                params = StdioServerParameters(command=sys.executable, args=["-m", node.module])
+                params = StdioServerParameters(
+                    command=sys.executable,
+                    args=["-m", node.module],
+                    env={**get_default_environment(), **node.env},
+                )
                 try:
                     await self.add(node.name, Client(params))
                 except Exception as e:

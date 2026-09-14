@@ -89,8 +89,12 @@ def set_mute(muted: bool) -> str:
 
 @tool(READ)
 def list_apps() -> str:
-    """List the apps currently open (the ones shown in the Dock) and which one is in front."""
-    names = sorted(app.name for app in macos.running_apps())
+    """List the apps currently open (the ones shown in the Dock), which one is in front, and which can't be quit."""
+    protected = macos.protected_apps()
+    names = [
+        f"{a.name} (protected, can't be quit)" if a.name.casefold() in protected else a.name
+        for a in sorted(macos.running_apps(), key=lambda a: a.name)
+    ]
     front = macos.frontmost_app()
     return f"Open: {', '.join(names)}. In front: {front or 'unknown'}."
 

@@ -90,11 +90,16 @@ async def run_case(cfg: Config, hub: NodeHub | SimulatingHub, store: Store, case
     brain = Brain(cfg, hub, store, client=client)  # fresh conversation per command
     result = Result(case=case)
     started = time.monotonic()
+    after_tool = False
     async for event in brain.handle(case.text, always_allow):
         match event:
             case ToolStarted(name=name):
                 result.called.append(name)
+                after_tool = True
             case TextDelta(text=text):
+                if after_tool and result.reply:
+                    result.reply += "\n"
+                    after_tool = False
                 result.reply += text
             case Notice(text=text):
                 result.notices.append(text)

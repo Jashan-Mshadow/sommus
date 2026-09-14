@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from sommus.brain.permissions import Tier
@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class NodeConfig:
     name: str
     module: str  # launched as `python -m <module>` over stdio
+    env: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,7 @@ def load(path: Path | None = None) -> Config:
         model=assistant["model"],
         effort=assistant.get("effort", "medium"),
         max_steps=assistant.get("max_steps", 12),
-        nodes=tuple(NodeConfig(n["name"], n["module"]) for n in raw.get("nodes", [])),
+        nodes=tuple(NodeConfig(n["name"], n["module"], n.get("env", {})) for n in raw.get("nodes", [])),
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},
         data_dir=ROOT / "data",
         ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),

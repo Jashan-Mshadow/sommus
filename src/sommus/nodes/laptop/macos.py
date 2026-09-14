@@ -7,6 +7,7 @@ text through `argv`, never by string formatting.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -140,10 +141,17 @@ def _find_app(name: str) -> RunningApp:
     raise ActionError(f"No running app named '{name}'.")
 
 
+def protected_apps() -> set[str]:
+    """Apps Sommus must not quit — it runs inside one of them."""
+    return {a.strip().casefold() for a in os.environ.get("SOMMUS_PROTECT_APPS", "").split(",") if a.strip()}
+
+
 def quit_app(name: str) -> str:
     from AppKit import NSRunningApplication
 
     app = _find_app(name)
+    if app.name.casefold() in protected_apps():
+        raise ActionError(f"{app.name} is protected — Sommus runs inside it, so quitting it would kill Sommus.")
     running = NSRunningApplication.runningApplicationWithProcessIdentifier_(app.pid)
     # terminate() asks the app to quit normally, so it can prompt to save work.
     if running is None or not running.terminate():

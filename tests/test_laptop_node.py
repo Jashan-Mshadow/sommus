@@ -48,3 +48,21 @@ async def test_set_volume_reports_new_state(monkeypatch):
         result = await client.call_tool("set_volume", {"level": 30})
     assert result.content[0].text == "Volume 30%."
     assert scripts[0] == ("set volume output volume 30 without output muted",)
+
+
+async def test_protected_apps_cannot_be_quit(monkeypatch):
+    monkeypatch.setenv("SOMMUS_PROTECT_APPS", "Terminal,Claude")
+    monkeypatch.setattr(macos, "running_apps", lambda: [macos.RunningApp("Terminal", 1), macos.RunningApp("Notes", 2)])
+    async with Client(server) as client:
+        result = await client.call_tool("quit_app", {"name": "Terminal"})
+    assert result.is_error and "protected" in result.content[0].text
+
+
+async def test_list_apps_marks_protected_apps(monkeypatch):
+    monkeypatch.setenv("SOMMUS_PROTECT_APPS", "Terminal")
+    monkeypatch.setattr(macos, "running_apps", lambda: [macos.RunningApp("Terminal", 1), macos.RunningApp("Notes", 2)])
+    monkeypatch.setattr(macos, "frontmost_app", lambda: "Notes")
+    async with Client(server) as client:
+        result = await client.call_tool("list_apps", {})
+    assert "Terminal (protected, can't be quit)" in result.content[0].text
+    assert "Notes," in result.content[0].text or "Notes." in result.content[0].text

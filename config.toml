@@ -11,6 +11,8 @@ max_steps = 12
 [[nodes]]
 name = "laptop"
 module = "sommus.nodes.laptop.server"
+# Quitting the terminal Sommus runs in would kill Sommus mid-command.
+env = { SOMMUS_PROTECT_APPS = "Terminal,iTerm2,Ghostty,Warp,Alacritty,kitty,Claude,Code,Cursor" }
 
 [safety]
 # false: Sommus acts without asking (Jashan's choice, 2026-09-14).

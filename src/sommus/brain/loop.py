@@ -75,12 +75,15 @@ class Brain:
         request: dict[str, Any] = dict(
             model=self.cfg.model,
             max_tokens=16000,
-            system=self.system,
+            # The breakpoint sits on the system prompt, the last *stable* thing in the
+            # request (tools render before system). Auto top-level caching instead caches
+            # the last block — the user's message — writing a fresh entry every turn, which
+            # measured at ~85% of the cost per command.
+            system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
             tools=self.hub.api_tools(),
             messages=self.messages,
             thinking={"type": "adaptive"},
             output_config={"effort": self.cfg.effort},
-            cache_control={"type": "ephemeral"},
         )
         if self.cfg.model in FALLBACK_MODELS:
             request |= dict(betas=["server-side-fallback-2026-07-01"], fallbacks="default")

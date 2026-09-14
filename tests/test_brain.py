@@ -136,12 +136,11 @@ async def test_turns_and_tool_calls_are_logged(tmp_path):
         assert count == 1 and spent > 0
 
 
-async def test_request_uses_caching_and_refusal_fallback(tmp_path):
+async def test_request_uses_refusal_fallback_and_sorted_tools(tmp_path):
     async with make_brain(tmp_path, text_reply("Hi.")) as (brain, claude, _):
         await run(brain, "hello", never_confirm)
 
         request = claude.requests[0]
-        assert request["cache_control"] == {"type": "ephemeral"}
         assert request["fallbacks"] == "default"
         assert [t["name"] for t in request["tools"]] == sorted(t["name"] for t in request["tools"])
 
@@ -152,3 +151,15 @@ async def test_an_unreachable_node_does_not_stop_the_brain(tmp_path):
     async with NodeHub((NodeConfig("ghost", "sommus.nodes.does_not_exist"),), Policy()) as hub:
         assert "ghost" in hub.unreachable
         assert hub.tools == []  # brain still starts, just with no tools from that node
+
+
+async def test_the_cache_breakpoint_sits_on_the_stable_prefix(tmp_path):
+    """A breakpoint after the user's message would write a new cache entry every turn."""
+    async with make_brain(tmp_path, text_reply("Hi."), text_reply("Hi again.")) as (brain, claude, _):
+        await run(brain, "hello", never_confirm)
+        await run(brain, "hello again", never_confirm)
+
+    for request in claude.requests:
+        assert "cache_control" not in request
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert request["system"][0]["text"] == brain.system
