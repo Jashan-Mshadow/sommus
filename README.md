@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**36 tools on the laptop node**, plus live web search:
+**41 tools on the laptop node**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -32,10 +32,10 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | Clipboard | read, write |
 | Reminders | create (syncs to iPhone), list |
 | System | battery, Wi-Fi status and toggle, sleep, notifications |
-| Browser | list Chrome tabs, read a tab's text, switch tabs |
-| Seeing & typing | **screenshot** (returned as an image the model actually looks at), type any text, any keystroke |
+| Browser | list Chrome tabs, read a tab's text, list its links, click a link or button, switch tabs |
+| Seeing & typing | **screenshot** (an image the model looks at), click at its coordinates, type any text, any keystroke, wait |
 | Downloads | fetch a file straight to disk |
-| Messaging | send an iMessage (always confirms first) |
+| Messaging | send an iMessage (always confirms first), write or send a Gmail |
 | Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
 | Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
 
@@ -123,7 +123,7 @@ uv run sommus eval --only volume    # just the commands mentioning "volume"
 uv run sommus eval --live           # really run every tool (it will sleep the laptop)
 ```
 
-Currently **37/37** at $0.021 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+Currently **38/38** on Sonnet 5 at low effort, $0.0074 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
 so model and effort changes can be compared.
 
 ## Layout
