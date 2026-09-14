@@ -132,6 +132,32 @@ expect = []
 text = "what's 17% of 340"
 expect = []
 
+# --- added 2026-09-14: seeing and reaching into apps
+
+[[command]]
+text = "what tabs do I have open in chrome"
+expect = ["list_browser_tabs"]
+
+[[command]]
+text = "read me the MATH 115 tab"
+expect = ["read_browser_tab"]
+
+[[command]]
+text = "look at my screen and tell me which app is in front"
+expect = ["screenshot"]
+
+[[command]]
+text = "type my email address into this box"
+expect = ["type_text"]
+
+[[command]]
+text = "download https://www.python.org/static/img/python-logo.png"
+expect = ["download_url"]
+
+[[command]]
+text = "text 555-0100 that I'm running late"
+expect = ["send_message"]
+
 # No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
 # or say what's missing — both are fine, so no expectation is set.
 [[command]]

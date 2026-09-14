@@ -5,6 +5,13 @@ from sommus.nodes.laptop.server import server
 
 EXPECTED_TIERS = {
     "get_battery": "read",
+    "list_browser_tabs": "read",
+    "read_browser_tab": "read",
+    "focus_browser_tab": "reversible",
+    "type_text": "reversible",
+    "screenshot": "read",
+    "download_url": "reversible",
+    "send_message": "destructive",
     "get_brightness": "read",
     "set_brightness": "reversible",
     "get_wifi": "read",

@@ -17,9 +17,10 @@ from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, files, macos
+from sommus.nodes.laptop import apps, browser, files, macos
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -336,6 +337,82 @@ def open_file(path: str) -> str:
         path: Full path to the file or folder.
     """
     return f"Opened {files.open_path(path)}."
+
+
+# ---------------------------------------------------------------- browser
+
+
+@tool(READ)
+def list_browser_tabs() -> str:
+    """List every open Chrome tab with its window.tab number, title and URL."""
+    tabs = browser.list_tabs()
+    return f"{len(tabs)} tabs:\n" + "\n".join(str(t) for t in tabs) if tabs else "No tabs open."
+
+
+@tool(READ)
+def read_browser_tab(tab: str) -> str:
+    """Read the visible text of a Chrome tab — the way to see what's on a page.
+
+    Args:
+        tab: Tab number ("3"), window.tab ("1.3"), or text from its title or URL ("MATH 115").
+    """
+    found, text = browser.read_tab(tab)
+    return f"{found.title} ({found.url}):\n\n{text}"
+
+
+@tool(REVERSIBLE)
+def focus_browser_tab(tab: str) -> str:
+    """Bring a Chrome tab to the front.
+
+    Args:
+        tab: Tab number, window.tab, or text from its title or URL.
+    """
+    return f"Switched to {browser.focus_tab(tab).title}."
+
+
+# ---------------------------------------------------------------- typing, screen, downloads
+
+
+@tool(REVERSIBLE)
+def type_text(text: str) -> str:
+    """Type text into whatever app has focus, character by character — for writing into any app.
+
+    Args:
+        text: The literal text to type.
+    """
+    return f"Typed {macos.type_text(text)} characters."
+
+
+@tool(READ)
+def screenshot() -> Image:
+    """Take a screenshot and look at it. Use this to see the state of an app that has no tool."""
+    return Image(path=macos.screenshot())
+
+
+@tool(REVERSIBLE)
+def download_url(url: str, folder: str = "~/Downloads", filename: str | None = None) -> str:
+    """Download a file straight to disk. Works for public URLs; pages behind a login don't.
+
+    Args:
+        url: Direct http(s) link to the file.
+        folder: Where to save it (default ~/Downloads).
+        filename: Optional name to save it as.
+    """
+    return f"Saved to {files.download_url(url, folder, filename)}."
+
+
+# ---------------------------------------------------------------- messaging
+
+
+@tool(DESTRUCTIVE)
+def send_message(to: str, text: str) -> str:
+    """Send an iMessage. This reaches another person and can't be unsent.
+
+    Args:
+        to: Phone number or Apple ID of the recipient.
+        text: The message body.
+    """
+    return f"Sent to {apps.send_message(to, text)}."
 
 
 def main() -> None:

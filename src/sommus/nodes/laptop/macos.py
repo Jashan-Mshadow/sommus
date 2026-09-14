@@ -10,7 +10,10 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 
@@ -381,6 +384,45 @@ def press_keys(combo: str) -> str:
         Quartz.CGEventSetFlags(event, flags)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
     return combo
+
+
+def type_text(text: str) -> int:
+    """Type a literal string into the focused app, unicode included."""
+    import Quartz
+
+    _require_event_access()
+    if not text:
+        raise ActionError("Nothing to type.")
+    # CGEventKeyboardSetUnicodeString bypasses key codes, so any character works.
+    for chunk in (text[i : i + 20] for i in range(0, len(text), 20)):
+        for down in (True, False):
+            event = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+            Quartz.CGEventKeyboardSetUnicodeString(event, len(chunk), chunk)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+        time.sleep(0.012)  # let the target app keep up
+    return len(text)
+
+
+# ---------------------------------------------------------------- screen
+
+
+def screenshot(max_width: int = 1200) -> Path:
+    """Capture the screen to a temp JPEG, downscaled so it costs few tokens."""
+    path = Path(tempfile.gettempdir()) / "sommus-screen.jpg"
+    try:
+        _run(["screencapture", "-x", "-t", "jpg", str(path)], timeout=20)
+    except ActionError as e:
+        raise ActionError(
+            "macOS blocked the screenshot: give your terminal app Screen Recording permission "
+            "(System Settings → Privacy & Security → Screen Recording), then restart Sommus."
+        ) from e
+    if not path.exists() or path.stat().st_size == 0:
+        raise ActionError(
+            "The screenshot came back empty — Screen Recording permission is probably missing "
+            "(System Settings → Privacy & Security → Screen Recording)."
+        )
+    _run(["sips", "-Z", str(max_width), "-s", "formatOptions", "70", str(path)], timeout=20)
+    return path
 
 
 # ---------------------------------------------------------------- power

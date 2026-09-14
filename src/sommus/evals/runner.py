@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
-from sommus.brain.nodes import NodeHub
+from sommus.brain.nodes import NodeHub, ToolOutput
 from sommus.brain.permissions import Tier
 from sommus.brain.store import Store
 from sommus.config import ROOT, Config
@@ -81,11 +81,12 @@ class SimulatingHub:
     def tier(self, tool_name: str) -> Tier | None:
         return self._hub.tier(tool_name)
 
-    async def call(self, tool_name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> ToolOutput:
         if self._hub.tier(tool_name) is Tier.READ:
             self.executed.append(tool_name)
             return await self._hub.call(tool_name, arguments)
-        return f"Done. ({tool_name} was simulated for the eval, not actually run.)", False
+        message = f"Done. ({tool_name} was simulated for the eval, not actually run.)"
+        return ToolOutput([{"type": "text", "text": message}], message, False)
 
 
 async def always_allow(name: str, args: dict[str, Any]) -> bool:

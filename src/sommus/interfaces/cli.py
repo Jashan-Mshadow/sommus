@@ -29,6 +29,7 @@ TIER_STYLE = {
     Tier.READ: "green",
     Tier.REVERSIBLE: "cyan",
     Tier.DESTRUCTIVE: "yellow",
+    Tier.ALWAYS_ASK: "magenta",
     Tier.BLOCKED: "red",
 }
 
@@ -201,8 +202,8 @@ async def check() -> None:
             for name, why in hub.unreachable.items():
                 report(False, f"Node '{name}' unreachable", why)
             for name in ("get_battery", "get_volume"):
-                output, is_error = await hub.call(name, {})
-                report(not is_error, name, output)
+                result = await hub.call(name, {})
+                report(not result.is_error, name, result.text)
     except Exception as e:
         report(False, "Nodes", f"failed to start: {e}")
 
@@ -242,8 +243,8 @@ async def run_tool(name: str | None, pairs: list[str]) -> None:
                 )
             console.print("\n[dim]Run one: sommus tool set_volume level=20[/]")
             return
-        output, is_error = await hub.call(name, _parse_tool_args(pairs))
-        console.print(f"{'[red]✗' if is_error else '[green]✓'}[/] {escape(output)}")
+        result = await hub.call(name, _parse_tool_args(pairs))
+        console.print(f"{'[red]✗' if result.is_error else '[green]✓'}[/] {escape(result.text)}")
 
 
 async def run_eval(live: bool, only: str | None) -> None:

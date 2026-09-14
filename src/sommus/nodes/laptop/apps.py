@@ -42,6 +42,28 @@ def now_playing() -> str:
     return "No music app is running."
 
 
+# ---------------------------------------------------------------- Messages
+
+
+def send_message(to: str, text: str) -> str:
+    """Send an iMessage/SMS through Messages. Outward-facing: the brain always confirms first."""
+    script = (
+        'tell application "Messages" to send (item 2 of argv) to '
+        "participant (item 1 of argv) of (1st account whose service type = iMessage)"
+    )
+    try:
+        _osascript("on run argv", script, "end run", argv=(to, text), timeout=30)
+    except ActionError as e:
+        message = str(e)
+        if "-1743" in message or "not authorized" in message:
+            raise ActionError("macOS hasn't allowed control of Messages yet — approve the prompt and retry.") from e
+        raise ActionError(
+            f"Messages refused to send to '{to}' ({message.strip()}). Recent macOS restricts sending by "
+            "script; try the exact phone number or Apple ID, or send it yourself."
+        ) from e
+    return to
+
+
 # ---------------------------------------------------------------- Shortcuts
 # The user's own Shortcuts are Sommus's escape hatch: anything macOS won't expose
 # to a script (Focus modes, Home devices, app automations) can be a shortcut.

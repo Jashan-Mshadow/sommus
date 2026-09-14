@@ -50,7 +50,12 @@ async def test_read_tool_runs_without_asking(tmp_path):
         assert [e.text for e in events if isinstance(e, TextDelta)] == ["All quiet."]
         assert isinstance(events[-1], TurnDone) and events[-1].steps == 2
         result = claude.requests[1]["messages"][-1]["content"][0]
-        assert result == {"type": "tool_result", "tool_use_id": "toolu_1", "content": "all quiet", "is_error": False}
+        assert result == {
+            "type": "tool_result",
+            "tool_use_id": "toolu_1",
+            "content": [{"type": "text", "text": "all quiet"}],
+            "is_error": False,
+        }
 
 
 async def test_declined_destructive_tool_never_runs(tmp_path):
@@ -72,7 +77,7 @@ async def test_declined_destructive_tool_never_runs(tmp_path):
         finished = next(e for e in events if isinstance(e, ToolFinished))
         assert finished.decision == "declined" and finished.is_error
         result = claude.requests[1]["messages"][-1]["content"][0]
-        assert result["is_error"] is True and "declined" in result["content"]
+        assert result["is_error"] is True and "declined" in result["content"][0]["text"]
 
 
 async def test_full_permission_mode_runs_destructive_tools_without_asking(tmp_path):

@@ -18,6 +18,19 @@ MAX_RESULT_CHARS = 10_000
 
 
 @dataclass(frozen=True)
+class ToolOutput:
+    """What a tool produced: API content blocks, a text summary for logs, and whether it failed."""
+
+    blocks: list[dict[str, Any]]
+    text: str
+    is_error: bool
+
+    @classmethod
+    def failure(cls, message: str) -> ToolOutput:
+        return cls([{"type": "text", "text": message}], message, True)
+
+
+@dataclass(frozen=True)
 class NodeTool:
     node: str
     tool: types.Tool
@@ -80,18 +93,33 @@ class NodeHub:
         found = self._tools.get(tool_name)
         return found.tier if found else None
 
-    async def call(self, tool_name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
-        """Run a tool. Returns (output text, is_error)."""
+    async def call(self, tool_name: str, arguments: dict[str, Any]) -> ToolOutput:
+        """Run a tool on whichever node owns it."""
         found = self._tools.get(tool_name)
         if found is None:
-            return f"Unknown tool '{tool_name}'.", True
+            return ToolOutput.failure(f"Unknown tool '{tool_name}'.")
         try:
             result = await self._clients[found.node].call_tool(tool_name, arguments)
         except Exception as e:  # a crashed or disconnected node must not crash the brain
-            return f"The {found.node} node failed: {e}", True
-        text = "\n".join(block.text for block in result.content if isinstance(block, types.TextContent))
+            return ToolOutput.failure(f"The {found.node} node failed: {e}")
+
+        blocks: list[dict[str, Any]] = []
+        texts: list[str] = []
+        for block in result.content:
+            if isinstance(block, types.TextContent):
+                texts.append(block.text)
+            elif isinstance(block, types.ImageContent):
+                # Passed through as an image block, so the model actually sees it.
+                blocks.append(
+                    {"type": "image", "source": {"type": "base64", "media_type": block.mime_type, "data": block.data}}
+                )
+                texts.append(f"[{block.mime_type} image]")
+        text = "\n".join(texts)
         if not text and result.structured_content is not None:
             text = json.dumps(result.structured_content)
         if len(text) > MAX_RESULT_CHARS:
             text = text[:MAX_RESULT_CHARS] + "\n[truncated]"
-        return text or "(no output)", bool(result.is_error)
+        text = text or "(no output)"
+        if not blocks or any(t for t in texts if not t.startswith("[")):
+            blocks.insert(0, {"type": "text", "text": text})
+        return ToolOutput(blocks, text, bool(result.is_error))

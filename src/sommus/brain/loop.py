@@ -50,6 +50,16 @@ class ToolFinished:
 
 
 @dataclass(frozen=True)
+class ToolResult:
+    """Internal: what _run_tool produced (blocks go to the API, text to logs and screens)."""
+
+    blocks: list[dict[str, Any]]
+    text: str
+    is_error: bool
+    decision: str
+
+
+@dataclass(frozen=True)
 class Notice:
     text: str
 
@@ -129,10 +139,15 @@ class Brain:
                         if block.type != "tool_use":
                             continue
                         yield ToolStarted(block.name, block.input, self.hub.tier(block.name))
-                        output, is_error, decision = await self._run_tool(turn_id, block.name, block.input, confirm)
-                        yield ToolFinished(block.name, output, is_error, decision)
+                        result = await self._run_tool(turn_id, block.name, block.input, confirm)
+                        yield ToolFinished(block.name, result.text, result.is_error, result.decision)
                         results.append(
-                            {"type": "tool_result", "tool_use_id": block.id, "content": output, "is_error": is_error}
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result.blocks,
+                                "is_error": result.is_error,
+                            }
                         )
                     # All results go back in one message, so parallel calls keep working.
                     self.messages.append({"role": "user", "content": results})
@@ -173,18 +188,19 @@ class Brain:
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
 
-    async def _run_tool(
-        self, turn_id: int, name: str, input: dict[str, Any], confirm: ConfirmFn
-    ) -> tuple[str, bool, str]:
+    async def _run_tool(self, turn_id: int, name: str, input: dict[str, Any], confirm: ConfirmFn) -> ToolResult:
         tier = self.hub.tier(name)
+        blocks: list[dict[str, Any]] = []
         if tier is None:
             output, is_error, decision = f"Unknown tool '{name}'.", True, "unknown"
         elif tier is Tier.BLOCKED:
             output, is_error, decision = "This action is blocked by the permission policy.", True, "blocked"
-        elif tier is Tier.DESTRUCTIVE and self.cfg.ask_before_destructive and not await confirm(name, input):
+        elif (
+            tier is Tier.ALWAYS_ASK or (tier is Tier.DESTRUCTIVE and self.cfg.ask_before_destructive)
+        ) and not await confirm(name, input):
             output, is_error, decision = f"{self.cfg.user} declined this action.", True, "declined"
         else:
-            output, is_error = await self.hub.call(name, input)
-            decision = "ran"
+            result = await self.hub.call(name, input)
+            blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
         self.store.log_tool(turn_id, name, input, tier.value if tier else None, decision, is_error, output)
-        return output, is_error, decision
+        return ToolResult(blocks or [{"type": "text", "text": output}], output, is_error, decision)

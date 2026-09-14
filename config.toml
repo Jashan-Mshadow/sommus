@@ -24,4 +24,6 @@ ask_before_destructive = false
 
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]
-# open_url = "destructive"
+# Sending a message reaches another person and can't be undone, so it asks every
+# time even though everything else runs freely. Set it to "reversible" to change that.
+send_message = "always_ask"

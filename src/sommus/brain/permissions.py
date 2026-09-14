@@ -16,7 +16,8 @@ from mcp.types import ToolAnnotations
 class Tier(StrEnum):
     READ = "read"  # run immediately
     REVERSIBLE = "reversible"  # run, report back
-    DESTRUCTIVE = "destructive"  # ask the user first
+    DESTRUCTIVE = "destructive"  # ask the user first, unless full permission is on
+    ALWAYS_ASK = "always_ask"  # ask every time, even with full permission — outward-facing actions
     BLOCKED = "blocked"  # never run; hidden from the model
 
 
