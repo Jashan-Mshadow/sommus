@@ -147,7 +147,8 @@ def send(message: EmailMessage) -> None:
     address, password = account()
     message["From"] = address
     message["Date"] = formatdate(localtime=True)
-    message.setdefault("Message-ID", make_msgid())
+    if "Message-ID" not in message:
+        message["Message-ID"] = make_msgid()
     try:
         with smtplib.SMTP_SSL(SMTP_HOST, 465, timeout=30) as smtp:
             smtp.login(address, password)

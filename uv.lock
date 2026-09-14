@@ -991,6 +991,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
+    { name = "httpx2" },
     { name = "mcp", extra = ["cli"] },
     { name = "prompt-toolkit" },
     { name = "pymupdf" },
@@ -1011,6 +1012,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=1.5.0" },
+    { name = "httpx2", specifier = ">=2.12.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.2.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.53" },
     { name = "pymupdf", specifier = ">=1.28.2" },

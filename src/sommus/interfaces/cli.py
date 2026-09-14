@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import signal
+from datetime import datetime
 from typing import Any
 
 import anthropic
@@ -305,16 +306,35 @@ async def run_eval(live: bool, only: str | None) -> None:
     console.print(f"[dim]Saved to {evals.save(results, live, cfg)}[/]")
 
 
+async def telegram() -> None:
+    """Run Sommus as a Telegram bot until Ctrl+C."""
+    from sommus.interfaces import telegram as bot
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print("[red]No API key.[/] See [bold]sommus check[/].")
+        return
+    cfg = config.load()
+
+    def log(line: str) -> None:
+        console.print(f"[dim]{datetime.now():%H:%M:%S}[/] {escape(line)}")
+
+    console.print(f"[bold magenta]{cfg.name}[/] [dim]on Telegram · {cfg.model} · Ctrl+C to stop[/]")
+    try:
+        await bot.serve(cfg, log)
+    except bot.TelegramError as e:
+        console.print(f"[red]{escape(str(e))}[/]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sommus")
-    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval"], default="chat")
+    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval", "telegram"], default="chat")
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
-    commands = {"chat": chat, "check": check}
+    commands = {"chat": chat, "check": check, "telegram": telegram}
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))

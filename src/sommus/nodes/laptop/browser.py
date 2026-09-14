@@ -197,6 +197,30 @@ def compose_gmail(to: str, subject: str, body: str, send: bool = False) -> str:
     return f"Sent to {to}."
 
 
+EMBEDDED_JS = r"""
+(function () {
+  var out = [];
+  function walk(root) {
+    Array.from(root.querySelectorAll('iframe, embed, object')).forEach(function (n) {
+      var u = n.src || n.data || '';
+      if (u) { out.push(u); }
+    });
+    Array.from(root.querySelectorAll('*')).forEach(function (e) { if (e.shadowRoot) { walk(e.shadowRoot); } });
+  }
+  walk(document);
+  return out.join('\n');
+})()
+"""
+
+
+def embedded_files(query: str) -> tuple[Tab, list[str]]:
+    """URLs of files embedded in the page (iframes, PDF viewers) — the real file behind a viewer."""
+    tab = find_tab(query)
+    urls = [u.strip() for u in _js(tab, EMBEDDED_JS).splitlines() if u.strip()]
+    interesting = [u for u in urls if ".pdf" in u.lower() or "content/enforced" in u.lower()]
+    return tab, interesting or urls
+
+
 def save_tab(query: str, folder: str = "~/Downloads", wait_seconds: float = 20) -> tuple[Tab, Path]:
     """Save the page in a tab to disk with Cmd+S.
 

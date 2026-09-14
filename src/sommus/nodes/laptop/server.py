@@ -325,6 +325,22 @@ def read_pdf(path: str, pages: str | None = None, ocr: bool = True) -> str:
     return f"{Path(path).name} — {note}:\n\n{text}"
 
 
+@tool(READ)
+def list_embedded_files(tab: str) -> str:
+    """URLs of files embedded in a page (PDF viewers, iframes) — the real file behind a viewer.
+
+    LEARN shows PDFs inside a viewer, so saving the tab saves the wrapper page. Open the URL this
+    returns, then save that tab instead.
+
+    Args:
+        tab: Tab number, window.tab, or text from its title or URL.
+    """
+    found, urls = browser.embedded_files(tab)
+    if not urls:
+        return f"Nothing embedded in '{found.title}'."
+    return f"Embedded in {found.title}:\n" + "\n".join(urls)
+
+
 @tool(REVERSIBLE)
 def save_browser_tab(tab: str, folder: str = "~/Downloads") -> str:
     """Save a browser tab's file to disk (Cmd+S) — the way to get a PDF that sits behind a login.

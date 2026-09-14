@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**58 tools across three nodes**, plus live web search:
+**59 tools across three nodes**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -56,6 +56,23 @@ It answers questions as readily as it acts, and when there's no exact tool it tr
 
 A node that isn't set up reports as unreachable; everything else keeps working.
 
+## Sommus on your phone (Telegram)
+
+The brain doesn't change — Telegram is a second interface over the same event stream.
+
+1. Message [@BotFather](https://t.me/botfather) on Telegram, send `/newbot`, pick a name, copy the token.
+2. Put it in `.env` as `TELEGRAM_BOT_TOKEN=...` and leave `TELEGRAM_ALLOWED_IDS` empty for now.
+3. Run it, message your bot once, and it prints your chat id:
+
+```bash
+uv run sommus telegram
+```
+
+4. Put that id in `TELEGRAM_ALLOWED_IDS` and restart. Anyone not on that list is ignored and logged —
+   without it, whoever finds the bot could drive the laptop.
+
+`/new` starts a fresh conversation, `/cost` reports the day's spend.
+
 ## Connecting Gmail
 
 Sommus talks to Gmail over IMAP and SMTP with an **app password**, not the Gmail API.
@@ -82,9 +99,9 @@ GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
   INTERFACES                      BRAIN                         NODES
   ┌──────────────┐          ┌──────────────────────┐   MCP    ┌──────────────────┐
   │ terminal     │─ text ─► │ agent loop           │ ───────► │ laptop (macOS)   │
-  │ voice (next) │ ◄ events │ Claude API           │ ───────► │ bluetooth (next) │
-  └──────────────┘          │ permission gate      │          └──────────────────┘
-                            │ audit log + cost     │
+  │ telegram     │ ◄ events │ Claude API           │ ───────► │ vault (notes)    │
+  │ voice (next) │          │ permission tiers     │ ───────► │ gmail            │
+  └──────────────┘          │ audit log + cost     │          └──────────────────┘
                             └──────────────────────┘
 ```
 

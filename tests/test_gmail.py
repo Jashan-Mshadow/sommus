@@ -67,3 +67,35 @@ def test_app_password_spaces_are_ignored(monkeypatch):
     monkeypatch.setenv("GMAIL_ADDRESS", "me@gmail.com")
     monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
     assert mail.account() == ("me@gmail.com", "abcdefghijklmnop")
+
+
+def test_send_sets_the_headers_and_hands_the_message_to_smtp(monkeypatch):
+    """Regression: EmailMessage has no .setdefault, which made every send fail."""
+    sent = {}
+
+    class FakeSMTP:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def login(self, address, password):
+            sent["login"] = (address, password)
+
+        def send_message(self, message):
+            sent["message"] = message
+
+    monkeypatch.setenv("GMAIL_ADDRESS", "me@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    monkeypatch.setattr(mail.smtplib, "SMTP_SSL", lambda *a, **k: FakeSMTP())
+
+    message = EmailMessage()
+    message["To"] = "friend@x.com"
+    message["Subject"] = "Running late"
+    message.set_content("on my way")
+    mail.send(message)
+
+    assert sent["login"] == ("me@gmail.com", "abcdefghijklmnop")
+    assert sent["message"]["From"] == "me@gmail.com"
+    assert sent["message"]["Message-ID"] and sent["message"]["Date"]
