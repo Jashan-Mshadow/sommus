@@ -85,12 +85,27 @@ The node is a standard MCP server, so it works without the brain:
 claude mcp add sommus-laptop -- "$(pwd)/.venv/bin/python" -m sommus.nodes.laptop.server
 ```
 
+## Scoring it
+
+`evals/commands.toml` holds the 20 commands Phase 1 has to handle. The runner replays each one in a
+fresh conversation and checks which tools were called:
+
+```bash
+uv run sommus eval                  # read tools run for real, the rest are simulated
+uv run sommus eval --only volume    # just the commands mentioning "volume"
+uv run sommus eval --live           # really run every tool (it will sleep the laptop)
+```
+
+Target: 18/20. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+so model and effort changes can be compared.
+
 ## Layout
 
 ```
 src/sommus/
 ├── brain/        loop.py · nodes.py · permissions.py · prompt.py · store.py
 ├── interfaces/   cli.py
+├── evals/        runner.py
 └── nodes/laptop/ server.py (MCP tools) · macos.py (actions)
 evals/commands.toml   the 20 commands Phase 1 must handle
 tests/                agent loop + permission gate against a fake Claude and a real in-process node

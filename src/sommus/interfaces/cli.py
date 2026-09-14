@@ -1,4 +1,4 @@
-"""Terminal interface: `sommus` to chat, `sommus check` to verify setup, `sommus tool` to run a tool directly."""
+"""Terminal interface: `sommus` chat · `check` setup · `tool` one tool · `eval` score the commands."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from prompt_toolkit.history import FileHistory
 from rich.console import Console
 from rich.markup import escape
 
-from sommus import config
+from sommus import config, evals
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy, Tier
@@ -242,17 +242,67 @@ async def run_tool(name: str | None, pairs: list[str]) -> None:
         console.print(f"{'[red]✗' if is_error else '[green]✓'}[/] {escape(output)}")
 
 
+async def run_eval(live: bool, only: str | None) -> None:
+    """Score Sommus against evals/commands.toml."""
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print("[red]No API key.[/] The eval calls Claude — see [bold]sommus check[/].")
+        return
+    cfg = config.load()
+    cases = [c for c in evals.load_cases() if only is None or only.lower() in c.text.lower()]
+    if not cases:
+        console.print("[red]No matching commands in evals/commands.toml.[/]")
+        return
+
+    console.print(
+        f"[bold]{len(cases)} commands[/] · {cfg.model}, effort {cfg.effort} · "
+        + ("[red]LIVE — tools really run[/]" if live else "[dim]read tools run, others simulated[/]")
+    )
+    store = Store(cfg.data_dir / "sommus.db")
+    results = []
+    async with NodeHub(cfg.nodes, Policy(cfg.overrides)) as real_hub:
+        hub = real_hub if live else evals.SimulatingHub(real_hub)
+        for i, case in enumerate(cases, 1):
+            with console.status(f"[dim]{i}/{len(cases)} {case.text}[/]"):
+                result = await evals.run_case(cfg, hub, store, case)
+            results.append(result)
+            mark = "[green]PASS[/]" if result.passed else "[red]FAIL[/]"
+            console.print(f"{mark} [bold]{escape(case.text)}[/]")
+            console.print(f"     [dim]called {', '.join(result.called) or '(nothing)'}[/]")
+            if result.missing:
+                console.print(f"     [red]missing {', '.join(result.missing)}[/]")
+            if result.extra:
+                console.print(f"     [yellow]extra {', '.join(result.extra)}[/]")
+            for notice in result.notices:
+                console.print(f"     [yellow]! {escape(notice)}[/]")
+            console.print(f"     [dim]{escape(result.reply.strip()[:100])}[/]")
+            console.print(f"     [dim]{result.seconds:.1f}s · ${result.cost_usd:.4f}[/]")
+
+    passed = sum(r.passed for r in results)
+    cost = sum(r.cost_usd for r in results)
+    seconds = sum(r.seconds for r in results) / len(results)
+    style = "green" if passed / len(results) >= 0.9 else "yellow" if passed / len(results) >= 0.7 else "red"
+    console.print(
+        f"\n[bold {style}]{passed}/{len(results)} passed[/] · ${cost:.4f} total, "
+        f"${cost / len(results):.4f} per command · {seconds:.1f}s average"
+    )
+    console.print(f"[dim]Saved to {evals.save(results, live, cfg)}[/]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sommus")
-    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool"], default="chat")
+    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval"], default="chat")
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
+    parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
+    parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
     commands = {"chat": chat, "check": check}
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))
+        elif args.command == "eval":
+            asyncio.run(run_eval(args.live, args.only))
         else:
             asyncio.run(commands[args.command]())
     except KeyboardInterrupt:
