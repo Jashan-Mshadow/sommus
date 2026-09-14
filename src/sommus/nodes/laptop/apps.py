@@ -7,6 +7,7 @@ first time ("Terminal wants to control Reminders"). The errors say so.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 
 from sommus.nodes.laptop.macos import ActionError, _osascript, _run, running_apps
@@ -40,6 +41,84 @@ def now_playing() -> str:
     if open_players:
         return f"{' and '.join(open_players)} " + ("is" if len(open_players) == 1 else "are") + " open but paused."
     return "No music app is running."
+
+
+# ---------------------------------------------------------------- Contacts
+# Names come from the Contacts app rather than a list in a config file, so new
+# people work the moment they're saved on the phone.
+
+CONTACTS_SCRIPT = [
+    'set AppleScript\'s text item delimiters to ", "',
+    'tell application "Contacts"',
+    "set out to {}",
+    "repeat with p in people",
+    "set ph to {}",
+    "repeat with x in phones of p",
+    "set end of ph to value of x",
+    "end repeat",
+    "set em to {}",
+    "repeat with x in emails of p",
+    "set end of em to value of x",
+    "end repeat",
+    'set end of out to (name of p) & " | " & (ph as text) & " | " & (em as text)',
+    "end repeat",
+    "end tell",
+    "set AppleScript's text item delimiters to linefeed",
+    "return out as text",
+]
+
+
+@dataclass(frozen=True)
+class Contact:
+    name: str
+    phones: list[str]
+    emails: list[str]
+
+    def __str__(self) -> str:
+        parts = [self.name]
+        if self.phones:
+            parts.append("phone " + ", ".join(self.phones))
+        if self.emails:
+            parts.append("email " + ", ".join(self.emails))
+        return " — ".join(parts)
+
+
+def contacts() -> list[Contact]:
+    try:
+        raw = _osascript(*CONTACTS_SCRIPT, timeout=30)
+    except ActionError as e:
+        if "-1743" in str(e) or "not authorized" in str(e):
+            raise ActionError(
+                "macOS hasn't allowed access to Contacts yet — approve the prompt, or enable it under "
+                "Privacy & Security → Automation."
+            ) from e
+        raise
+    people = []
+    for line in raw.splitlines():
+        name, _, rest = line.partition(" | ")
+        phones, _, emails = rest.partition(" | ")
+        if name.strip():
+            people.append(
+                Contact(
+                    name.strip(),
+                    [p.strip() for p in phones.split(",") if p.strip()],
+                    [e.strip() for e in emails.split(",") if e.strip()],
+                )
+            )
+    return people
+
+
+def find_contacts(query: str) -> list[Contact]:
+    needle = query.casefold().strip()
+    everyone = contacts()
+    exact = [c for c in everyone if c.name.casefold() == needle]
+    if exact:
+        return exact
+    parts = [c for c in everyone if needle in c.name.casefold()]
+    if parts:
+        return parts
+    # "didi", "mom" and the like: match any word of the name, or the contact's own nickname
+    return [c for c in everyone if any(word.startswith(needle) for word in c.name.casefold().split())]
 
 
 # ---------------------------------------------------------------- Messages

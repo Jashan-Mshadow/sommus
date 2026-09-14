@@ -46,6 +46,8 @@ def tool(annotations: ToolAnnotations) -> Callable:
                 return fn(*args, **kwargs)
             except VaultError as e:
                 raise ToolError(str(e)) from e
+            except Exception as e:  # never let a tool fail with no explanation
+                raise ToolError(f"{type(e).__name__}: {e}") from e
 
         server.tool(annotations=annotations, structured_output=False)(wrapper)
         return fn

@@ -185,6 +185,18 @@ expect = ["search_email"]
 text = "how much disk space do I have left"
 expect = ["run_shell"]
 
+[[command]]
+text = "text didi that I'll call her tonight"
+expect = ["find_contact", "send_message"]
+
+[[command]]
+text = "what's kuljot's email"
+expect = ["find_contact"]
+
+[[command]]
+text = "read the first page of ~/Downloads/1.5 Lesson  2.pdf"
+expect = ["read_pdf"]
+
 # No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
 # or say what's missing — both are fine, so no expectation is set.
 [[command]]

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from sommus.nodes.laptop.macos import ActionError, _osascript, running_apps
 
@@ -194,6 +195,42 @@ def compose_gmail(to: str, subject: str, body: str, send: bool = False) -> str:
     time.sleep(4)  # the compose window has to exist before the keystroke lands
     press_keys("cmd+return")
     return f"Sent to {to}."
+
+
+def save_tab(query: str, folder: str = "~/Downloads", wait_seconds: float = 20) -> tuple[Tab, Path]:
+    """Save the page in a tab to disk with Cmd+S.
+
+    This is how a logged-in file gets out of the browser: LEARN's PDFs sit behind a
+    session cookie, so downloading them by URL returns the login page instead.
+    """
+    import time
+
+    from sommus.nodes.laptop.macos import press_keys
+
+    target = Path(folder).expanduser()
+    if not target.is_dir():
+        raise ActionError(f"'{folder}' isn't a folder.")
+    before = {p for p in target.iterdir()}
+    tab = focus_tab(query)
+    time.sleep(1.0)
+    press_keys("cmd+s")
+    time.sleep(1.5)  # the save sheet has to appear before Return accepts it
+    press_keys("return")
+
+    deadline = time.time() + wait_seconds
+    while time.time() < deadline:
+        new = [p for p in target.iterdir() if p not in before and not p.name.endswith((".crdownload", ".download"))]
+        if new:
+            newest = max(new, key=lambda p: p.stat().st_mtime)
+            size = newest.stat().st_size
+            time.sleep(0.6)
+            if newest.stat().st_size == size:  # finished writing
+                return tab, newest
+        time.sleep(0.5)
+    raise ActionError(
+        f"Nothing new appeared in {folder} within {wait_seconds:g}s. The save dialog may still be open — "
+        "take a screenshot to see."
+    )
 
 
 def focus_tab(query: str) -> Tab:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import functools
 from collections.abc import Callable
+from pathlib import Path
 from typing import Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -20,7 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, browser, files, macos
+from sommus.nodes.laptop import apps, browser, files, macos, pdf
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -43,6 +44,8 @@ def tool(annotations: ToolAnnotations) -> Callable:
                 return fn(*args, **kwargs)
             except macos.ActionError as e:
                 raise ToolError(str(e)) from e
+            except Exception as e:  # never let a tool fail with no explanation
+                raise ToolError(f"{type(e).__name__}: {e}") from e
 
         server.tool(annotations=annotations, structured_output=False)(wrapper)
         return fn
@@ -309,6 +312,34 @@ def find_files(query: str, limit: int = 10, folder: str | None = None) -> str:
 
 
 @tool(READ)
+def read_pdf(path: str, pages: str | None = None, ocr: bool = True) -> str:
+    """Read a PDF as text, scanned ones included — far cheaper than screenshotting page by page.
+
+    Args:
+        path: Path to the PDF, e.g. "~/Downloads/MATH117-L3-F26-Fong.pdf".
+        pages: Which pages, e.g. "1-5", "3", "2,4,7". Omit for the whole file.
+        ocr: Read scanned pages with OCR when they have no text layer (slower, ~3s a page).
+    """
+    text, read_pages, scanned = pdf.read(path, pages, ocr)
+    note = f"{read_pages} page(s)" + (f", {scanned} read by OCR" if scanned else "")
+    return f"{Path(path).name} — {note}:\n\n{text}"
+
+
+@tool(REVERSIBLE)
+def save_browser_tab(tab: str, folder: str = "~/Downloads") -> str:
+    """Save a browser tab's file to disk (Cmd+S) — the way to get a PDF that sits behind a login.
+
+    Follow with read_pdf to read what was saved.
+
+    Args:
+        tab: Tab number, window.tab, or text from its title or URL.
+        folder: Where to save (default ~/Downloads).
+    """
+    found, path = browser.save_tab(tab, folder)
+    return f"Saved '{found.title}' to {path}."
+
+
+@tool(READ)
 def read_file(path: str) -> str:
     """Read a text file, or list a folder's contents. Long files are truncated.
 
@@ -495,12 +526,33 @@ def download_url(url: str, folder: str = "~/Downloads", filename: str | None = N
 # ---------------------------------------------------------------- messaging
 
 
+@tool(READ)
+def find_contact(name: str) -> str:
+    """Look up someone's phone number and email in Contacts. Use this before messaging or emailing a person.
+
+    Args:
+        name: All or part of the name, e.g. "Kuljot", "didi", "mom".
+    """
+    found = apps.find_contacts(name)
+    if not found:
+        everyone = apps.contacts()
+        return f"Nobody in Contacts matches '{name}'. Saved contacts: " + ", ".join(c.name for c in everyone) + "."
+    return "\n".join(str(c) for c in found)
+
+
+@tool(READ)
+def list_contacts() -> str:
+    """List everyone in the Contacts app with their numbers and emails."""
+    everyone = apps.contacts()
+    return f"{len(everyone)} contacts:\n" + "\n".join(str(c) for c in everyone)
+
+
 @tool(DESTRUCTIVE)
 def send_message(to: str, text: str) -> str:
     """Send an iMessage. This reaches another person and can't be unsent.
 
     Args:
-        to: Phone number or Apple ID of the recipient.
+        to: Phone number or Apple ID — look it up with find_contact when given a name.
         text: The message body.
     """
     return f"Sent to {apps.send_message(to, text)}."
