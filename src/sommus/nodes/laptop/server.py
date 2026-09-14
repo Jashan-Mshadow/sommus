@@ -64,7 +64,7 @@ def get_battery() -> str:
 
 @tool(READ)
 def get_volume() -> str:
-    """Get the current output volume (0-100) and whether sound is muted."""
+    """Get the Mac's output volume (0-100) and whether sound is muted — also answers "is it loud"."""
     return _describe_volume(macos.volume())
 
 
@@ -145,7 +145,7 @@ def media_control(action: Literal["play_pause", "next", "previous"]) -> str:
 
 @tool(REVERSIBLE)
 def notify(title: str, message: str) -> str:
-    """Show a macOS notification banner.
+    """Show a macOS notification banner right now. For a reminder at a later time, use create_reminder.
 
     Args:
         title: Short bold heading.

@@ -1,9 +1,10 @@
 [assistant]
 name = "Sommus"
 user = "Jashan"
-model = "claude-opus-5"
-# low | medium | high | xhigh | max — lower is faster and cheaper. The eval decides.
-effort = "medium"
+model = "claude-sonnet-5"
+# low | medium | high | xhigh | max — lower is faster and cheaper.
+# Sonnet 5 + low chosen 2026-09-14 for cost; see the eval numbers in the vault plan.
+effort = "low"
 # Most model↔tool round trips allowed per command.
 max_steps = 12
 # Let Sommus search the web for things it doesn't know (weather, news, facts).

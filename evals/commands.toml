@@ -55,7 +55,7 @@ expect = ["list_apps", "quit_app"]
 confirm = true
 
 [[command]]
-text = "remind me in a notification to drink water"
+text = "pop up a notification saying drink water"
 expect = ["notify"]
 
 [[command]]
