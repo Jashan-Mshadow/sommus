@@ -114,12 +114,19 @@ class Brain:
         self.messages.append({"role": "user", "content": stamp(text)})
         usage, reply, status, steps = Usage(), [], "error", 0
 
+        budget = self.cfg.max_steps
         try:
             while True:
-                if steps == self.cfg.max_steps:
-                    status = "max_steps"
-                    yield Notice(f"Stopped after {steps} steps without finishing.")
-                    break
+                if steps == budget:
+                    if budget >= self.cfg.max_steps_hard:
+                        status = "max_steps"
+                        yield Notice(
+                            f"Stopped after {steps} steps. Ask me to keep going, or break the task into parts."
+                        )
+                        break
+                    # It said it needs a few more; taking them beats abandoning the task.
+                    budget = min(budget + 10, self.cfg.max_steps_hard)
+                    yield Notice(f"Taking {budget - steps} more steps to finish.")
                 steps += 1
 
                 async with self.client.beta.messages.stream(**self._request()) as stream:
@@ -150,6 +157,16 @@ class Brain:
                                 "tool_use_id": block.id,
                                 "content": result.blocks,
                                 "is_error": result.is_error,
+                            }
+                        )
+                    remaining = budget - steps
+                    if 0 < remaining <= 3:
+                        # Told in-band, so it can wrap up deliberately instead of being cut off.
+                        results.append(
+                            {
+                                "type": "text",
+                                "text": f"[{self.cfg.name}: {remaining} steps left in this budget. Finish now, "
+                                "or say plainly what you still need — more steps can be granted.]",
                             }
                         )
                     # All results go back in one message, so parallel calls keep working.

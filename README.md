@@ -21,7 +21,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 ## What it can do
 
-**41 tools on the laptop node**, plus live web search:
+**53 tools across three nodes**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -31,6 +31,8 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | Web & files | open a URL, Spotlight search, read a file or folder, append a line, open a file |
 | Clipboard | read, write |
 | Reminders | create (syncs to iPhone), list |
+| Notes vault | search, read, append, add to the to-do list, commit |
+| Email | search, read, send, reply, draft through the Gmail API |
 | System | battery, Wi-Fi status and toggle, sleep, notifications |
 | Browser | list Chrome tabs, read a tab's text, list its links, click a link or button, switch tabs |
 | Seeing & typing | **screenshot** (an image the model looks at), click at its coordinates, type any text, any keystroke, wait |
@@ -41,6 +43,37 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 
 It answers questions as readily as it acts, and when there's no exact tool it tries the nearest route
 (a Shortcut, a keystroke, opening the right settings pane) before saying it can't.
+
+## Nodes
+
+| Node | Tools | Setup |
+|---|---|---|
+| **laptop** | 41 — sound, display, apps, browser, screen, files, clipboard, reminders, shortcuts | macOS permissions (below) |
+| **vault** | 6 — search, read, list, append, add a to-do, commit the notes repo | none |
+| **gmail** | 6 — search, read, send, reply, draft, mark read | `credentials.json` + `sommus gmail-auth` |
+
+A node that isn't set up reports as unreachable; everything else keeps working.
+
+## Connecting Gmail
+
+Without this, email still works through the browser (`compose_email`); with it, Sommus sends and reads
+mail with nobody at the keyboard.
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → new project, e.g. "Sommus".
+2. APIs & Services → Library → **Gmail API** → Enable.
+3. APIs & Services → OAuth consent screen → **External** → fill in the app name and your email.
+   Add yourself under **Test users**, then set publishing status to **In production** — apps left in
+   Testing have their refresh tokens expire every 7 days, which means signing in again every week.
+   The "Google hasn't verified this app" warning is expected; you're the only user.
+4. Credentials → Create credentials → **OAuth client ID** → **Desktop app** → download the JSON.
+5. Save it as `credentials.json` in this folder (gitignored), then:
+
+```bash
+uv run sommus gmail-auth
+```
+
+Pick the right account, accept the warning, allow access. The token lands in `gmail_token.json`
+(gitignored, chmod 600). `uv run sommus check` shows the connection status.
 
 ## Architecture
 
@@ -123,7 +156,7 @@ uv run sommus eval --only volume    # just the commands mentioning "volume"
 uv run sommus eval --live           # really run every tool (it will sleep the laptop)
 ```
 
-Currently **38/38** on Sonnet 5 at low effort, $0.0074 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
+Currently **42/42** on Sonnet 5 at low effort, ~$0.009 per command. Target: never below 90%. Each run is saved to `data/evals/` with the tools called, replies, latency and cost,
 so model and effort changes can be compared.
 
 ## Layout

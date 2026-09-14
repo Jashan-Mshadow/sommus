@@ -207,6 +207,15 @@ async def check() -> None:
     except Exception as e:
         report(False, "Nodes", f"failed to start: {e}")
 
+    from sommus.nodes.gmail import auth as gmail_auth_module
+
+    if not gmail_auth_module.credentials_present():
+        report(False, "Gmail", "no credentials.json yet — see the README, then run: sommus gmail-auth")
+    elif not gmail_auth_module.signed_in():
+        report(False, "Gmail", "credentials found, not signed in — run: uv run sommus gmail-auth")
+    else:
+        report(True, "Gmail", "connected")
+
     from sommus.nodes.laptop import macos
 
     report(
@@ -293,16 +302,34 @@ async def run_eval(live: bool, only: str | None) -> None:
     console.print(f"[dim]Saved to {evals.save(results, live, cfg)}[/]")
 
 
+async def gmail_auth() -> None:
+    """One-time Google sign-in for the Gmail node."""
+    from sommus.nodes.gmail import auth
+
+    client_secret, token = auth.paths()
+    if not auth.credentials_present():
+        console.print(f"[red]Missing {client_secret.name}.[/] Download the OAuth client from Google Cloud")
+        console.print(f"[dim]and save it as {client_secret}[/]")
+        return
+    console.print("[dim]Opening your browser — pick jashandeepm2008@gmail.com and allow access…[/]")
+    try:
+        address = auth.sign_in()
+    except Exception as e:
+        console.print(f"[red]Sign-in failed:[/] {escape(str(e))}")
+        return
+    console.print(f"[green]✓[/] Connected [bold]{address}[/] [dim]— token saved to {token.name}, gitignored[/]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sommus")
-    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval"], default="chat")
+    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval", "gmail-auth"], default="chat")
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
-    commands = {"chat": chat, "check": check}
+    commands = {"chat": chat, "check": check, "gmail-auth": gmail_auth}
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))

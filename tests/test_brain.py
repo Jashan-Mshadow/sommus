@@ -1,6 +1,7 @@
 """The agent loop and permission gate, against a scripted fake Claude and a real in-process MCP node."""
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 
 import anthropic
 import httpx2
@@ -182,3 +183,40 @@ async def test_only_the_newest_screenshot_stays_in_context(tmp_path):
 
         kinds = [m["content"][0]["content"][0]["type"] for m in brain.messages]
         assert kinds == ["text", "text", "image"]  # only the last one survives
+
+
+async def test_it_takes_more_steps_rather_than_abandoning_a_task(tmp_path):
+    """The soft budget extends itself; only the hard ceiling stops the turn."""
+    node, calls = build_node()
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("test", Client(node))
+        cfg = replace(config(tmp_path), max_steps=2, max_steps_hard=12)
+        claude = FakeClaude(*[tool_call("peek", {}, id=f"toolu_{i}") for i in range(5)], text_reply("Done."))
+        brain = Brain(cfg, hub, Store(tmp_path / "t.db"), client=claude)
+
+        events = [e async for e in brain.handle("keep peeking", never_confirm)]
+
+        assert len(calls) == 5  # would have stopped at 2 before
+        assert any(isinstance(e, Notice) and "more steps to finish" in e.text for e in events)
+        assert isinstance(events[-1], TurnDone)
+
+
+async def test_it_is_warned_before_the_budget_runs_out(tmp_path):
+    node, _ = build_node()
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("test", Client(node))
+        cfg = replace(config(tmp_path), max_steps=3, max_steps_hard=3)
+        claude = FakeClaude(tool_call("peek", {}), tool_call("peek", {}, id="toolu_2"), text_reply("Done."))
+        brain = Brain(cfg, hub, Store(tmp_path / "t.db"), client=claude)
+
+        [e async for e in brain.handle("peek twice", never_confirm)]
+
+        warnings = [
+            block["text"]
+            for request in claude.requests
+            for message in request["messages"]
+            if isinstance(message["content"], list)
+            for block in message["content"]
+            if isinstance(block, dict) and block.get("type") == "text"
+        ]
+        assert any("steps left in this budget" in w for w in warnings)

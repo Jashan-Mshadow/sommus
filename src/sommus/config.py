@@ -26,6 +26,7 @@ class Config:
     model: str
     effort: str
     max_steps: int
+    max_steps_hard: int
     web_search: bool
     nodes: tuple[NodeConfig, ...]
     overrides: dict[str, Tier]
@@ -42,7 +43,8 @@ def load(path: Path | None = None) -> Config:
         user=assistant["user"],
         model=assistant["model"],
         effort=assistant.get("effort", "medium"),
-        max_steps=assistant.get("max_steps", 12),
+        max_steps=assistant.get("max_steps", 20),
+        max_steps_hard=assistant.get("max_steps_hard", 60),
         web_search=assistant.get("web_search", True),
         nodes=tuple(NodeConfig(n["name"], n["module"], n.get("env", {})) for n in raw.get("nodes", [])),
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},

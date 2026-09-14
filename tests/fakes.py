@@ -88,6 +88,7 @@ def config(tmp_path: Path, overrides=None, ask=True) -> Config:
         model="claude-opus-5",
         effort="medium",
         max_steps=4,
+        max_steps_hard=4,
         web_search=False,
         nodes=(),
         overrides=overrides or {},

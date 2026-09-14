@@ -5,9 +5,10 @@ model = "claude-sonnet-5"
 # low | medium | high | xhigh | max — lower is faster and cheaper.
 # Sonnet 5 + low chosen 2026-09-14 for cost; see the eval numbers in the vault plan.
 effort = "low"
-# Most model↔tool round trips allowed per command. Browser work needs room:
-# 12 wasn't enough to open LEARN, find a PDF and write notes from it.
+# Soft step budget: Sommus is warned when it's running low, and takes more if it
+# genuinely needs them (announced). max_steps_hard is the real ceiling.
 max_steps = 20
+max_steps_hard = 60
 # Let Sommus search the web for things it doesn't know (weather, news, facts).
 # Runs on Anthropic's servers; ~1¢ per search on top of tokens.
 web_search = true
@@ -24,8 +25,19 @@ env = { SOMMUS_PROTECT_APPS = "Terminal,iTerm2,Ghostty,Warp,Alacritty,kitty,Clau
 # true: destructive tools (quit_app, sleep_computer...) wait for a y/N first.
 ask_before_destructive = false
 
+# Needs one-time setup: credentials.json from Google Cloud, then `uv run sommus gmail-auth`.
+# Until then this node just reports as unreachable and everything else keeps working.
+[[nodes]]
+name = "gmail"
+module = "sommus.nodes.gmail.server"
+
+[[nodes]]
+name = "vault"
+module = "sommus.nodes.vault.server"
+env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain" }
+
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]
-# Sending a message reaches another person and can't be undone, so it asks every
-# time even though everything else runs freely. Set it to "reversible" to change that.
-send_message = "always_ask"
+# Jashan's call (2026-09-14): Sommus never asks, for anything, on any device.
+# Outward-facing actions (send_message, compose_email with send=true) run like the rest.
+# The "always_ask" tier still exists in code if a future tool ever earns it.

@@ -17,3 +17,5 @@ data/
 .ruff_cache/
 .mcp.json
 profile.md
+credentials.json
+gmail_token.json

@@ -144,7 +144,7 @@ expect = ["list_browser_tabs"]
 text = "read me the MATH 115 tab"
 
 [[command]]
-text = "look at my screen and tell me which app is in front"
+text = "look at my screen and describe what you can see"
 expect = ["screenshot"]
 
 [[command]]
@@ -161,7 +161,25 @@ expect = ["send_message"]
 
 [[command]]
 text = "email j9multan@uwaterloo.ca, subject Meeting, remind him about our 4:30 meeting today"
-expect = ["compose_email"]
+expect = ["send_email"]
+
+# --- vault and email
+
+[[command]]
+text = "what did I write about design teams"
+expect = ["search_vault"]
+
+[[command]]
+text = "add print resumes before the career fair to my todo"
+expect = ["add_todo"]
+
+[[command]]
+text = "what's on my todo list"
+expect = ["read_note"]
+
+[[command]]
+text = "any unread emails from today"
+expect = ["search_email"]
 
 # No tool for this yet. Sommus should improvise (open the Bluetooth settings pane)
 # or say what's missing — both are fine, so no expectation is set.
