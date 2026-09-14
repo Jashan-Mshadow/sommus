@@ -73,6 +73,34 @@ uv run sommus telegram
 
 `/new` starts a fresh conversation, `/cost` reports the day's spend.
 
+### Keeping it running
+
+The bot stops when its terminal closes, so start it detached instead:
+
+```bash
+uv run sommus start     # background, survives closing the window
+uv run sommus status    # is it alive, plus the last log lines
+uv run sommus stop
+```
+
+Not a LaunchAgent on purpose: macOS ties Accessibility and Automation permissions to the *responsible*
+app, which for a launchd job is the bare Python binary — every grant would have to be redone, and
+prompts would appear with nobody there to click them. Started from Terminal, the process inherits
+Terminal's grants for its whole life. After a reboot, run `sommus start` once.
+
+The laptop still has to be awake: closing the lid pauses everything until it's opened.
+
+### Permissions, once
+
+```bash
+uv run sommus permissions
+```
+
+Triggers every macOS prompt in one go — Accessibility, Screen Recording, Contacts, Reminders, Chrome,
+Chrome's JavaScript setting, Messages — while you're at the keyboard to approve them. Worth running
+before relying on the background service, since a prompt that appears while you're away silently
+blocks whatever it was doing.
+
 ## Connecting Gmail
 
 Sommus talks to Gmail over IMAP and SMTP with an **app password**, not the Gmail API.

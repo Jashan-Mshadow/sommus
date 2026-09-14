@@ -325,21 +325,90 @@ async def telegram() -> None:
         console.print(f"[red]{escape(str(e))}[/]")
 
 
+async def permissions() -> None:
+    """Trigger every macOS permission prompt at once, while you're here to click Allow."""
+    from sommus.nodes.laptop import apps, browser, macos
+
+    console.print("[bold]Warming up macOS permissions.[/] Click [bold]OK / Allow[/] on each prompt.\n")
+    checks = [
+        ("Accessibility (keys, typing, clicking)", lambda: "granted" if macos.can_post_events() else None),
+        ("Screen Recording (screenshots)", lambda: f"{macos.screenshot()[1]}px wide"),
+        ("Contacts", lambda: f"{len(apps.contacts())} contacts"),
+        ("Reminders", lambda: f"{len(apps.list_reminders(3))} open reminders"),
+        ("Chrome", lambda: f"{len(browser.list_tabs())} tabs"),
+        ("Chrome JavaScript (reading pages)", lambda: browser._js(browser.list_tabs()[0], "document.title") and "on"),
+        ("Messages", lambda: macos._osascript('tell application "Messages" to get name', timeout=20) or "ready"),
+    ]
+    missing = []
+    for label, check in checks:
+        try:
+            result = check()
+        except Exception as e:
+            result, detail = None, str(e).split(".")[0]
+        else:
+            detail = ""
+        if result:
+            console.print(f"[green]✓[/] {label} [dim]— {escape(str(result))}[/]")
+        else:
+            missing.append(label)
+            console.print(f"[red]✗[/] {label} [dim]— {escape(detail or 'not granted')}[/]")
+    if missing:
+        console.print(
+            "\n[yellow]Still missing:[/] " + ", ".join(missing) + "\n[dim]Accessibility and Screen Recording "
+            "are granted in System Settings → Privacy & Security (add Terminal, then restart it). "
+            "The rest prompt on use — run this again to retry.[/]"
+        )
+    else:
+        console.print("\n[bold green]All set.[/] Sommus won't ask again, including when running in the background.")
+
+
+async def service(action: str) -> None:
+    """Keep the Telegram bot running after the terminal closes."""
+    from sommus import service as background
+
+    cfg = config.load()
+    if action == "start":
+        if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+            console.print("[red]No TELEGRAM_BOT_TOKEN in .env.[/]")
+            return
+        try:
+            pid, log = background.start(cfg)
+        except RuntimeError as e:
+            console.print(f"[red]{escape(str(e))}[/]")
+            return
+        console.print(f"[green]✓[/] Running in the background [dim](pid {pid}) — log: {log}[/]")
+        console.print("[dim]Close this window whenever. Stop it with: sommus-service stop[/]")
+    elif action == "stop":
+        pid = background.stop(cfg)
+        console.print(f"[green]✓[/] Stopped (pid {pid})." if pid else "[dim]Not running.[/]")
+    else:
+        pid = background.running_pid(cfg)
+        console.print(f"[green]●[/] Running (pid {pid})." if pid else "[dim]○ Not running.[/]")
+        console.print(f"[dim]{escape(background.tail(cfg, 12))}[/]")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sommus")
-    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool", "eval", "telegram"], default="chat")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=["chat", "check", "tool", "eval", "telegram", "permissions", "start", "stop", "status"],
+        default="chat",
+    )
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
-    commands = {"chat": chat, "check": check, "telegram": telegram}
+    commands = {"chat": chat, "check": check, "telegram": telegram, "permissions": permissions}
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))
         elif args.command == "eval":
             asyncio.run(run_eval(args.live, args.only))
+        elif args.command in ("start", "stop", "status"):
+            asyncio.run(service(args.command))
         else:
             asyncio.run(commands[args.command]())
     except KeyboardInterrupt:
