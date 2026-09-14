@@ -1,4 +1,4 @@
-"""Terminal interface: `sommus` to chat, `sommus check` to verify setup."""
+"""Terminal interface: `sommus` to chat, `sommus check` to verify setup, `sommus tool` to run a tool directly."""
 
 from __future__ import annotations
 
@@ -212,12 +212,48 @@ async def check() -> None:
     console.print("\n[bold green]Ready.[/] Run [bold]sommus[/]." if ok else "\n[bold red]Fix the ✗ items above.[/]")
 
 
+def _parse_tool_args(pairs: list[str]) -> dict[str, Any]:
+    """`level=20 name=Spotify` → {"level": 20, "name": "Spotify"}. Values are JSON when they parse as JSON."""
+    args = {}
+    for pair in pairs:
+        key, sep, value = pair.partition("=")
+        if not sep:
+            raise SystemExit(f"Arguments look like key=value, got '{pair}'.")
+        try:
+            args[key] = json.loads(value)
+        except json.JSONDecodeError:
+            args[key] = value
+    return args
+
+
+async def run_tool(name: str | None, pairs: list[str]) -> None:
+    """Call a tool directly, no AI involved. For testing nodes without an API key."""
+    cfg = config.load()
+    async with NodeHub(cfg.nodes, Policy(cfg.overrides)) as hub:
+        if name is None:
+            for t in hub.tools:
+                params = ", ".join(t.tool.input_schema.get("properties", {}))
+                console.print(
+                    f"  [{TIER_STYLE[t.tier]}]{t.tool.name}[/]({params}) [dim]— {t.tool.description.splitlines()[0]}[/]"
+                )
+            console.print("\n[dim]Run one: sommus tool set_volume level=20[/]")
+            return
+        output, is_error = await hub.call(name, _parse_tool_args(pairs))
+        console.print(f"{'[red]✗' if is_error else '[green]✓'}[/] {escape(output)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="sommus")
-    parser.add_argument("command", nargs="?", choices=["chat", "check"], default="chat")
+    parser.add_argument("command", nargs="?", choices=["chat", "check", "tool"], default="chat")
+    parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
+    parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
+    commands = {"chat": chat, "check": check}
     try:
-        asyncio.run(check() if args.command == "check" else chat())
+        if args.command == "tool":
+            asyncio.run(run_tool(args.tool_name, args.tool_args))
+        else:
+            asyncio.run(commands[args.command]())
     except KeyboardInterrupt:
         pass

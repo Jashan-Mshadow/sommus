@@ -69,6 +69,14 @@ Privacy & Security → Accessibility → enable the terminal app you run Sommus 
 
 In the chat: `/tools`, `/cost`, `/new`, `/quit`. Ctrl+C cancels a reply.
 
+Test a tool directly, no AI or API key needed:
+
+```bash
+uv run sommus tool                      # list tools
+uv run sommus tool set_volume level=20
+uv run sommus tool notify title=Hi message="From Sommus"
+```
+
 ### Use the laptop node from Claude Desktop or Claude Code
 
 The node is a standard MCP server, so it works without the brain:
