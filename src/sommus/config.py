@@ -46,7 +46,10 @@ def load(path: Path | None = None) -> Config:
         max_steps=assistant.get("max_steps", 20),
         max_steps_hard=assistant.get("max_steps_hard", 60),
         web_search=assistant.get("web_search", True),
-        nodes=tuple(NodeConfig(n["name"], n["module"], n.get("env", {})) for n in raw.get("nodes", [])),
+        nodes=tuple(
+            NodeConfig(n["name"], n["module"], {k: os.path.expandvars(v) for k, v in n.get("env", {}).items()})
+            for n in raw.get("nodes", [])
+        ),
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},
         data_dir=ROOT / "data",
         ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),

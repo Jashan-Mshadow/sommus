@@ -25,11 +25,12 @@ env = { SOMMUS_PROTECT_APPS = "Terminal,iTerm2,Ghostty,Warp,Alacritty,kitty,Clau
 # true: destructive tools (quit_app, sleep_computer...) wait for a y/N first.
 ask_before_destructive = false
 
-# Needs one-time setup: credentials.json from Google Cloud, then `uv run sommus gmail-auth`.
-# Until then this node just reports as unreachable and everything else keeps working.
+# Needs GMAIL_ADDRESS and GMAIL_APP_PASSWORD in .env (app password, not the account
+# password). Until then its tools just explain the setup; everything else keeps working.
 [[nodes]]
 name = "gmail"
 module = "sommus.nodes.gmail.server"
+env = { GMAIL_ADDRESS = "${GMAIL_ADDRESS}", GMAIL_APP_PASSWORD = "${GMAIL_APP_PASSWORD}" }
 
 [[nodes]]
 name = "vault"

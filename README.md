@@ -32,7 +32,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | Clipboard | read, write |
 | Reminders | create (syncs to iPhone), list |
 | Notes vault | search, read, append, add to the to-do list, commit |
-| Email | search, read, send, reply, draft through the Gmail API |
+| Email | search, read, send, reply, draft over IMAP/SMTP |
 | System | battery, Wi-Fi status and toggle, sleep, notifications |
 | Browser | list Chrome tabs, read a tab's text, list its links, click a link or button, switch tabs |
 | Seeing & typing | **screenshot** (an image the model looks at), click at its coordinates, type any text, any keystroke, wait |
@@ -50,30 +50,29 @@ It answers questions as readily as it acts, and when there's no exact tool it tr
 |---|---|---|
 | **laptop** | 41 — sound, display, apps, browser, screen, files, clipboard, reminders, shortcuts | macOS permissions (below) |
 | **vault** | 6 — search, read, list, append, add a to-do, commit the notes repo | none |
-| **gmail** | 6 — search, read, send, reply, draft, mark read | `credentials.json` + `sommus gmail-auth` |
+| **gmail** | 6 — search, read, send, reply, draft, mark read | app password in `.env` |
 
 A node that isn't set up reports as unreachable; everything else keeps working.
 
 ## Connecting Gmail
 
-Without this, email still works through the browser (`compose_email`); with it, Sommus sends and reads
-mail with nobody at the keyboard.
+Sommus talks to Gmail over IMAP and SMTP with an **app password**, not the Gmail API.
+Gmail's read scopes are "restricted", so a personal OAuth app can't leave Google's Testing
+mode without a security assessment — and tokens in Testing expire every 7 days. An app
+password never expires and needs no cloud project.
 
-1. [console.cloud.google.com](https://console.cloud.google.com) → new project, e.g. "Sommus".
-2. APIs & Services → Library → **Gmail API** → Enable.
-3. APIs & Services → OAuth consent screen → **External** → fill in the app name and your email.
-   Add yourself under **Test users**, then set publishing status to **In production** — apps left in
-   Testing have their refresh tokens expire every 7 days, which means signing in again every week.
-   The "Google hasn't verified this app" warning is expected; you're the only user.
-4. Credentials → Create credentials → **OAuth client ID** → **Desktop app** → download the JSON.
-5. Save it as `credentials.json` in this folder (gitignored), then:
+1. Turn on **2-Step Verification** on the Google account (required for app passwords).
+2. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), name it
+   "Sommus", and copy the 16-character password.
+3. Put both in `.env` (gitignored):
 
-```bash
-uv run sommus gmail-auth
+```
+GMAIL_ADDRESS=you@gmail.com
+GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
 ```
 
-Pick the right account, accept the warning, allow access. The token lands in `gmail_token.json`
-(gitignored, chmod 600). `uv run sommus check` shows the connection status.
+`uv run sommus check` verifies the login. Without it, email still works through the browser
+(`compose_email`) and the Gmail tools just explain the setup.
 
 ## Architecture
 
