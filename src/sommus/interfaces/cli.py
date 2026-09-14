@@ -114,6 +114,8 @@ async def chat() -> None:
         hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
     try:
         brain = Brain(cfg, hub, store)
+        for name, why in hub.unreachable.items():
+            console.print(f"[yellow]! Node '{name}' is unreachable — its tools are unavailable. {escape(why)}[/]")
         count, spent = store.cost_today()
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· {cfg.model} · {len(hub.api_tools())} tools · "
@@ -196,6 +198,8 @@ async def check() -> None:
             report(
                 True, "Nodes", f"{len(hub.tools)} tools — " + ", ".join(f"{n} {t.value}" for t, n in tiers.items() if n)
             )
+            for name, why in hub.unreachable.items():
+                report(False, f"Node '{name}' unreachable", why)
             for name in ("get_battery", "get_volume"):
                 output, is_error = await hub.call(name, {})
                 report(not is_error, name, output)

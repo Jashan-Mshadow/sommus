@@ -144,3 +144,11 @@ async def test_request_uses_caching_and_refusal_fallback(tmp_path):
         assert request["cache_control"] == {"type": "ephemeral"}
         assert request["fallbacks"] == "default"
         assert [t["name"] for t in request["tools"]] == sorted(t["name"] for t in request["tools"])
+
+
+async def test_an_unreachable_node_does_not_stop_the_brain(tmp_path):
+    from sommus.config import NodeConfig
+
+    async with NodeHub((NodeConfig("ghost", "sommus.nodes.does_not_exist"),), Policy()) as hub:
+        assert "ghost" in hub.unreachable
+        assert hub.tools == []  # brain still starts, just with no tools from that node

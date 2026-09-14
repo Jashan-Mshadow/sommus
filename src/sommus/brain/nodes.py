@@ -29,13 +29,19 @@ class NodeHub:
         self._policy = policy
         self._clients: dict[str, Client] = {}
         self._tools: dict[str, NodeTool] = {}
+        self.unreachable: dict[str, str] = {}  # node name → why
         self._stack = AsyncExitStack()
 
     async def __aenter__(self) -> NodeHub:
         try:
             for node in self._node_configs:
                 params = StdioServerParameters(command=sys.executable, args=["-m", node.module])
-                await self.add(node.name, Client(params))
+                try:
+                    await self.add(node.name, Client(params))
+                except Exception as e:
+                    # A device that's off or unplugged must not stop the brain: the rest
+                    # of Sommus keeps working, and it says which node is missing.
+                    self.unreachable[node.name] = str(e) or type(e).__name__
         except BaseException:
             await self._stack.aclose()
             raise
