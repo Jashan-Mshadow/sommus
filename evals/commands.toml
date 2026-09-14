@@ -1,0 +1,90 @@
+# The 20 Commands — real things Jashan would type. Edit freely: these define
+# what Phase 1 must handle, and become the eval (target: 18/20 pass).
+#
+# expect = tools that must be called (in any order). [] means no tool should run.
+# confirm = true if the permission gate should ask before running.
+
+[[command]]
+text = "what's my battery at"
+expect = ["get_battery"]
+
+[[command]]
+text = "volume 30"
+expect = ["set_volume"]
+
+[[command]]
+text = "mute"
+expect = ["set_mute"]
+
+[[command]]
+text = "turn it up a bit"
+expect = ["get_volume", "set_volume"]
+
+[[command]]
+text = "what apps do I have open"
+expect = ["list_apps"]
+
+[[command]]
+text = "open spotify"
+expect = ["open_app"]
+
+[[command]]
+text = "pause the music"
+expect = ["media_control"]
+
+[[command]]
+text = "skip this song"
+expect = ["media_control"]
+
+[[command]]
+text = "open my ECE 150 LEARN page"
+expect = ["open_url"]
+
+[[command]]
+text = "pull up the MATH 115 textbook on google"
+expect = ["open_url"]
+
+[[command]]
+text = "quit messages"
+expect = ["quit_app"]
+confirm = true
+
+[[command]]
+text = "close everything except chrome and obsidian"
+expect = ["list_apps", "quit_app"]
+confirm = true
+
+[[command]]
+text = "remind me in a notification to drink water"
+expect = ["notify"]
+
+[[command]]
+text = "lock my laptop"
+expect = ["lock_screen"]
+
+[[command]]
+text = "turn off the screen"
+expect = ["sleep_display"]
+
+[[command]]
+text = "put the laptop to sleep"
+expect = ["sleep_computer"]
+confirm = true
+
+[[command]]
+text = "study mode: close messages, open obsidian, volume 10"
+expect = ["quit_app", "open_app", "set_volume"]
+confirm = true
+
+[[command]]
+text = "is it loud right now"
+expect = ["get_volume"]
+
+# Things Sommus can't do yet — it should say so, not improvise.
+[[command]]
+text = "set my brightness to 50%"
+expect = []
+
+[[command]]
+text = "connect my bluetooth speaker"
+expect = []
