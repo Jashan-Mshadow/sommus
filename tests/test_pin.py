@@ -70,7 +70,8 @@ def test_three_wrong_tries_lock_it_out_even_for_the_right_pin(tmp_path):
     pin.set_pin(tmp_path, PIN)
     clock = Clock()
     gate = pin.Gate(tmp_path, {"read_email"}, clock=clock)
-    assert [gate.attempt("0000") for _ in range(3)] == ["Wrong PIN.", "Wrong PIN.", "Wrong PIN. Locked for 5 minutes."]
+    wrong = "Wrong PIN — I heard 4 digits."
+    assert [gate.attempt("0000") for _ in range(3)] == [wrong, wrong, f"{wrong} Locked for 5 minutes."]
     assert gate.attempt(PIN).startswith("Too many wrong tries")
     clock.now += 301
     assert gate.attempt(PIN) == "Unlocked for 10 minutes."
@@ -130,7 +131,7 @@ async def test_a_wrong_pin_runs_nothing_and_costs_nothing(tmp_path):
         await run(brain, "read my email")
         events = await run(brain, "0000")
         assert calls == [] and len(model.requests) == 2
-        assert [e.text for e in events if isinstance(e, TextDelta)] == ["Wrong PIN."]
+        assert [e.text for e in events if isinstance(e, TextDelta)] == ["Wrong PIN — I heard 4 digits."]
 
 
 async def test_basic_tools_never_ask(tmp_path):
@@ -187,3 +188,36 @@ async def test_after_unlocking_the_model_knows_it_is_unlocked(tmp_path):
         await run(brain, "okay, send the message now")
         history = str(model.requests[0]["messages"])
         assert "unlocked" in history and PIN not in history
+
+
+def test_a_pin_said_with_a_pause_in_it_is_put_back_together(tmp_path):
+    """Found in use: the speech detector ended the sentence mid-number, so '268' and '4' arrived
+    as separate messages and the PIN came back wrong."""
+    pin.set_pin(tmp_path, PIN)
+    clock = Clock()
+    gate = pin.Gate(tmp_path, {"read_email"}, clock=clock)
+    assert gate.attempt("51") == "" and gate.needs_pin("read_email")
+    assert gate.attempt("73") == "Unlocked for 10 minutes."
+
+
+def test_pieces_are_forgotten_after_a_while(tmp_path):
+    pin.set_pin(tmp_path, PIN)
+    clock = Clock()
+    gate = pin.Gate(tmp_path, {"read_email"}, clock=clock)
+    assert gate.attempt("51") == ""
+    clock.now += pin.PARTIAL_SECONDS + 1
+    assert gate.attempt("73") == ""  # too late to join: it's the start of a new one
+    assert gate.needs_pin("read_email")
+
+
+def test_a_wrong_pin_says_how_many_digits_it_heard(tmp_path):
+    """So a misheard number is obvious instead of looking like the PIN changed."""
+    pin.set_pin(tmp_path, PIN)
+    gate = pin.Gate(tmp_path, {"read_email"})
+    assert gate.attempt("2604") == "Wrong PIN — I heard 4 digits."
+
+
+async def test_a_number_on_its_own_never_reaches_the_model_while_locked(tmp_path):
+    async with gated_brain(tmp_path, text_reply("unused")) as (brain, model, _):
+        events = await run(brain, "268")
+        assert model.requests == [] and [e for e in events if isinstance(e, TextDelta)] == []

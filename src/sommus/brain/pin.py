@@ -24,6 +24,8 @@ from pathlib import Path
 PIN_FILE = "pin.json"
 MAX_TRIES = 3
 LOCKOUT_SECONDS = 300
+# A PIN said with a pause in it arrives as two utterances ("268", then "4"): hold the first briefly.
+PARTIAL_SECONDS = 12
 
 ONES = {
     "zero": 0, "oh": 0, "o": 0, "one": 1, "two": 2, "to": 2, "too": 2, "three": 3, "four": 4, "for": 4,
@@ -39,8 +41,8 @@ AROUND = {"my", "pin", "is", "its", "it", "the", "code", "passcode", "password",
           "ok", "okay", "number"}  # fmt: skip
 
 
-def spoken_digits(text: str) -> str | None:
-    """The PIN in a message that is only a PIN: '2684', '26 84', 'two six eight four',
+def spoken_digits(text: str, least: int = 4) -> str | None:
+    """The digits of a message that is nothing but digits: '2684', '26 84', 'two six eight four',
     'twenty six eighty four', 'my pin is 2684'. None for anything else."""
     tokens = re.findall(r"[a-z]+|\d+", text.lower().replace("-", " "))
     tokens = [t for t in tokens if t not in AROUND and t != "and"]
@@ -63,7 +65,7 @@ def spoken_digits(text: str) -> str | None:
         else:
             return None
         i += 1
-    return digits if 4 <= len(digits) <= 8 else None
+    return digits if least <= len(digits) <= 8 else None
 
 
 # A PIN said inside a request: "the PIN is 2684, send Didi a message", "override 2684 read my email".
@@ -76,7 +78,7 @@ INLINE = re.compile(
 def split_pin(text: str) -> tuple[str | None, str]:
     """('2684', 'Send message to Didi.') from 'The PIN is 2684. Send message to Didi.' — the request
     goes on without the PIN in it. (None, text) when there's no PIN."""
-    whole = spoken_digits(text)
+    whole = spoken_digits(text, least=1)  # a lone "4" can be the tail of a PIN said with a pause
     if whole:
         return whole, ""
     found = INLINE.search(text)
@@ -124,6 +126,7 @@ class Gate:
         self.wrong = 0
         self.locked_out_until = 0.0
         self.pending: str | None = None  # the request that hit the lock, replayed once unlocked
+        self.partial = ("", 0.0)  # digits heard so far, when a PIN is said in pieces
 
     @property
     def active(self) -> bool:
@@ -152,11 +155,21 @@ class Gate:
         self.unlocked_until = 0.0
 
     def attempt(self, text: str) -> str | None:
-        """None if the message isn't only a PIN. Otherwise the spoken reply: unlocked, wrong, or locked out."""
+        """None if the message isn't a PIN. '' if it's the start of one and more digits are expected.
+        Otherwise the spoken reply: unlocked, wrong, or locked out."""
         if not self.active:
             return None
-        pin = spoken_digits(text)
-        return None if pin is None else self.check(pin)
+        pin = spoken_digits(text, least=1 if not self.unlocked else 4)
+        if pin is None:
+            return None
+        held, at = self.partial
+        if held and self.clock() - at <= PARTIAL_SECONDS:
+            pin = (held + pin)[:8]
+        if len(pin) < 4:
+            self.partial = (pin, self.clock())
+            return ""  # wait for the rest, without a word: he's mid-PIN
+        self.partial = ("", 0.0)
+        return self.check(pin)
 
     def check(self, pin: str) -> str:
         now = self.clock()
@@ -170,9 +183,10 @@ class Gate:
             self.unlocked_until = now + self.unlock_seconds
             return f"Unlocked for {int(self.unlock_seconds // 60)} minutes."
         self.wrong += 1
+        heard = f"Wrong PIN — I heard {len(pin)} digits."
         if self.wrong >= MAX_TRIES:
             self.wrong = 0
             self.pending = None
             self.locked_out_until = now + LOCKOUT_SECONDS
-            return "Wrong PIN. Locked for 5 minutes."
-        return "Wrong PIN."
+            return f"{heard} Locked for 5 minutes."
+        return heard
