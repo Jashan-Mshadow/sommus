@@ -100,6 +100,9 @@ say_voice = "Samantha (Enhanced)"
 say_rate = 190                                  # words per minute
 stt_model = "mlx-community/whisper-small.en-mlx"  # runs on the M1, ~0.35s per command
 silence_seconds = 0.9                           # how long a pause ends what you're saying
+wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus"]  # at the start or end of what's said
+awake_seconds = 10                              # after a reply, how long it keeps listening without the wake phrase
+vad_threshold = 0.5                             # speech detector; raise toward 0.7 if noise keeps waking Whisper
 # input_device = "Jashan Microphone"            # e.g. use the iPhone as the mic
 
 [fastpath]

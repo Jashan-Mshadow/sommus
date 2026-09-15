@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -12,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import anthropic
+import numpy as np
 from dotenv import load_dotenv
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
@@ -186,7 +188,8 @@ async def chat() -> None:
 
 
 async def voice_chat() -> None:
-    """Talk to Sommus: press Return, speak, and hear the reply. Typing still works."""
+    """Talk to Sommus hands-free: say "Hey Sommus", then just talk until the conversation ends.
+    Typing works too, and Return wakes it without the wake phrase."""
     from sommus.interfaces import voice
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -197,92 +200,178 @@ async def voice_chat() -> None:
     store = Store(cfg.data_dir / "sommus.db")
     session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
+    detector = voice.SpeechDetector(
+        silence_seconds=float(settings.get("silence_seconds", 0.9)),
+        threshold=float(settings.get("vad_threshold", 0.5)),
+    )
+    wake = voice.wake_pattern(settings.get("wake_phrases", ["sommus", "hey sommus"]))
+    awake_seconds = float(settings.get("awake_seconds", 10))
 
     bot_task = None
     with console.status("[dim]Starting nodes and loading the voice and speech recognition…[/]"):
         hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
         engine = await _warm_voice(voice, settings)
         await asyncio.to_thread(transcriber.warm_up)
+        await asyncio.to_thread(detector.probability, np.zeros(voice.CHUNK, dtype=np.float32))  # load the VAD
     speaker = voice.Speaker(
         engine,
         on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"),
         say_as=settings.get("say_as", {}),
     )
+    loop = asyncio.get_running_loop()
+    heard: asyncio.Queue[np.ndarray] = asyncio.Queue()
+    state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False}
+
+    def deaf() -> bool:  # runs on the listener thread; plain reads only
+        now = time.monotonic()
+        return state["busy"] or speaker.speaking or now < state["deaf_until"] or now < speaker.quiet_since + 0.5
+
+    def chime(path: str) -> None:
+        state["deaf_until"] = time.monotonic() + 0.6  # don't hear our own chime
+        voice.chime(path)
+
+    def wake_up() -> None:
+        if time.monotonic() >= state["awake_until"]:
+            chime(voice.CHIME_WAKE)
+        state["awake_until"] = time.monotonic() + awake_seconds
+
+    def fall_asleep() -> None:
+        state["awake_until"] = 0.0
+        chime(voice.CHIME_SLEEP)
+        console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
+
+    listener = voice.Listener(
+        detector,
+        deliver=lambda audio: loop.call_soon_threadsafe(heard.put_nowait, audio),
+        deaf=deaf,
+        device=settings.get("input_device"),
+        on_error=lambda e: loop.call_soon_threadsafe(
+            console.print, f"[red]! Microphone unavailable, still trying: {escape(str(e))}[/]"
+        ),
+    )
+
+    async def run_turn(text: str, heard_in: float | None) -> None:
+        state["busy"] = True
+        speaker.first_word_at = None
+        asked_at = time.monotonic()
+        turn = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
+        loop.add_signal_handler(signal.SIGINT, turn.cancel)
+        try:
+            await turn
+        except asyncio.CancelledError:
+            speaker.interrupt()
+            console.print("[yellow]! Cancelled.[/]")
+        finally:
+            loop.remove_signal_handler(signal.SIGINT)
+        await speaker.finished()
+        state["busy"] = False
+        if speaker.first_word_at and heard_in is not None:
+            console.print(
+                f"[dim]  first spoken word {speaker.first_word_at - asked_at + heard_in:.1f}s after you stopped[/]"
+            )
+
     try:
         brain = Brain(cfg, hub, store)
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· voice · {escape(engine.label)}{telegram_note}[/]\n"
-            "[dim]Press [bold]Return[/bold] and talk — it stops when you pause. Or type. /quit to exit.[/]"
+            "[dim]Always listening: say “Hey Sommus”, then just talk. It sleeps again when the conversation "
+            "goes quiet. Return wakes it, typing works, /quit exits.[/]"
         )
         speaker.feed(f"{cfg.name} is listening.")
         speaker.flush()
-        loop = asyncio.get_running_loop()
+        await speaker.finished()
+        listener.start()
+        prompt: asyncio.Task | None = None
 
         while True:
-            await speaker.finished()
-            try:
-                with patch_stdout(raw=True):
-                    typed = (await session.prompt_async(HTML("<b>🎙  </b>"))).strip()
-            except KeyboardInterrupt:
-                speaker.interrupt()
-                continue
-            except EOFError:
-                break
-            if typed.startswith("/"):
-                if not handle_command(typed, brain, hub, store):
-                    break
+            if prompt is None:
+                prompt = asyncio.create_task(_prompt_line(session))
+            listening = asyncio.create_task(heard.get())
+            awake = time.monotonic() < state["awake_until"]
+            timeout = max(0.0, state["awake_until"] - time.monotonic()) if awake else None
+            done, _ = await asyncio.wait({prompt, listening}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if listening not in done:
+                listening.cancel()
+            if not done:  # the conversation went quiet
+                if detector.buffer:  # ...unless someone just started talking
+                    state["awake_until"] = time.monotonic() + 1
+                else:
+                    fall_asleep()
                 continue
 
-            if typed:
-                text, heard_in = typed, None
-            else:
-                voice.chime(voice.CHIME_START)
-                console.print("[dim]  listening…[/]")
-                detector = voice.SilenceDetector(silence_seconds=float(settings.get("silence_seconds", 0.9)))
-                started = time.monotonic()
+            if prompt in done:
+                finished, prompt = prompt, None
                 try:
-                    audio = await asyncio.to_thread(voice.record_until_silence, detector, settings.get("input_device"))
-                except Exception as e:  # no mic permission, device unplugged
-                    console.print(f"[red]! Couldn't use the microphone: {escape(str(e))}[/]")
+                    typed = finished.result()
+                except EOFError:
+                    break
+                if typed == CTRL_C:
+                    speaker.interrupt()
                     continue
-                voice.chime(voice.CHIME_STOP)
-                if audio is None:
-                    console.print("[dim]  didn't hear anything.[/]")
-                    continue
-                spoke_for = time.monotonic() - started
-                stt_started = time.monotonic()
-                text = await asyncio.to_thread(transcriber.transcribe, audio)
-                heard_in = time.monotonic() - stt_started
-                if not text:
-                    console.print("[dim]  didn't catch that — try again.[/]")
-                    continue
-                shown = escape(pin.redact(text))
-                console.print(
-                    f"[bold]you ›[/] {shown} [dim]({spoke_for:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
-                )
+                typed = typed.strip()
+                if typed.startswith("/"):
+                    if not handle_command(typed, brain, hub, store):
+                        break
+                elif not typed:  # Return: wake without the wake phrase
+                    wake_up()
+                    console.print("[dim]  listening…[/]")
+                else:
+                    await run_turn(typed, None)
+                    if time.monotonic() < state["awake_until"]:
+                        state["awake_until"] = time.monotonic() + awake_seconds
+                continue
 
-            speaker.first_word_at = None
-            asked_at = time.monotonic()
-            turn = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
-            loop.add_signal_handler(signal.SIGINT, turn.cancel)
-            try:
-                await turn
-            except asyncio.CancelledError:
-                speaker.interrupt()
-                console.print("[yellow]! Cancelled.[/]")
-            finally:
-                loop.remove_signal_handler(signal.SIGINT)
-            if speaker.first_word_at and heard_in is not None:
-                console.print(
-                    f"[dim]  first spoken word {speaker.first_word_at - asked_at + heard_in:.1f}s "
-                    "after you stopped talking[/]"
-                )
+            audio = listening.result()
+            stt_started = time.monotonic()
+            text = await asyncio.to_thread(transcriber.transcribe, audio)
+            heard_in = time.monotonic() - stt_started
+            if not text:
+                continue
+            request = voice.heard_wake(text, wake)
+            if not awake:
+                if request is None:
+                    continue  # not said to Sommus: not shown, not kept
+                wake_up()
+            elif request is None:
+                request = text  # awake: no wake phrase needed
+            if not request:  # just the name
+                wake_up()
+                console.print("[dim]  listening…[/]")
+                continue
+            if voice.DISMISS.match(request):
+                fall_asleep()
+                continue
+            console.print(
+                f"[bold]you ›[/] {escape(pin.redact(request))} "
+                f"[dim]({len(audio) / voice.SAMPLE_RATE:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+            )
+            if prompt is not None:  # hand Ctrl+C back to the turn: an open prompt would swallow it
+                prompt.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await prompt
+                prompt = None
+            await run_turn(request, heard_in)
+            state["awake_until"] = time.monotonic() + awake_seconds  # the follow-up window starts now
     finally:
+        listener.stop()
         if bot_task:
             bot_task.cancel()
         await speaker.close()
         await hub.__aexit__(None, None, None)
+
+
+CTRL_C = "\x03"
+
+
+async def _prompt_line(session: PromptSession) -> str:
+    """The typing line, run as a task beside the microphone. Ctrl+C comes back as a value: a
+    KeyboardInterrupt raised inside a task would escape the event loop and end the session."""
+    try:
+        with patch_stdout(raw=True):
+            return await session.prompt_async(HTML("<b>🎙  </b>"))
+    except KeyboardInterrupt:
+        return CTRL_C
 
 
 async def _warm_voice(voice, settings: dict):

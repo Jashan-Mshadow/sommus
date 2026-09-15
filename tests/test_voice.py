@@ -140,40 +140,96 @@ def test_say_plays_the_sentence_and_stops_when_told(monkeypatch):
     assert commands == [["say", "-v", "Samantha", "-r", "190", "Hello there."]]
 
 
-def run_detector(levels, **kwargs):
-    detector = voice.SilenceDetector(**kwargs)
-    states = [detector.update(level) for level in levels]
-    return states[-1], states
+def chunks(pattern):
+    """[(probability, seconds), ...] -> the chunk-by-chunk probabilities a detector would see."""
+    return [p for p, seconds in pattern for _ in range(round(seconds / voice.CHUNK_SECONDS))]
 
 
-def frames(seconds):
-    return int(seconds / voice.FRAME_SECONDS)
+def run_detector(pattern, **kwargs):
+    scores = iter(chunks(pattern))
+    detector = voice.SpeechDetector(probability=lambda chunk: next(scores), **kwargs)
+    out = []
+    for i in range(len(chunks(pattern))):
+        found = detector.feed(np.full(voice.CHUNK, i, dtype=np.float32))
+        if found is not None:
+            out.append(found)
+    return out, detector
 
 
-def test_listening_stops_after_a_pause_in_speech():
-    quiet, loud = 0.002, 0.08
-    levels = [quiet] * 10 + [loud] * frames(1.0) + [quiet] * frames(0.95)
-    final, states = run_detector(levels, silence_seconds=0.9)
-    assert final == "done" and "speaking" in states
+def test_an_utterance_ends_after_a_pause_and_keeps_its_first_syllable():
+    found, _ = run_detector([(0.0, 1.0), (0.9, 1.0), (0.0, 1.0)], silence_seconds=0.9, pre_roll_seconds=0.3)
+    assert len(found) == 1
+    seconds = len(found[0]) / voice.SAMPLE_RATE
+    assert 0.3 + 1.0 + 0.9 - 0.1 <= seconds <= 0.3 + 1.0 + 0.9 + 0.1  # pre-roll + speech + the pause that ended it
 
 
-def test_a_short_breath_does_not_end_the_sentence():
-    quiet, loud = 0.002, 0.08
-    levels = [quiet] * 10 + [loud] * frames(0.5) + [quiet] * frames(0.3) + [loud] * frames(0.5)
-    final, _ = run_detector(levels, silence_seconds=0.9)
-    assert final == "speaking"
+def test_a_breath_mid_sentence_does_not_split_it():
+    found, _ = run_detector([(0.9, 1.0), (0.1, 0.4), (0.9, 1.0), (0.0, 1.0)], silence_seconds=0.9)
+    assert len(found) == 1
 
 
-def test_nobody_speaking_times_out():
-    final, _ = run_detector([0.002] * (10 + frames(8.1)), wait_seconds=8.0)
-    assert final == "timeout"
+def test_a_click_or_cough_is_not_an_utterance():
+    found, _ = run_detector([(0.0, 0.5), (0.9, 0.1), (0.0, 1.5)], min_speech_seconds=0.25)
+    assert found == []
 
 
-def test_a_noisy_room_raises_the_threshold():
-    """Background noise at 0.03 must not count as speech once measured."""
-    noisy = 0.03
-    final, states = run_detector([noisy] * 10 + [noisy] * frames(2.0), wait_seconds=10)
-    assert "speaking" not in states
+def test_nonstop_talk_is_cut_at_the_limit():
+    found, _ = run_detector([(0.9, 5.0)], max_seconds=2.0)
+    assert len(found) == 2
+
+
+def test_an_utterance_in_progress_is_visible():
+    """The conversation mustn't fall asleep on someone who has just started talking."""
+    _, detector = run_detector([(0.0, 0.5), (0.9, 0.5)])
+    assert detector.buffer
+
+
+WAKE = voice.wake_pattern(["sommus", "hey sommus", "what's up sommus", "yo sommus"])
+
+
+@pytest.mark.parametrize(
+    ("heard", "asked"),
+    [
+        ("Hey Sommus, what time is it?", "what time is it?"),
+        ("Sommus.", ""),
+        ("What's up, Sommus?", ""),
+        ("Yo Sommus turn the volume up", "turn the volume up"),
+        ("What time is it, Sommus?", "What time is it"),
+        ("hey, sommus! mute", "mute"),
+        ("What's up so missy?", ""),  # found synthesising the wake phrases and transcribing them
+        ("Yo, so miss, what are my classes tomorrow?", "what are my classes tomorrow?"),
+    ],
+)
+def test_wake_phrases_at_the_start_or_end_wake_it(heard, asked):
+    assert voice.heard_wake(heard, WAKE) == asked
+
+
+@pytest.mark.parametrize("heard", ["I'm working on Sommus tonight.", "What's the weather?", "Sommusy", "hey summer"])
+def test_the_name_in_passing_does_not_wake_it(heard):
+    assert voice.heard_wake(heard, WAKE) is None
+
+
+@pytest.mark.parametrize("said", ["That's all.", "Thanks", "never mind", "Go to sleep.", "stop listening", "I'm good"])
+def test_ending_the_conversation(said):
+    assert voice.DISMISS.match(said)
+
+
+@pytest.mark.parametrize("said", ["thanks, now mute", "that's all the classes?", "done with the email, send it"])
+def test_requests_that_merely_start_like_a_goodbye_still_run(said):
+    assert not voice.DISMISS.match(said)
+
+
+async def test_the_speaker_says_when_it_is_talking_so_the_mic_can_ignore_it():
+    engine = FakeVoice(hold=True)
+    speaker = voice.Speaker(engine)
+    assert not speaker.speaking
+    speaker.feed("Hello there. ")
+    assert speaker.speaking
+    await asyncio.to_thread(engine.playing.wait, 2)
+    speaker.interrupt()
+    await asyncio.wait_for(speaker.finished(), 2)
+    assert not speaker.speaking and speaker.quiet_since > 0
+    await speaker.close()
 
 
 @pytest.mark.parametrize("heard", ["Thank you.", "you", "", " Thanks for watching!"])
@@ -239,3 +295,27 @@ COURSES = {
 )
 def test_schedules_are_read_the_way_people_say_them(written, spoken):
     assert voice.clean_for_speech(written, COURSES) == spoken
+
+
+def test_the_listener_ignores_everything_heard_while_sommus_talks():
+    """Laptop speakers are inches from the mic: without this, Sommus answers itself."""
+    pattern = [(0.0, 0.5), (0.9, 1.0), (0.0, 1.0), (0.9, 1.0), (0.0, 1.0)]  # two utterances
+    scores = chunks(pattern)
+    talking = {"now": False}
+
+    class FakeStream:
+        def __init__(self):
+            self.i = 0
+
+        def read(self, n):
+            if self.i == len(scores):
+                listener._stopping.set()
+            talking["now"] = round(2.5 / voice.CHUNK_SECONDS) <= self.i  # Sommus speaks over the second one
+            self.i = min(self.i + 1, len(scores))
+            return np.full((n, 1), scores[self.i - 1], dtype=np.float32), False
+
+    heard = []
+    detector = voice.SpeechDetector(probability=lambda chunk: float(chunk[0]))
+    listener = voice.Listener(detector, deliver=heard.append, deaf=lambda: talking["now"])
+    listener._listen(FakeStream(), voice.SAMPLE_RATE)
+    assert len(heard) == 1

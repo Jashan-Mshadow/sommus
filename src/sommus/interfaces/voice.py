@@ -5,8 +5,10 @@ into speech coming out. Everything audio happens on this machine: recording, spe
 text (Whisper on Apple silicon) and the voice (Kokoro on Apple silicon, or macOS `say`).
 Only the text reaches the model, so this runs unchanged once the brain lives somewhere else.
 
-Press Return, talk, and it stops listening when you go quiet. The wake word
-("Hey Sommus") replaces the Return key in V4.
+Always listening (V4): a speech detector cuts the microphone into utterances, Whisper reads
+each one on the Mac, and only one that starts or ends with a wake phrase ("Hey Sommus") wakes it.
+Awake, everything said is a command until the conversation goes quiet; then it sleeps again.
+Nothing is sent anywhere before the wake phrase, and the mic is deaf while Sommus talks.
 """
 
 from __future__ import annotations
@@ -18,16 +20,17 @@ import re
 import subprocess
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 SAMPLE_RATE = 16_000
-FRAME_SECONDS = 0.03
-CHIME_START = "/System/Library/Sounds/Tink.aiff"
-CHIME_STOP = "/System/Library/Sounds/Pop.aiff"
+CHUNK = 512  # Silero VAD's frame at 16 kHz: 32 ms
+CHUNK_SECONDS = CHUNK / SAMPLE_RATE
+CHIME_WAKE = "/System/Library/Sounds/Tink.aiff"
+CHIME_SLEEP = "/System/Library/Sounds/Pop.aiff"
 
 
 # ---------------------------------------------------------------- speaking
@@ -260,6 +263,7 @@ class Speaker:
         self._unfinished = 0
         self._idle = asyncio.Event()
         self._idle.set()
+        self.quiet_since = 0.0  # when the last words finished playing — the room still echoes briefly
         self._workers = [asyncio.create_task(self._synthesize()), asyncio.create_task(self._play())]
 
     async def _synthesize(self) -> None:
@@ -289,6 +293,7 @@ class Speaker:
                 await asyncio.to_thread(self.engine.rest, self._stop)
             self._unfinished -= 1
             if self._unfinished == 0:
+                self.quiet_since = time.monotonic()
                 self._idle.set()
 
     def feed(self, delta: str) -> None:
@@ -309,6 +314,10 @@ class Speaker:
             self._idle.clear()
             self._text.put_nowait((self._epoch, spoken))
 
+    @property
+    def speaking(self) -> bool:
+        return not self._idle.is_set()
+
     async def finished(self) -> None:
         await self._idle.wait()
 
@@ -327,63 +336,177 @@ class Speaker:
 # ---------------------------------------------------------------- listening
 
 
-@dataclass
-class SilenceDetector:
-    """Decides, frame by frame, when someone has started and then finished talking.
+class SpeechDetector:
+    """Cuts a continuous microphone stream into utterances.
 
-    The noise floor is measured first, so a quiet dorm room and a loud one both work.
+    Silero VAD scores each 32 ms chunk for speech (~0.25 ms of CPU each, under 1% of a core), so
+    fans, typing and music don't wake Whisper — plain loudness couldn't tell them from a voice.
+    A short pre-roll keeps the first syllable ("hey") that the detector needs a moment to catch.
     """
 
-    silence_seconds: float = 0.9
-    wait_seconds: float = 8.0
-    max_seconds: float = 20.0
-    calibration_frames: int = 10
+    def __init__(
+        self,
+        probability: Callable[[np.ndarray], float] | None = None,
+        silence_seconds: float = 0.9,
+        min_speech_seconds: float = 0.25,
+        max_seconds: float = 20.0,
+        pre_roll_seconds: float = 0.3,
+        threshold: float = 0.5,
+    ):
+        self._probability = probability
+        self._model = None
+        self.silence_chunks = round(silence_seconds / CHUNK_SECONDS)
+        self.min_speech_chunks = round(min_speech_seconds / CHUNK_SECONDS)
+        self.max_chunks = round(max_seconds / CHUNK_SECONDS)
+        self.pre_roll: deque[np.ndarray] = deque(maxlen=round(pre_roll_seconds / CHUNK_SECONDS))
+        self.threshold = threshold
+        self.reset()
 
-    def __post_init__(self) -> None:
-        self.levels: list[float] = []
-        self.threshold = 0.0
-        self.heard_speech = False
-        self.quiet_frames = 0
-        self.frames = 0
+    def probability(self, chunk: np.ndarray) -> float:
+        if self._probability:
+            return self._probability(chunk)
+        if self._model is None:
+            import warnings
 
-    def update(self, rms: float) -> str:
-        """Returns 'calibrating', 'waiting', 'speaking', 'done', or 'timeout'."""
-        self.frames += 1
-        elapsed = self.frames * FRAME_SECONDS
-        if self.frames <= self.calibration_frames:
-            self.levels.append(rms)
-            if self.frames == self.calibration_frames:
-                self.threshold = max(float(np.median(self.levels)) * 3.0, 0.008)
-            return "calibrating"
-        if rms > self.threshold:
-            self.heard_speech = True
-            self.quiet_frames = 0
-        elif self.heard_speech:
-            self.quiet_frames += 1
-        if self.heard_speech and self.quiet_frames * FRAME_SECONDS >= self.silence_seconds:
-            return "done"
-        if self.heard_speech and elapsed >= self.max_seconds:
-            return "done"
-        if not self.heard_speech and elapsed >= self.wait_seconds:
-            return "timeout"
-        return "speaking" if self.heard_speech else "waiting"
+            import torch
+            from silero_vad import load_silero_vad
+
+            warnings.filterwarnings("ignore", category=FutureWarning)  # torch.jit.load notice
+            torch.set_num_threads(1)
+            self._model = load_silero_vad()
+        import torch
+
+        return float(self._model(torch.from_numpy(chunk), SAMPLE_RATE).item())
+
+    def reset(self) -> None:
+        self.buffer: list[np.ndarray] = []
+        self.speech = self.silence = 0
+        self.pre_roll.clear()
+        if self._model is not None:
+            self._model.reset_states()
+
+    def feed(self, chunk: np.ndarray) -> np.ndarray | None:
+        """One 512-sample chunk in; a finished utterance out, or None."""
+        score = self.probability(chunk)
+        if not self.buffer:
+            self.pre_roll.append(chunk)
+            if score >= self.threshold:
+                self.buffer, self.speech, self.silence = list(self.pre_roll), 1, 0
+            return None
+        self.buffer.append(chunk)
+        if score >= self.threshold - 0.15:  # a little easier to stay in speech than to start it
+            self.speech, self.silence = self.speech + 1, 0
+        else:
+            self.silence += 1
+        if self.silence >= self.silence_chunks or len(self.buffer) >= self.max_chunks:
+            utterance, long_enough = np.concatenate(self.buffer), self.speech >= self.min_speech_chunks
+            self.reset()
+            return utterance if long_enough else None
+        return None
 
 
-def record_until_silence(detector: SilenceDetector, device: str | int | None = None) -> np.ndarray | None:
-    """Record from the microphone until the speaker goes quiet. None if nobody spoke."""
-    stream, rate = open_microphone(device)
-    frames: list[np.ndarray] = []
-    blocksize = int(rate * FRAME_SECONDS)
-    with stream:
-        while True:
-            block, _ = stream.read(blocksize)
-            mono = block[:, 0].copy()
-            frames.append(mono)
-            state = detector.update(float(np.sqrt(np.mean(mono**2))))
-            if state == "done":
-                return to_16k(np.concatenate(frames), rate)
-            if state == "timeout":
-                return None
+class Listener:
+    """The always-on microphone, in a background thread. Finished utterances go to `deliver`.
+
+    Deaf while `deaf()` says so — Sommus talking, a chime playing, a turn being worked on — so it
+    never hears itself. If the microphone disappears (AirPods leave), it keeps trying to reopen.
+    """
+
+    def __init__(
+        self,
+        detector: SpeechDetector,
+        deliver: Callable[[np.ndarray], None],
+        deaf: Callable[[], bool],
+        device: str | int | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+    ):
+        self.detector = detector
+        self.deliver = deliver
+        self.deaf = deaf
+        self.device = device
+        self.on_error = on_error
+        self._stopping = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="sommus-listener", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stopping.set()
+        self._thread.join(timeout=2)
+
+    def _run(self) -> None:
+        reported = False
+        while not self._stopping.is_set():
+            try:
+                stream, rate = open_microphone(self.device)
+                reported = False
+                with stream:
+                    self._listen(stream, rate)
+            except Exception as e:  # device gone, permission missing: say so once, keep trying
+                if not reported and self.on_error:
+                    self.on_error(e)
+                reported = True
+                self._stopping.wait(2)
+
+    def _listen(self, stream, rate: int) -> None:
+        block = round(rate * CHUNK_SECONDS)
+        was_deaf = False
+        while not self._stopping.is_set():
+            audio, _ = stream.read(block)
+            if self.deaf():
+                if not was_deaf:
+                    self.detector.reset()
+                was_deaf = True
+                continue
+            was_deaf = False
+            mono = audio[:, 0]
+            if rate != SAMPLE_RATE:
+                mono = np.interp(np.linspace(0, len(mono) - 1, CHUNK), np.arange(len(mono)), mono)
+            utterance = self.detector.feed(np.ascontiguousarray(mono, dtype=np.float32))
+            if utterance is not None:
+                self.deliver(utterance)
+
+
+# How Whisper writes the words of a wake phrase. SO-mis often comes out as "so miss" or "so missy",
+# which is harmless to accept here: only the start or end of an utterance can wake Sommus.
+WAKE_WORDS = {
+    "sommus": r"(?:sommus|so[\s,.-]*miss(?:y|es)?|somm?iss?|sowmiss?|summus|samus)",
+    "whats": r"what'?s",
+}
+
+
+def wake_pattern(phrases: list[str]) -> re.Pattern[str]:
+    """One regex for every wake phrase, tolerant of Whisper's punctuation: "What's up, Sommus?"."""
+    alternatives = []
+    for phrase in sorted(phrases, key=len, reverse=True):
+        words = re.findall(r"[a-z]+", phrase.lower().replace("'", ""))
+        alternatives.append(r"[\s,.!?'-]*".join(WAKE_WORDS.get(w, re.escape(w)) for w in words))
+    return re.compile(rf"(?:{'|'.join(alternatives)})", re.I)
+
+
+def heard_wake(text: str, pattern: re.Pattern[str]) -> str | None:
+    """The request after (or before) a wake phrase: '' for the name alone, None if it wasn't said.
+
+    Only at the start or the end: "Hey Sommus, mute" and "what time is it, Sommus?" wake it,
+    "I'm working on Sommus tonight" doesn't.
+    """
+    stripped = text.strip()
+    start = re.match(rf"^[\s,.!?]*(?:{pattern.pattern})\b[\s,.!?]*", stripped, re.I)
+    if start:
+        return stripped[start.end() :].strip()
+    end = re.search(rf"[\s,.!?]*\b(?:{pattern.pattern})[\s,.!?]*$", stripped, re.I)
+    if end:
+        return stripped[: end.start()].strip()
+    return None
+
+
+# Said to end the conversation rather than as a request.
+DISMISS = re.compile(
+    r"^\W*(?:that'?s (?:all|it)|thanks?(?: you)?|never ?mind|go to sleep|stop listening|good ?bye|bye|"
+    r"nothing|no thanks|i'?m good|all good|we'?re done|done)\W*$",
+    re.I,
+)
 
 
 def open_microphone(device: str | int | None = None):
@@ -408,7 +531,7 @@ def open_microphone(device: str | int | None = None):
     for name, rate in attempts:
         try:
             stream = sd.InputStream(
-                samplerate=rate, channels=1, dtype="float32", blocksize=int(rate * FRAME_SECONDS), device=name
+                samplerate=rate, channels=1, dtype="float32", blocksize=round(rate * CHUNK_SECONDS), device=name
             )
             stream.start()
             return stream, int(rate)

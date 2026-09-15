@@ -105,7 +105,7 @@ blocks whatever it was doing.
 ## Talking to Sommus (voice)
 
 ```bash
-sommus voice     # press Return and talk — it stops listening when you pause. Typing still works.
+sommus voice     # always listening: say "Hey Sommus", then just talk. Return wakes it; typing works.
 sommus voices    # hear the voices and pick one
 ```
 
@@ -113,7 +113,8 @@ Everything audio stays on the Mac, and none of it costs anything:
 
 | Step | How |
 |---|---|
-| Hearing | `sounddevice` at 16 kHz; a silence detector calibrates to the room's noise and ends after a 0.9 s pause |
+| Waking | Silero VAD cuts the mic into utterances (~1% of a CPU core); Whisper reads each one, and only one that starts or ends with "Sommus", "Hey Sommus", "What's up Sommus" or "Yo Sommus" wakes it. Nothing is kept or sent before that |
+| Conversation | Awake, everything said is a request — no wake phrase — until 10 s pass after a reply with nobody talking, or "that's all". The mic is deaf while Sommus speaks, so it never answers itself |
 | Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.35 s per command, offline |
 | Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives; Ctrl+C cuts it off |
 
