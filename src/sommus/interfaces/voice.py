@@ -217,13 +217,21 @@ class KokoroVoice:
         stream.close()
 
 
+# Held while a PortAudio stream is open. Re-reading the device list restarts PortAudio, and a
+# microphone stream open across that restart silently stops delivering audio (found in use: the
+# first command worked, then Sommus heard nothing and couldn't be woken).
+AUDIO_DEVICES = threading.RLock()
+
+
 def _refresh_audio_devices() -> None:
     """PortAudio reads the device list once, at startup. Re-read it before each reply so speech goes
-    to the current output — AirPods connected after Sommus started, not the speakers."""
+    to the current output — AirPods connected after Sommus started, not the speakers. Waits for
+    the listener to close the microphone first."""
     import sounddevice as sd
 
-    sd._terminate()
-    sd._initialize()
+    with AUDIO_DEVICES:
+        sd._terminate()
+        sd._initialize()
 
 
 def make_voice(settings: dict) -> SayVoice | KokoroVoice:
@@ -438,11 +446,15 @@ class Listener:
     def _run(self) -> None:
         reported = False
         while not self._stopping.is_set():
+            if self.deaf():  # the mic stays closed while Sommus talks or works, freeing PortAudio
+                self._stopping.wait(0.05)
+                continue
             try:
-                stream, rate = open_microphone(self.device)
+                with AUDIO_DEVICES:
+                    stream, rate = open_microphone(self.device)
+                    with stream:
+                        self._listen(stream, rate)
                 reported = False
-                with stream:
-                    self._listen(stream, rate)
             except Exception as e:  # device gone, permission missing: say so once, keep trying
                 if not reported and self.on_error:
                     self.on_error(e)
@@ -450,16 +462,13 @@ class Listener:
                 self._stopping.wait(2)
 
     def _listen(self, stream, rate: int) -> None:
+        """Feed the detector until Sommus needs the audio system (deaf) or the listener stops."""
         block = round(rate * CHUNK_SECONDS)
-        was_deaf = False
         while not self._stopping.is_set():
             audio, _ = stream.read(block)
             if self.deaf():
-                if not was_deaf:
-                    self.detector.reset()
-                was_deaf = True
-                continue
-            was_deaf = False
+                self.detector.reset()
+                return
             mono = audio[:, 0]
             if rate != SAMPLE_RATE:
                 mono = np.interp(np.linspace(0, len(mono) - 1, CHUNK), np.arange(len(mono)), mono)

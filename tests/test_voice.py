@@ -297,8 +297,9 @@ def test_schedules_are_read_the_way_people_say_them(written, spoken):
     assert voice.clean_for_speech(written, COURSES) == spoken
 
 
-def test_the_listener_ignores_everything_heard_while_sommus_talks():
-    """Laptop speakers are inches from the mic: without this, Sommus answers itself."""
+def test_the_listener_lets_go_of_the_mic_while_sommus_talks():
+    """Laptop speakers are inches from the mic: without deafness, Sommus answers itself. And the
+    mic must be closed before playback restarts PortAudio, or it silently stops hearing."""
     pattern = [(0.0, 0.5), (0.9, 1.0), (0.0, 1.0), (0.9, 1.0), (0.0, 1.0)]  # two utterances
     scores = chunks(pattern)
     talking = {"now": False}
@@ -308,14 +309,39 @@ def test_the_listener_ignores_everything_heard_while_sommus_talks():
             self.i = 0
 
         def read(self, n):
-            if self.i == len(scores):
-                listener._stopping.set()
-            talking["now"] = round(2.5 / voice.CHUNK_SECONDS) <= self.i  # Sommus speaks over the second one
-            self.i = min(self.i + 1, len(scores))
-            return np.full((n, 1), scores[self.i - 1], dtype=np.float32), False
+            talking["now"] = round(2.5 / voice.CHUNK_SECONDS) <= self.i  # Sommus starts talking here
+            self.i += 1
+            return np.full((n, 1), scores[min(self.i, len(scores)) - 1], dtype=np.float32), False
 
     heard = []
     detector = voice.SpeechDetector(probability=lambda chunk: float(chunk[0]))
     listener = voice.Listener(detector, deliver=heard.append, deaf=lambda: talking["now"])
-    listener._listen(FakeStream(), voice.SAMPLE_RATE)
-    assert len(heard) == 1
+    listener._listen(FakeStream(), voice.SAMPLE_RATE)  # returns as soon as Sommus talks
+    assert len(heard) == 1 and not detector.buffer
+
+
+def test_playback_waits_for_the_mic_to_close_before_restarting_audio(monkeypatch):
+    import sys
+    import threading
+    import types
+
+    events = []
+    fake_sd = types.SimpleNamespace(_terminate=lambda: events.append("restart"), _initialize=lambda: None)
+    monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+    mic_open, release = threading.Event(), threading.Event()
+
+    def listener():
+        with voice.AUDIO_DEVICES:
+            mic_open.set()
+            release.wait(2)
+            events.append("mic closed")
+
+    thread = threading.Thread(target=listener)
+    thread.start()
+    mic_open.wait(2)
+    player = threading.Thread(target=voice._refresh_audio_devices)
+    player.start()
+    release.set()
+    player.join(2)
+    thread.join(2)
+    assert events == ["mic closed", "restart"]
