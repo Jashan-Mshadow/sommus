@@ -114,6 +114,26 @@ class Store:
         )
         self._db.commit()
 
+    def fast_path_candidates(self, limit: int = 30) -> list[tuple[str, str, int, float]]:
+        """Requests the model answered with exactly one tool call — the next fast-path intents.
+
+        Returns (tool, example request, times asked, total spent), most-asked first. Anything the
+        model handled with a single tool is, by definition, a basic command worth moving to $0.
+        """
+        rows = self._db.execute(
+            """
+            SELECT c.tool, lower(t.user_text), COUNT(*) AS n, SUM(t.cost_usd)
+            FROM turns t JOIN tool_calls c ON c.turn_id = t.id
+            WHERE t.model != 'fastpath' AND t.status = 'ok'
+              AND (SELECT COUNT(*) FROM tool_calls x WHERE x.turn_id = t.id) = 1
+            GROUP BY c.tool, lower(t.user_text)
+            ORDER BY n DESC, SUM(t.cost_usd) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [(tool, text, count, spent or 0.0) for tool, text, count, spent in rows]
+
     def cost_today(self) -> tuple[int, float]:
         row = self._db.execute(
             "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM turns WHERE started_at >= ?",

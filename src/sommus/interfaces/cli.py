@@ -37,6 +37,7 @@ TIER_STYLE = {
 }
 
 HELP = """[bold]/tools[/]  list tools and their permission tier
+[bold]/candidates[/]  basic commands still costing money — the next fast-path additions
 [bold]/cost[/]   today's commands and spend
 [bold]/new[/]    start a fresh conversation
 [bold]/quit[/]   exit (or Ctrl+D)
@@ -292,6 +293,18 @@ async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
     return asyncio.create_task(serve()), " · Telegram on"
 
 
+def show_candidates(store: Store) -> None:
+    """Basic commands that still went to the model — add these to brain/fastpath.py."""
+    rows = store.fast_path_candidates()
+    if not rows:
+        console.print("[dim]No candidates yet — every single-tool request is already free.[/]")
+        return
+    console.print("[bold]Still paying for these basic commands[/] [dim](one tool, no reasoning needed):[/]")
+    for tool, text, count, spent in rows:
+        console.print(f"  [cyan]{tool:<18}[/] {count}× [dim]${spent:.4f}[/]  {escape(text[:70])}")
+    console.print("[dim]Add their phrasings to src/sommus/brain/fastpath.py to make them $0.[/]")
+
+
 def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     """Returns False to exit."""
     command = text.split()[0].lower()
@@ -303,6 +316,8 @@ def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     elif command == "/tools":
         for t in hub.tools:
             console.print(f"  [{TIER_STYLE[t.tier]}]{t.tier.value:<12}[/] {t.tool.name} [dim]({t.node})[/]")
+    elif command == "/candidates":
+        show_candidates(store)
     elif command == "/cost":
         count, spent = store.cost_today()
         console.print(f"[dim]Today: {count} commands, ${spent:.4f}[/]")

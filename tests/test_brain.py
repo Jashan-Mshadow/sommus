@@ -295,3 +295,16 @@ async def test_finished_turns_keep_only_a_stub_of_their_tool_output(tmp_path):
 
     sent = model.requests[0]["messages"][2]["content"][0]["content"][0]["text"]
     assert sent.endswith("[trimmed]") and len(sent) < 400
+
+
+async def test_single_tool_model_turns_are_listed_as_fast_path_candidates(tmp_path):
+    async with make_brain(tmp_path, tool_call("peek", {}), text_reply("All quiet."), text_reply("Hello!")) as (
+        brain,
+        _,
+        _,
+    ):
+        await run(brain, "Anything happening?", never_confirm)  # one tool: a candidate
+        await run(brain, "hi there", never_confirm)  # no tool: not a candidate
+
+        rows = brain.store.fast_path_candidates()
+        assert [(tool, text, count) for tool, text, count, _ in rows] == [("peek", "anything happening?", 1)]
