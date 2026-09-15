@@ -218,3 +218,24 @@ def test_microphone_audio_at_another_rate_becomes_16k():
     one_second = np.sin(np.linspace(0, 440 * 2 * np.pi, 44_100)).astype(np.float32)
     converted = voice.to_16k(one_second, 44_100)
     assert converted.dtype == np.float32 and abs(len(converted) - 16_000) <= 1
+
+
+COURSES = {
+    "ECE 105": "physics",
+    "COMMST 192": "communications",
+    "ECE 198": "project studio",
+    "MATH 115": "linear algebra",
+}
+
+
+@pytest.mark.parametrize(
+    ("written", "spoken"),
+    [
+        ("ECE105 LEC 001, 8:30–9:20 in E7 5353", "physics lecture, 8 30 to 9 20 in E7 5353"),
+        ("COMMST192 Lecture 002 at 1:00 PM", "communications Lecture at 1 PM"),
+        ("ECE 198 Lab 001 then MATH115 TUT 103", "project studio lab then linear algebra tutorial"),
+        ("Class at 10:05.", "Class at 10 oh 5."),
+    ],
+)
+def test_schedules_are_read_the_way_people_say_them(written, spoken):
+    assert voice.clean_for_speech(written, COURSES) == spoken

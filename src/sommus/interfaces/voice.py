@@ -36,13 +36,34 @@ CHIME_STOP = "/System/Library/Sounds/Pop.aiff"
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
-def clean_for_speech(text: str) -> str:
+CLASS_TYPES = {"LEC": "lecture", "TUT": "tutorial", "LAB": "lab", "SEM": "seminar", "TST": "test"}
+
+
+def say_courses(text: str, say_as: dict[str, str]) -> str:
+    """'ECE105 LEC 001' -> 'physics lecture'. Codes are for screens; people say the subject."""
+    for code, name in say_as.items():
+        letters, number = re.match(r"([A-Za-z]+)\s*(\d+)", code).groups()
+        text = re.sub(rf"\b{letters}\s?{number}\b", name, text, flags=re.I)
+    kinds = "|".join(CLASS_TYPES)
+    text = re.sub(
+        rf"\b({kinds})\b(?:\s*\d{{3}}\b)?",
+        lambda m: CLASS_TYPES[m.group(1).upper()],
+        text,
+        flags=re.I,
+    )
+    return re.sub(r"\b(lecture|tutorial|lab|seminar)\s+(\d{3})\b", r"\1", text, flags=re.I)  # "Lab 001"
+
+
+def clean_for_speech(text: str, say_as: dict[str, str] | None = None) -> str:
     """What reads well on screen often sounds wrong aloud."""
+    if say_as:
+        text = say_courses(text, say_as)
     text = re.sub(r"```.*?```", " ", text, flags=re.S)  # code blocks
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # [label](url) -> label, before bare URLs
     text = re.sub(r"https?://\S+", "a link", text)
     text = re.sub(r"[*`#>|]", "", text)  # markdown symbols (underscores stay: file_names read fine)
     text = re.sub(r"\b(\d{1,2}):00\b", r"\1", text)  # 3:00 PM -> 3 PM
+    text = re.sub(r"\b(\d{1,2}):0(\d)\b", r"\1 oh \2", text)  # 10:05 -> ten oh five, not "ten five"
     text = re.sub(r"\b(\d{1,2}):(\d{2})\b", r"\1 \2", text)  # 2:45 -> 2 45, or Kokoro skips the colon's word
     text = re.sub(r"\s*°\s*[CF]?(?![A-Za-z])", " degrees", text)
     text = re.sub(r"(?<=\d)\s*[–-]\s*(?=\d)", " to ", text)  # 8:30–10:20 -> 8 30 to 10 20
@@ -221,9 +242,15 @@ class Speaker:
     plays in order — so the next sentence is usually ready when the current one ends.
     """
 
-    def __init__(self, engine: SayVoice | KokoroVoice, on_error: Callable[[Exception], None] | None = None):
+    def __init__(
+        self,
+        engine: SayVoice | KokoroVoice,
+        on_error: Callable[[Exception], None] | None = None,
+        say_as: dict[str, str] | None = None,
+    ):
         self.engine = engine
         self.on_error = on_error
+        self.say_as = say_as or {}
         self.buffer = ""
         self.first_word_at: float | None = None
         self._epoch = 0  # bumped by interrupt(); anything queued from an older epoch is dropped
@@ -276,7 +303,7 @@ class Speaker:
         self.buffer = ""
 
     def _say(self, sentence: str) -> None:
-        spoken = clean_for_speech(sentence)
+        spoken = clean_for_speech(sentence, self.say_as)
         if spoken:
             self._unfinished += 1
             self._idle.clear()

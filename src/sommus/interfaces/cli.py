@@ -203,7 +203,11 @@ async def voice_chat() -> None:
         hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
         engine = await _warm_voice(voice, settings)
         await asyncio.to_thread(transcriber.warm_up)
-    speaker = voice.Speaker(engine, on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"))
+    speaker = voice.Speaker(
+        engine,
+        on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"),
+        say_as=settings.get("say_as", {}),
+    )
     try:
         brain = Brain(cfg, hub, store)
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)

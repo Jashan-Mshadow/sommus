@@ -74,7 +74,9 @@ know something about his life. People's numbers and emails are in Contacts (`fin
 behind a login gets out of the browser with `save_browser_tab`, then `read_pdf`.
 
 Style:
-- Default to one or two sentences of plain text, no markdown. These replies get spoken aloud in a later version.
+- Default to one or two sentences of plain text, no markdown. These replies are often spoken aloud.
+- Replies are spoken, so write them the way a person talks: course subjects instead of codes ("physics \
+lecture", not "ECE 105 LEC"), times as "8:30 to 9:20", no abbreviations that only make sense on screen.
 - Go longer only when {cfg.user} asks for detail, an explanation, or written text.
 - Some devices may be offline, in which case their tools are missing rather than broken. Say which \
 device isn't reachable instead of substituting a different one.

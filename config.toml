@@ -89,6 +89,8 @@ pin_tools = [
 ]
 
 [voice]
+# Spoken, course codes become subjects: "ECE105 LEC 001" -> "physics lecture". The screen keeps the codes.
+say_as = { "ECE 150" = "programming", "ECE 105" = "physics", "ECE 190" = "engineering profession", "ECE 198" = "project studio", "MATH 115" = "linear algebra", "MATH 117" = "calculus", "COMMST 192" = "communications", "GENE 119" = "engineering seminar" }
 engine = "kokoro"                               # "kokoro" = natural, free, runs on the Mac · "say" = built-in macOS voice
 kokoro_voice = "bf_isabella"                    # picked by ear; af_heart a close second · hear others: `sommus voices`
 speed = 1.0                                     # 1.1 talks a little faster
