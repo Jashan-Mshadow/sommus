@@ -35,6 +35,8 @@ class Config:
     core_tools: tuple[str, ...] = ()
     history_turns: int = 12
     fast_path: bool = True
+    pin_tools: tuple[str, ...] = ()  # personal tools that wait for the PIN
+    unlock_minutes: float = 10
 
 
 def section(name: str, path: Path | None = None) -> dict:
@@ -65,4 +67,6 @@ def load(path: Path | None = None) -> Config:
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},
         data_dir=ROOT / "data",
         ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),
+        pin_tools=tuple(raw.get("security", {}).get("pin_tools", [])),
+        unlock_minutes=float(raw.get("security", {}).get("unlock_minutes", 10)),
     )

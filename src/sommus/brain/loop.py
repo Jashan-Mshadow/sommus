@@ -18,6 +18,7 @@ import anthropic
 from sommus.brain import fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
+from sommus.brain.pin import Gate
 from sommus.brain.prompt import stamp, system_prompt
 from sommus.brain.store import Store, Usage
 from sommus.config import Config
@@ -95,6 +96,7 @@ def split_cost(text: str) -> tuple[str, float]:
     return (text[: found.start()], float(found.group(1))) if found else (text, 0.0)
 
 
+LOCKS_SOMMUS = {"lock_screen", "sleep_computer", "sleep_display"}
 IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a browser task
 
 
@@ -112,6 +114,8 @@ class Brain:
         self.fast_settings = config_module.section("fastpath")
         # The terminal and Telegram can share one brain; a turn from one waits for the other.
         self.lock = asyncio.Lock()
+        self.gate = Gate(cfg.data_dir, set(cfg.pin_tools), cfg.unlock_minutes)
+        self._asked = ""  # the request being handled, kept in case it hits the PIN lock
 
     def reset(self) -> None:
         self.messages = []
@@ -135,6 +139,12 @@ class Brain:
         return request
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        answer = self.gate.attempt(text)
+        if answer is not None:
+            async for event in self._pin_entered(answer, confirm):
+                yield event
+            return
+        self._asked = text
         quick = fastpath.match(text, self._weather, self._place) if self.cfg.fast_path else None
         if quick and self._fast_ready(quick):
             handled = False
@@ -315,6 +325,20 @@ class Brain:
         self.store.finish_turn(turn_id, reply, "ok", "fastpath", Usage())
         yield TurnDone(Usage(), 0.0, 0)
 
+    async def _pin_entered(self, answer: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        """A PIN was said or typed. It stays out of the model, the conversation and the log; if it
+        unlocked the gate, the request that was waiting on it runs now."""
+        turn_id = self.store.start_turn("[PIN entered]")
+        self.store.finish_turn(turn_id, answer, "ok", "pin", Usage())
+        pending, self.gate.pending = self.gate.pending, None
+        yield TextDelta(answer)
+        if pending is None or not self.gate.unlocked:
+            yield TurnDone(Usage(), 0.0, 0)
+            return
+        yield TextDelta(" ")
+        async for event in self.handle(pending, confirm):
+            yield event
+
     def _remember(self, text: str, reply: str) -> None:
         # Plain text in the conversation, so a follow-up ("a bit higher") still has context.
         self.messages.append({"role": "user", "content": stamp(text)})
@@ -405,6 +429,10 @@ class Brain:
             output, is_error, decision = f"Unknown tool '{name}'.", True, "unknown"
         elif tier is Tier.BLOCKED:
             output, is_error, decision = "This action is blocked by the permission policy.", True, "blocked"
+        elif self.gate.needs_pin(name):
+            output, is_error, decision = self.gate.locked_message(self.cfg.user), True, "needs_pin"
+            if self.gate.pin_set:
+                self.gate.pending = self._asked
         elif (
             tier is Tier.ALWAYS_ASK or (tier is Tier.DESTRUCTIVE and self.cfg.ask_before_destructive)
         ) and not await confirm(name, input):
@@ -412,6 +440,8 @@ class Brain:
         else:
             result = await self.hub.call(name, input)
             blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
+            if name in LOCKS_SOMMUS and not is_error:
+                self.gate.lock()  # walking away from the Mac locks the personal actions too
         output, extra = split_cost(output)
         blocks = [
             {**b, "text": split_cost(b["text"])[0]} if b.get("type") == "text" else b

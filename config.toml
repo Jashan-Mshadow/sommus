@@ -62,6 +62,25 @@ env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain" }
 # Outward-facing actions (send_message, compose_email with send=true) run like the rest.
 # The "always_ask" tier still exists in code if a future tool ever earns it.
 
+[security]
+# Personal actions wait for Jashan's PIN until Sommus recognises his voice (2026-09-15).
+# Set it with `sommus pin` (only a salted hash is stored). Say or type it to unlock; /lock locks again,
+# and so does locking or sleeping the Mac. Anything not listed — volume, music, apps, weather — never asks.
+unlock_minutes = 10
+pin_tools = [
+    # accounts and people
+    "ask_claude", "search_email", "read_email", "send_email", "reply_to_email", "draft_email", "mark_email_read",
+    "send_message", "compose_email", "find_contact", "list_contacts",
+    # notes
+    "search_vault", "read_note", "list_notes", "append_to_note", "add_todo", "commit_vault",
+    # files, clipboard, browser contents
+    "read_file", "find_files", "append_to_file", "open_file", "read_pdf", "download_url", "get_clipboard",
+    "list_browser_tabs", "read_browser_tab", "list_page_links", "click_page_link", "list_embedded_files",
+    "save_browser_tab",
+    # anything that could do all of the above another way
+    "run_shell", "type_text", "press_keys", "click", "screenshot",
+]
+
 [voice]
 engine = "kokoro"                               # "kokoro" = natural, free, runs on the Mac · "say" = built-in macOS voice
 kokoro_voice = "bf_isabella"                    # picked by ear; af_heart a close second · hear others: `sommus voices`

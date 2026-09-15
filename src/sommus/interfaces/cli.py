@@ -21,12 +21,22 @@ from rich.console import Console
 from rich.markup import escape
 
 from sommus import config, evals
+from sommus.brain import pin
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy, Tier
 from sommus.brain.store import Store
 
 console = Console(highlight=False)
+
+
+class PrivateHistory(FileHistory):
+    """Up-arrow history, minus PINs: they'd otherwise sit in data/history in plain text."""
+
+    def store_string(self, string: str) -> None:
+        if pin.spoken_digits(string) is None:
+            super().store_string(string)
+
 
 TIER_STYLE = {
     Tier.READ: "green",
@@ -40,6 +50,7 @@ HELP = """[bold]/tools[/]  list tools and their permission tier
 [bold]/candidates[/]  basic commands still costing money — the next fast-path additions
 [bold]/cost[/]   today's commands and spend
 [bold]/new[/]    start a fresh conversation
+[bold]/lock[/]   lock personal actions again now (say or type the PIN to unlock)
 [bold]/quit[/]   exit (or Ctrl+D)
 Ctrl+C during a reply cancels it."""
 
@@ -122,7 +133,7 @@ async def chat() -> None:
         return
     cfg = config.load()
     store = Store(cfg.data_dir / "sommus.db")
-    session: PromptSession = PromptSession(history=FileHistory(str(cfg.data_dir / "history")))
+    session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
 
     bot_task = None
     with console.status("[dim]Starting nodes…[/]"):
@@ -178,7 +189,7 @@ async def voice_chat() -> None:
     cfg = config.load()
     settings = config.section("voice")
     store = Store(cfg.data_dir / "sommus.db")
-    session: PromptSession = PromptSession(history=FileHistory(str(cfg.data_dir / "history")))
+    session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
 
     bot_task = None
@@ -236,8 +247,9 @@ async def voice_chat() -> None:
                 if not text:
                     console.print("[dim]  didn't catch that — try again.[/]")
                     continue
+                shown = "••••" if pin.spoken_digits(text) else escape(text)
                 console.print(
-                    f"[bold]you ›[/] {escape(text)} [dim]({spoke_for:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+                    f"[bold]you ›[/] {shown} [dim]({spoke_for:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
                 )
 
             speaker.first_word_at = None
@@ -313,6 +325,27 @@ async def voices(names: list[str]) -> None:
     )
 
 
+def set_pin() -> None:
+    """Choose the PIN that unlocks personal actions. Typed hidden; only a salted hash is saved."""
+    from getpass import getpass
+
+    cfg = config.load()
+    console.print(
+        f"[dim]Personal actions ({len(cfg.pin_tools)} tools: email, messages, files, notes, shell, Claude Code) "
+        f"stay locked until this PIN is said or typed, then unlock for {cfg.unlock_minutes:g} minutes.[/]"
+    )
+    first = getpass("New PIN (4–8 digits, hidden): ").strip()
+    if getpass("Again: ").strip() != first:
+        console.print("[red]Those didn't match — nothing changed.[/]")
+        return
+    try:
+        pin.set_pin(cfg.data_dir, first)
+    except ValueError as e:
+        console.print(f"[red]{escape(str(e))}[/]")
+        return
+    console.print("[green]✓[/] PIN saved. Restart any running sommus for it to take effect.")
+
+
 async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
     """Serve Telegram from this same session, sharing the brain and its conversation."""
     from sommus import service as background
@@ -367,6 +400,9 @@ def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     elif command == "/tools":
         for t in hub.tools:
             console.print(f"  [{TIER_STYLE[t.tier]}]{t.tier.value:<12}[/] {t.tool.name} [dim]({t.node})[/]")
+    elif command == "/lock":
+        brain.gate.lock()
+        console.print("[dim]Personal actions locked.[/]")
     elif command == "/candidates":
         show_candidates(store)
     elif command == "/cost":
@@ -628,6 +664,7 @@ def main() -> None:
             "status",
             "voice",
             "voices",
+            "pin",
         ],
         default="chat",
     )
@@ -643,6 +680,8 @@ def main() -> None:
             asyncio.run(run_tool(args.tool_name, args.tool_args))
         elif args.command == "eval":
             asyncio.run(run_eval(args.live, args.only))
+        elif args.command == "pin":
+            set_pin()
         elif args.command == "voices":
             asyncio.run(voices([n for n in [args.tool_name, *args.tool_args] if n]))
         elif args.command in ("start", "stop", "status"):
