@@ -55,6 +55,12 @@ VOCAB = {
     "weather": WEATHER_TRIGGERS
     | {"outside", "today", "tomorrow", "degrees", "like", "going", "need", "i", "do", "an", "does", "feel"},
 
+    "calendar": {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials", "calendar",
+                 "schedule", "events", "event", "plans", "planned", "busy", "free", "on", "do", "i", "have", "are",
+                 "am", "today", "tomorrow", "todays", "tomorrows", "tonight", "next", "this", "week", "weekend",
+                 "morning", "afternoon", "evening", "when", "where", "rooms", "room", "with", "anything", "any",
+                 "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "first", "last",
+                 "left", "else", "going", "got", "does", "start", "end", "in"},
     "holiday": {"holiday", "holidays", "next", "upcoming", "coming", "stat", "statutory", "long", "weekend", "day",
                 "off", "when", "does", "fall", "on", "this", "year", "are", "there", "any"},
 }  # fmt: skip
@@ -177,6 +183,14 @@ def match(
             return Match("time_in", local=lambda: time_in(places(place)))
         if weather and _claims("weather", rest) and set(rest) & WEATHER_TRIGGERS:
             return Match("weather_in", local=lambda: weather(rest, places(place)))
+    if (
+        _claims("calendar", tokens)
+        and present & {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials", "calendar",
+                       "schedule", "events", "plans", "busy", "free"}
+        and not (present & {"holiday", "holidays"})
+    ):  # fmt: skip
+        # Claude Code reads both Google calendars; nothing for the model to add on either side.
+        return Match("calendar", "ask_claude", {"task": text.strip()})
     if _claims("holiday", tokens) and present & {"holiday", "holidays"} and present & {"next", "upcoming", "coming"}:
         return Match("holiday", local=next_holidays)
     if tokens[:2] == ["when", "is"] and (name := " ".join(t for t in tokens[2:] if t not in FILLER)):

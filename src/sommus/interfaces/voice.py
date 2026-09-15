@@ -12,6 +12,7 @@ Press Return, talk, and it stops listening when you go quiet. The wake word
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import subprocess
@@ -44,7 +45,9 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"\b(\d{1,2}):00\b", r"\1", text)  # 3:00 PM -> 3 PM
     text = re.sub(r"\b(\d{1,2}):(\d{2})\b", r"\1 \2", text)  # 2:45 -> 2 45, or Kokoro skips the colon's word
     text = re.sub(r"\s*°\s*[CF]?(?![A-Za-z])", " degrees", text)
-    text = text.replace("→", " to ").replace("—", ", ").replace("·", ",")
+    text = re.sub(r"(?<=\d)\s*[–-]\s*(?=\d)", " to ", text)  # 8:30–10:20 -> 8 30 to 10 20
+    text = re.sub(r"(?<=\w)/(?=[A-Za-z]\w*\s?\d)", " or ", text)  # E7 1427/E2 1792 -> E7 1427 or E2 1792
+    text = text.replace("→", " to ").replace("—", ", ").replace("–", ", ").replace("·", ",")
     text = re.sub(r"\s+", " ", text)
     return re.sub(r"\s+([,.!?])", r"\1", text).strip(" ,")
 
@@ -54,7 +57,7 @@ def clean_for_speech(text: str) -> str:
 NAME = re.compile(r"\bsommus\b", re.I)
 NAME_PHONEMES = {"a": "sˈOmɪs", "b": "sˈQmɪs"}
 NAME_SAY = "Sowmiss"
-NAME_HEARD = re.compile(r"\b(?:somm?iss?|sowmiss?|somm?us|summus|samus)\b", re.I)
+NAME_HEARD = re.compile(r"\b(?:somm?iss?|sowmiss?|somm?us|summus|samus)\b|^(?:hey,?\s+)?so,?\s+miss\b", re.I)
 
 
 def _run_until_done(command: list[str], stop: threading.Event) -> None:
@@ -138,6 +141,8 @@ class KokoroVoice:
 
         quiet_hugging_face(self.model_id)
         warnings.filterwarnings("ignore", category=FutureWarning)  # torch.jit notice from a dependency
+        # espeak reports "words count mismatch" for every course code it spells out; the audio is fine.
+        logging.getLogger("phonemizer").setLevel(logging.ERROR)
         from mlx_audio.tts.utils import load_model
 
         self.model = load_model(self.model_id)

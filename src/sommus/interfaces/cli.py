@@ -30,12 +30,14 @@ from sommus.brain.store import Store
 console = Console(highlight=False)
 
 
+SLOW_TOOLS = {"ask_claude", "web_search"}
+
+
 class PrivateHistory(FileHistory):
     """Up-arrow history, minus PINs: they'd otherwise sit in data/history in plain text."""
 
     def store_string(self, string: str) -> None:
-        if pin.spoken_digits(string) is None:
-            super().store_string(string)
+        super().store_string(pin.redact(string))
 
 
 TIER_STYLE = {
@@ -89,6 +91,7 @@ class TurnView:
             console.print("[dim]  waiting for a Telegram command to finish…[/]")
         await brain.lock.acquire()
         self.status.start()
+        said_wait = False
         try:
             async for event in brain.handle(text, self.confirm):
                 match event:
@@ -102,6 +105,9 @@ class TurnView:
                             self.speaker.feed(delta)
                     case ToolStarted(name=name, input=args, tier=tier):
                         self._break_line()
+                        if self.speaker and name in SLOW_TOOLS and not said_wait and not brain.gate.needs_pin(name):
+                            self.speaker.feed("One moment. ")  # these take 10–30 s; silence feels broken
+                            said_wait = True
                         style = TIER_STYLE.get(tier, "red")
                         console.print(f"  [dim]→[/] [{style}]{name}[/][dim]({escape(_format_args(args))})[/]")
                     case ToolFinished(output=output, is_error=is_error, decision=decision):
@@ -247,7 +253,7 @@ async def voice_chat() -> None:
                 if not text:
                     console.print("[dim]  didn't catch that — try again.[/]")
                     continue
-                shown = "••••" if pin.spoken_digits(text) else escape(text)
+                shown = escape(pin.redact(text))
                 console.print(
                     f"[bold]you ›[/] {shown} [dim]({spoke_for:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
                 )

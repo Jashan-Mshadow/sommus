@@ -19,6 +19,7 @@ import httpx2
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolStarted, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
+from sommus.brain.pin import redact
 from sommus.brain.store import Store
 from sommus.config import Config
 
@@ -125,7 +126,7 @@ class Bot:
         if tools:
             body += f"\n\n· {', '.join(tools)} · ${cost:.4f}"
         await self.say(chat, body)
-        log(f"{chat}: {text[:60]} → {', '.join(tools) or 'no tools'} (${cost:.4f})")
+        log(f"{chat}: {redact(text)[:60]} → {', '.join(tools) or 'no tools'} (${cost:.4f})")
 
     async def run(self, log) -> None:
         while True:
@@ -147,7 +148,7 @@ class Bot:
                 try:
                     await self.handle(chat, message["text"].strip(), log)
                 except Exception as e:  # one bad turn must not kill the bot
-                    log(f"Error on '{message['text'][:40]}': {type(e).__name__}: {e}")
+                    log(f"Error on '{redact(message['text'])[:40]}': {type(e).__name__}: {e}")
                     await self.say(chat, f"That went wrong: {type(e).__name__}: {e}")
 
 

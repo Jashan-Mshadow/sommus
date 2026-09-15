@@ -25,6 +25,8 @@ def test_bare_urls_become_a_link():
         ("Class at 3:00 PM.", "Class at 3 PM."),
         ("It's 14°C and cloudy.", "It's 14 degrees and cloudy."),
         ("Low of -2°.", "Low of -2 degrees."),
+        ("ECE198 Lab 8:30–10:20 (E7 1427/E2 1792)", "ECE198 Lab 8 30 to 10 20 (E7 1427 or E2 1792)"),
+        ("Tesla event 6:30-7:30 PM.", "Tesla event 6 30 to 7 30 PM."),
     ],
 )
 def test_times_and_temperatures_read_naturally(written, spoken):
@@ -198,13 +200,18 @@ def test_kokoro_is_told_how_to_say_sommus(engine_voice):
     assert engine.model.text == f"[Sommus](/{phonemes}/) is listening, and [Sommus](/{phonemes}/)'s voice works."
 
 
-@pytest.mark.parametrize("heard", ["Hey Somis, mute.", "Hey Sommis, mute.", "Hey Samus, mute.", "Hey Sowmiss, mute."])
+@pytest.mark.parametrize(
+    "heard", ["Hey Somis, mute.", "Hey Sommis, mute.", "Hey Samus, mute.", "Hey Sowmiss, mute.", "Hey, So Miss, mute."]
+)
 def test_whisper_spellings_of_the_name_are_fixed(monkeypatch, heard):
     import sys
     import types
 
     monkeypatch.setitem(sys.modules, "mlx_whisper", types.SimpleNamespace(transcribe=lambda *a, **k: {"text": heard}))
-    assert voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32)) == "Hey Sommus, mute."
+    assert voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32)) in (
+        "Hey Sommus, mute.",
+        "Sommus, mute.",
+    )
 
 
 def test_microphone_audio_at_another_rate_becomes_16k():

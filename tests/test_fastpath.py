@@ -72,7 +72,6 @@ def test_everyday_requests_skip_the_model(text, intent, tool, args, delta):
         "pause for a second and tell me the time",
         "what's the weather in toronto and open spotify",  # compound, even with a place
         "what time is my class in e7 5353",  # a room, not a place
-        "when is my next class",  # calendar, not a holiday
         "when is my midterm",
         "what time does the store in waterloo close",
         "set a timer in 10 minutes",
@@ -240,3 +239,36 @@ def test_next_holiday():
         "The next Ontario holiday is Thanksgiving Day, Monday, October 12. "
         "After that, Christmas Day on Friday, December 25."
     )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "what are my classes tomorrow",
+        "What classes do I have today?",
+        "what's on my calendar this week",
+        "where is my next class",
+        "when is my next lecture",
+        "am i free friday afternoon",
+        "what's my schedule for monday",
+        "do i have any labs this week",
+    ],
+)
+def test_calendar_questions_go_straight_to_claude_code(text):
+    found = fastpath.match(text, WEATHER, PLACES)
+    assert found is not None and (found.intent, found.tool, found.args) == ("calendar", "ask_claude", {"task": text})
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "add dinner with didi to my calendar friday",  # changes the calendar: the model words the task
+        "cancel my classes",
+        "what classes should i take next term",
+        "when is the next holiday",
+        "email my prof that i'll miss class",
+    ],
+)
+def test_calendar_changes_and_other_questions_do_not(text):
+    found = fastpath.match(text, WEATHER, PLACES)
+    assert found is None or found.intent != "calendar"

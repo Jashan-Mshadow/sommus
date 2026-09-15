@@ -148,3 +148,42 @@ async def test_without_a_pin_set_personal_tools_say_how_to_set_one(tmp_path):
         events = await run(brain, "read my email")
         locked = [e for e in events if isinstance(e, ToolFinished)][0]
         assert calls == [] and "sommus pin" in locked.output
+
+
+@pytest.mark.parametrize(
+    ("said", "given", "rest"),
+    [
+        ("The PIN is 5173. Send message to Didi.", "5173", "Send message to Didi"),
+        ("override 5173 read my email", "5173", "read my email"),
+        ("Send Didi a message, my pin is 5173", "5173", "Send Didi a message"),
+        ("five one seven three", "5173", ""),
+        ("send the message now", None, "send the message now"),
+        ("what's the code for room 5353", None, "what's the code for room 5353"),
+    ],
+)
+def test_a_pin_inside_a_request_is_split_out(said, given, rest):
+    assert pin.split_pin(said) == (given, rest)
+
+
+def test_pins_are_redacted_for_screens_and_logs():
+    assert pin.redact("The PIN is 5173. Send message to Didi.") == "•••• Send message to Didi"
+    assert pin.redact("5173") == "••••"
+    assert pin.redact("volume 40") == "volume 40"
+
+
+async def test_a_pin_said_with_the_request_unlocks_and_runs_it_in_one_go(tmp_path):
+    async with gated_brain(tmp_path, tool_call("peek", {}), text_reply("Nothing new.")) as (brain, model, calls):
+        events = await run(brain, "The PIN is 5173. Check my email.")
+        assert calls == ["peek"]
+        assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "Unlocked for 10 minutes. Nothing new."
+        assert PIN not in str(model.requests) and PIN not in str(brain.messages)
+        assert "Check my email" in str(model.requests[0]["messages"][-1])
+
+
+async def test_after_unlocking_the_model_knows_it_is_unlocked(tmp_path):
+    """Found in real use: the PIN was kept out of the conversation, so the model kept asking for it."""
+    async with gated_brain(tmp_path, text_reply("Sure.")) as (brain, model, _):
+        await run(brain, "5173")
+        await run(brain, "okay, send the message now")
+        history = str(model.requests[0]["messages"])
+        assert "unlocked" in history and PIN not in history

@@ -18,7 +18,7 @@ import anthropic
 from sommus.brain import fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
-from sommus.brain.pin import Gate
+from sommus.brain.pin import Gate, split_pin
 from sommus.brain.prompt import stamp, system_prompt
 from sommus.brain.store import Store, Usage
 from sommus.config import Config
@@ -139,11 +139,13 @@ class Brain:
         return request
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
-        answer = self.gate.attempt(text)
-        if answer is not None:
-            async for event in self._pin_entered(answer, confirm):
-                yield event
-            return
+        if self.gate.active:
+            given, rest = split_pin(text)
+            if given is not None:
+                answer = self.gate.check(given)
+                async for event in self._pin_entered(answer, rest, confirm):
+                    yield event
+                return
         self._asked = text
         quick = fastpath.match(text, self._weather, self._place) if self.cfg.fast_path else None
         if quick and self._fast_ready(quick):
@@ -312,7 +314,9 @@ class Brain:
             yield ToolStarted(tool, args, self.hub.tier(tool))
             result = await self._run_tool(turn_id, tool, args, confirm)
             yield ToolFinished(tool, result.text, result.is_error, result.decision)
-            if result.is_error:
+            if result.decision == "needs_pin":
+                reply = "That needs your PIN." if self.gate.pin_set else "That needs a PIN. Run sommus pin to set one."
+            elif result.is_error:
                 reply = result.text
             elif quick.phrase:
                 reply = quick.phrase(result.text)
@@ -325,18 +329,25 @@ class Brain:
         self.store.finish_turn(turn_id, reply, "ok", "fastpath", Usage())
         yield TurnDone(Usage(), 0.0, 0)
 
-    async def _pin_entered(self, answer: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
-        """A PIN was said or typed. It stays out of the model, the conversation and the log; if it
-        unlocked the gate, the request that was waiting on it runs now."""
-        turn_id = self.store.start_turn("[PIN entered]")
+    async def _pin_entered(self, answer: str, rest: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        """A PIN was said or typed, alone or inside a request. The digits stay out of the model, the
+        conversation and the log. If it unlocked the gate, the model is told so, and the request —
+        the rest of this message, or the one that hit the lock — runs now."""
+        turn_id = self.store.start_turn("[PIN entered]" + (f" {rest}" if rest else ""))
         self.store.finish_turn(turn_id, answer, "ok", "pin", Usage())
         pending, self.gate.pending = self.gate.pending, None
+        request = rest or pending
         yield TextDelta(answer)
-        if pending is None or not self.gate.unlocked:
+        if not self.gate.unlocked:
+            yield TurnDone(Usage(), 0.0, 0)
+            return
+        # Without this the model still believes it's locked and asks for the PIN again.
+        self._remember("[I gave my PIN: personal actions are unlocked now]", answer)
+        if not request:
             yield TurnDone(Usage(), 0.0, 0)
             return
         yield TextDelta(" ")
-        async for event in self.handle(pending, confirm):
+        async for event in self.handle(request, confirm):
             yield event
 
     def _remember(self, text: str, reply: str) -> None:

@@ -66,6 +66,34 @@ def spoken_digits(text: str) -> str | None:
     return digits if 4 <= len(digits) <= 8 else None
 
 
+# A PIN said inside a request: "the PIN is 2684, send Didi a message", "override 2684 read my email".
+INLINE = re.compile(
+    r"\b(?:my\s+|the\s+)?(?:pin|passcode|password|override|code)(?:\s+(?:number|is|was))*[\s:,]*((?:\d[\s-]?){4,8})\b[.,]?",
+    re.I,
+)
+
+
+def split_pin(text: str) -> tuple[str | None, str]:
+    """('2684', 'Send message to Didi.') from 'The PIN is 2684. Send message to Didi.' — the request
+    goes on without the PIN in it. (None, text) when there's no PIN."""
+    whole = spoken_digits(text)
+    if whole:
+        return whole, ""
+    found = INLINE.search(text)
+    if not found:
+        return None, text
+    rest = (text[: found.start()] + " " + text[found.end() :]).strip(" ,.;:")
+    return re.sub(r"\D", "", found.group(1)), re.sub(r"\s{2,}", " ", rest)
+
+
+def redact(text: str) -> str:
+    """For screens, logs and history files."""
+    digits, rest = split_pin(text)
+    if digits is None:
+        return text
+    return f"•••• {rest}".strip()
+
+
 def _hash(pin: str, salt: bytes) -> bytes:
     return hashlib.scrypt(pin.encode(), salt=salt, n=2**14, r=8, p=1)
 
@@ -124,12 +152,13 @@ class Gate:
         self.unlocked_until = 0.0
 
     def attempt(self, text: str) -> str | None:
-        """None if the message isn't a PIN. Otherwise the spoken reply: unlocked, wrong, or locked out."""
+        """None if the message isn't only a PIN. Otherwise the spoken reply: unlocked, wrong, or locked out."""
         if not self.active:
             return None
         pin = spoken_digits(text)
-        if pin is None:
-            return None
+        return None if pin is None else self.check(pin)
+
+    def check(self, pin: str) -> str:
         now = self.clock()
         if now < self.locked_out_until:
             return f"Too many wrong tries. Try again in {int(self.locked_out_until - now) // 60 + 1} minutes."
