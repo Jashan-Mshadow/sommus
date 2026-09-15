@@ -186,6 +186,15 @@ class Transcriber:
 
     def warm_up(self) -> None:
         """The first call loads the model (~1s); do it before the user is waiting."""
+        import os
+        from pathlib import Path
+
+        # Once the model is on disk, skip Hugging Face's online check and its progress bars,
+        # which otherwise print a screen of "Downloading 0.00B" on every start.
+        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+        cached = Path.home() / ".cache/huggingface/hub" / f"models--{self.model.replace('/', '--')}"
+        if cached.is_dir():
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
         self.transcribe(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
 
     def transcribe(self, audio: np.ndarray) -> str:
