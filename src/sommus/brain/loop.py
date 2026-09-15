@@ -8,12 +8,14 @@ talked to.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import anthropic
 
+from sommus.brain import fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
 from sommus.brain.prompt import stamp, system_prompt
@@ -64,6 +66,7 @@ class ToolResult:
     text: str
     is_error: bool
     decision: str
+    extra_usd: float = 0.0  # spend inside the tool itself, e.g. the web search worker
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,16 @@ class TurnDone:
 
 Event = TextDelta | ToolStarted | ToolFinished | Notice | TurnDone
 ConfirmFn = Callable[[str, dict[str, Any]], Awaitable[bool]]
+
+
+COST_TRAILER = re.compile(r"\n?\[cost:(\d+(?:\.\d+)?)\]\s*$")
+OLD_RESULT_CHARS = 300  # a finished turn's tool output, trimmed to this in later requests
+
+
+def split_cost(text: str) -> tuple[str, float]:
+    """Strip a node's '[cost:0.0123]' trailer and return the amount it reports."""
+    found = COST_TRAILER.search(text)
+    return (text[: found.start()], float(found.group(1))) if found else (text, 0.0)
 
 
 IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a browser task
@@ -119,8 +132,14 @@ class Brain:
         return request
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        quick = fastpath.match(text) if self.cfg.fast_path else None
+        if quick and self.hub.tier(quick.tool) is not None:
+            async for event in self._fast(text, quick, confirm):
+                yield event
+            return
         turn_id = self.store.start_turn(text)
         self._trim_history()
+        self._compact_finished_turns()
         history_len = len(self.messages)
         self.messages.append({"role": "user", "content": stamp(text)})
         usage, reply, status, steps = Usage(), [], "error", 0
@@ -161,6 +180,7 @@ class Brain:
                             continue
                         yield ToolStarted(block.name, block.input, self.hub.tier(block.name))
                         result = await self._run_tool(turn_id, block.name, block.input, confirm)
+                        usage.extra_usd += result.extra_usd
                         yield ToolFinished(block.name, result.text, result.is_error, result.decision)
                         results.append(
                             {
@@ -221,6 +241,19 @@ class Brain:
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
 
+    async def _fast(self, text: str, quick: fastpath.Match, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        """Run a fixed command straight against the node — no model call, no cost."""
+        turn_id = self.store.start_turn(text)
+        yield ToolStarted(quick.tool, quick.args, self.hub.tier(quick.tool))
+        result = await self._run_tool(turn_id, quick.tool, quick.args, confirm)
+        yield ToolFinished(quick.tool, result.text, result.is_error, result.decision)
+        yield TextDelta(result.text)
+        # Recorded as plain text so a follow-up ("a bit higher") still has the context.
+        self.messages.append({"role": "user", "content": stamp(text)})
+        self.messages.append({"role": "assistant", "content": result.text})
+        self.store.finish_turn(turn_id, result.text, "ok" if not result.is_error else "error", "fastpath", Usage())
+        yield TurnDone(Usage(), 0.0, 0)
+
     def _tools(self) -> list[dict[str, Any]]:
         tools = self.hub.api_tools(self.cfg.core_tools)
         if any(t.get("defer_loading") for t in tools):
@@ -244,6 +277,32 @@ class Brain:
         last = self.messages[-1] if self.messages else None
         if last and last["role"] == "user" and isinstance(last["content"], list) and last["content"]:
             last["content"][-1]["cache_control"] = CACHE
+
+    def _compact_finished_turns(self) -> None:
+        """Shorten tool output from earlier turns before a new one starts.
+
+        A contact list or a page of PDF text is needed while that command runs, and is dead
+        weight after: one phone command measured 5,600 tokens of leftovers from earlier turns.
+        Done once per turn boundary, so the conversation stays byte-stable within a turn.
+        """
+        for message in self.messages:
+            if message["role"] != "user" or not isinstance(message["content"], list):
+                continue
+            for block in message["content"]:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                parts = block.get("content")
+                if not isinstance(parts, list):
+                    continue
+                compacted = []
+                for part in parts:
+                    if part.get("type") == "text" and len(part["text"]) > OLD_RESULT_CHARS:
+                        compacted.append({"type": "text", "text": part["text"][:OLD_RESULT_CHARS] + " …[trimmed]"})
+                    elif part.get("type") == "image":
+                        compacted.append({"type": "text", "text": "[screenshot from an earlier command]"})
+                    else:
+                        compacted.append(part)
+                block["content"] = compacted
 
     def _trim_history(self) -> None:
         """Keep only the most recent turns; a turn starts at a plain-text user message."""
@@ -287,5 +346,10 @@ class Brain:
         else:
             result = await self.hub.call(name, input)
             blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
+        output, extra = split_cost(output)
+        blocks = [
+            {**b, "text": split_cost(b["text"])[0]} if b.get("type") == "text" else b
+            for b in (blocks or [{"type": "text", "text": output}])
+        ]
         self.store.log_tool(turn_id, name, input, tier.value if tier else None, decision, is_error, output)
-        return ToolResult(blocks or [{"type": "text", "text": output}], output, is_error, decision)
+        return ToolResult(blocks, output, is_error, decision, extra)

@@ -268,3 +268,30 @@ async def test_old_turns_are_dropped_beyond_the_history_window(tmp_path):
         user_texts = [m["content"] for m in brain.messages if m["role"] == "user"]
         assert len(user_texts) == 2
         assert "message 4" in user_texts[-1] and "message 3" in user_texts[0]
+
+
+def test_node_cost_trailers_are_read_and_stripped():
+    from sommus.brain.loop import split_cost
+
+    assert split_cost("Sunny, 19°C.\n[cost:0.01234]") == ("Sunny, 19°C.", 0.01234)
+    assert split_cost("no trailer here") == ("no trailer here", 0.0)
+
+
+async def test_finished_turns_keep_only_a_stub_of_their_tool_output(tmp_path):
+    long_output = "contact " * 400
+    async with make_brain(tmp_path, text_reply("Next.")) as (brain, model, _):
+        brain.messages = [
+            {"role": "user", "content": "[Mon]\nlist my contacts"},
+            {"role": "assistant", "content": "calling"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": long_output}]}
+                ],
+            },
+            {"role": "assistant", "content": "Here they are."},
+        ]
+        await run(brain, "thanks", never_confirm)
+
+    sent = model.requests[0]["messages"][2]["content"][0]["content"][0]["text"]
+    assert sent.endswith("[trimmed]") and len(sent) < 400

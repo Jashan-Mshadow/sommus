@@ -34,6 +34,7 @@ class Config:
     ask_before_destructive: bool = False
     core_tools: tuple[str, ...] = ()
     history_turns: int = 12
+    fast_path: bool = True
 
 
 def load(path: Path | None = None) -> Config:
@@ -50,6 +51,7 @@ def load(path: Path | None = None) -> Config:
         web_search=assistant.get("web_search", True),
         core_tools=tuple(assistant.get("core_tools", [])),
         history_turns=assistant.get("history_turns", 12),
+        fast_path=assistant.get("fast_path", True),
         nodes=tuple(
             NodeConfig(n["name"], n["module"], {k: os.path.expandvars(v) for k, v in n.get("env", {}).items()})
             for n in raw.get("nodes", [])

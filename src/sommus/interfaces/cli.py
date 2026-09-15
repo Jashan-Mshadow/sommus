@@ -366,6 +366,16 @@ async def telegram() -> None:
         console.print(f"[red]{escape(str(e))}[/]")
 
 
+def _chrome_js_check() -> str:
+    from sommus.nodes.laptop import browser
+
+    web_tabs = [tab for tab in browser.list_tabs() if tab.url.startswith(("http://", "https://"))]
+    if not web_tabs:
+        raise RuntimeError("open any website in Chrome, then run this again")
+    browser._js(web_tabs[0], "1+1", timeout=15)
+    return "on"
+
+
 async def permissions() -> None:
     """Trigger every macOS permission prompt at once, while you're here to click Allow."""
     from sommus.nodes.laptop import apps, browser, macos
@@ -377,7 +387,7 @@ async def permissions() -> None:
         ("Contacts", lambda: f"{len(apps.contacts())} contacts"),
         ("Reminders", lambda: f"{len(apps.list_reminders(3))} open reminders"),
         ("Chrome", lambda: f"{len(browser.list_tabs())} tabs"),
-        ("Chrome JavaScript (reading pages)", lambda: browser._js(browser.list_tabs()[0], "document.title") and "on"),
+        ("Chrome JavaScript (reading pages)", _chrome_js_check),
         ("Messages", lambda: macos._osascript('tell application "Messages" to get name', timeout=20) or "ready"),
     ]
     missing = []

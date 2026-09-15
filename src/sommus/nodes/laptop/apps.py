@@ -87,12 +87,27 @@ def contacts() -> list[Contact]:
     try:
         raw = _osascript(*CONTACTS_SCRIPT, timeout=30)
     except ActionError as e:
-        if "-1743" in str(e) or "not authorized" in str(e):
-            raise ActionError(
-                "macOS hasn't allowed access to Contacts yet — approve the prompt, or enable it under "
-                "Privacy & Security → Automation."
-            ) from e
-        raise
+        if "isn’t running" in str(e) or "isn't running" in str(e) or "-600" in str(e):
+            import time
+
+            _run(["open", "-gja", "Contacts"])  # launch hidden, without stealing focus
+            time.sleep(2)
+            raw = _osascript(*CONTACTS_SCRIPT, timeout=30)
+        else:
+            raise _contacts_error(e) from e
+    return _parse_contacts(raw)
+
+
+def _contacts_error(e: ActionError) -> ActionError:
+    if "-1743" in str(e) or "not authorized" in str(e):
+        return ActionError(
+            "macOS hasn't allowed access to Contacts yet — approve the prompt, or enable it under "
+            "Privacy & Security → Automation."
+        )
+    return e
+
+
+def _parse_contacts(raw: str) -> list[Contact]:
     people = []
     for line in raw.splitlines():
         name, _, rest = line.partition(" | ")

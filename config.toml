@@ -9,19 +9,22 @@ effort = "low"
 # genuinely needs them (announced). max_steps_hard is the real ceiling.
 max_steps = 20
 max_steps_hard = 60
-# Let Sommus search the web for things it doesn't know (weather, news, facts).
-# Runs server-side; ~1¢ per search on top of tokens.
-web_search = true
+# The server-side search tool is off: attached to every request it was 2,440 tokens (~30% of
+# the prompt). Search now lives in the "web" node below and only costs anything when used.
+web_search = false
 # Only these tools are sent with every request. The rest are found on demand by tool
 # search, so the prompt stays small — 59 full tool definitions cost ~7k tokens a step.
 core_tools = [
     "get_battery", "get_volume", "set_volume", "set_mute", "set_brightness", "list_apps", "open_app",
     "quit_app", "open_url", "media_control", "notify", "create_reminder", "find_contact", "send_message",
-    "send_email", "search_email", "search_vault", "read_note", "add_todo",
+    "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search",
 ]
 # Conversation memory: older turns beyond this are dropped so every request doesn't
 # keep re-sending the whole day. /new clears it entirely.
 history_turns = 12
+# Simple fixed commands ("brightness 20", "mute", "pause", "lock") run locally with no model
+# call at all — free and instant. Anything less exact still goes to the model.
+fast_path = true
 
 # Each node is an MCP server, launched as `python -m <module>`.
 [[nodes]]
@@ -41,6 +44,12 @@ ask_before_destructive = false
 name = "gmail"
 module = "sommus.nodes.gmail.server"
 env = { GMAIL_ADDRESS = "${GMAIL_ADDRESS}", GMAIL_APP_PASSWORD = "${GMAIL_APP_PASSWORD}" }
+
+# Web search through a cheap worker model; results stay in its context, a short answer comes back.
+[[nodes]]
+name = "web"
+module = "sommus.nodes.web.server"
+env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
 
 [[nodes]]
 name = "vault"

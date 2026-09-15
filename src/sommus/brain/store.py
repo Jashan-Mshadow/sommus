@@ -15,6 +15,7 @@ PRICES = {
     "claude-sonnet-5": (2.00, 10.00),
     "claude-haiku-4-5": (1.00, 5.00),
 }
+WEB_SEARCH_USD = 0.01  # $10 per 1,000 searches
 
 
 @dataclass
@@ -23,17 +24,29 @@ class Usage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    cache_write_1h_tokens: int = 0  # the part of cache_write_tokens written with a 1-hour TTL
+    web_searches: int = 0
+    extra_usd: float = 0.0  # spend outside the main model call, e.g. the search worker
 
     def add(self, usage: Any) -> None:
         self.input_tokens += usage.input_tokens or 0
         self.output_tokens += usage.output_tokens or 0
         self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.cache_write_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        breakdown = getattr(usage, "cache_creation", None)
+        self.cache_write_1h_tokens += getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
+        server = getattr(usage, "server_tool_use", None)
+        self.web_searches += getattr(server, "web_search_requests", 0) or 0
 
     def cost_usd(self, model: str) -> float:
         in_price, out_price = PRICES.get(model, PRICES["claude-opus-5"])
-        billed_input = self.input_tokens + 1.25 * self.cache_write_tokens + 0.1 * self.cache_read_tokens
-        return (billed_input * in_price + self.output_tokens * out_price) / 1_000_000
+        # Writes cost 1.25x input with the 5-minute TTL and 2x with the 1-hour one; reads 0.1x.
+        writes_5m = self.cache_write_tokens - self.cache_write_1h_tokens
+        billed_input = (
+            self.input_tokens + 1.25 * writes_5m + 2.0 * self.cache_write_1h_tokens + 0.1 * self.cache_read_tokens
+        )
+        tokens = (billed_input * in_price + self.output_tokens * out_price) / 1_000_000
+        return tokens + WEB_SEARCH_USD * self.web_searches + self.extra_usd
 
 
 SCHEMA = """
