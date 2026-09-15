@@ -102,6 +102,26 @@ Chrome's JavaScript setting, Messages — while you're at the keyboard to approv
 before relying on the background service, since a prompt that appears while you're away silently
 blocks whatever it was doing.
 
+## Talking to Sommus (voice)
+
+```bash
+sommus voice     # press Return and talk — it stops listening when you pause. Typing still works.
+sommus voices    # hear the voices and pick one
+```
+
+Everything audio stays on the Mac, and none of it costs anything:
+
+| Step | How |
+|---|---|
+| Hearing | `sounddevice` at 16 kHz; a silence detector calibrates to the room's noise and ends after a 0.9 s pause |
+| Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.35 s per command, offline |
+| Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives; Ctrl+C cuts it off |
+
+Only the transcribed text reaches the model, so voice works unchanged wherever the brain runs.
+Replies play through the Mac's current output — AirPods included, even if they connect after Sommus starts.
+Set the voice in `config.toml` (`[voice] kokoro_voice`, `speed`); `engine = "say"` switches to the built-in
+macOS voice, which is also the automatic fallback if Kokoro can't load.
+
 ## Connecting Gmail
 
 Sommus talks to Gmail over IMAP and SMTP with an **app password**, not the Gmail API.
@@ -129,12 +149,12 @@ GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
   ┌──────────────┐          ┌──────────────────────┐   MCP    ┌──────────────────┐
   │ terminal     │─ text ─► │ agent loop           │ ───────► │ laptop (macOS)   │
   │ telegram     │ ◄ events │ LLM API              │ ───────► │ vault (notes)    │
-  │ voice (next) │          │ permission tiers     │ ───────► │ gmail            │
+  │ voice        │          │ permission tiers     │ ───────► │ gmail            │
   └──────────────┘          │ audit log + cost     │          └──────────────────┘
                             └──────────────────────┘
 ```
 
-- **Interfaces** only exchange text and events with the brain. Voice will be a new interface, not a rewrite.
+- **Interfaces** only exchange text and events with the brain. Voice is a new interface, not a rewrite.
 - **Nodes** are [MCP](https://modelcontextprotocol.io) servers. Each device lists its tools; the brain routes calls.
   A new device is a new node.
 - **The agent loop** is hand-written on the Messages API (`src/sommus/brain/loop.py`): streaming,

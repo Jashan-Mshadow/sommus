@@ -182,15 +182,16 @@ async def voice_chat() -> None:
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
 
     bot_task = None
-    with console.status("[dim]Starting nodes and loading speech recognition…[/]"):
+    with console.status("[dim]Starting nodes and loading the voice and speech recognition…[/]"):
         hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
+        engine = await _warm_voice(voice, settings)
         await asyncio.to_thread(transcriber.warm_up)
-    speaker = voice.Speaker(settings.get("voice", "Samantha"), int(settings.get("rate", 190)))
+    speaker = voice.Speaker(engine, on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"))
     try:
         brain = Brain(cfg, hub, store)
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)
         console.print(
-            f"[bold magenta]{cfg.name}[/] [dim]· voice · {settings.get('voice', 'Samantha')}{telegram_note}[/]\n"
+            f"[bold magenta]{cfg.name}[/] [dim]· voice · {escape(engine.label)}{telegram_note}[/]\n"
             "[dim]Press [bold]Return[/bold] and talk — it stops when you pause. Or type. /quit to exit.[/]"
         )
         speaker.feed(f"{cfg.name} is listening.")
@@ -260,6 +261,56 @@ async def voice_chat() -> None:
             bot_task.cancel()
         await speaker.close()
         await hub.__aexit__(None, None, None)
+
+
+async def _warm_voice(voice, settings: dict):
+    """The configured voice, loaded. Falls back to macOS `say` rather than going silent."""
+    try:
+        engine = voice.make_voice(settings)
+        await asyncio.to_thread(engine.warm_up)
+        return engine
+    except Exception as e:  # not downloaded and offline, bad voice name, broken install
+        console.print(f"[yellow]! Couldn't load the voice ({escape(str(e))}) — using macOS say instead.[/]")
+        return voice.SayVoice(settings.get("say_voice", "Samantha"), int(settings.get("say_rate", 190)))
+
+
+VOICE_SAMPLE = "Hi {user}, I'm {name}. You're at 63%, about five hours left. Want me to lower the brightness?"
+# The best-rated English Kokoro voices; `sommus voices am_adam bf_lily` plays any others.
+VOICE_SHORTLIST = [
+    "af_heart", "af_bella", "af_nicole", "af_sarah", "am_michael", "am_fenrir", "am_puck",
+    "bf_emma", "bf_isabella", "bm_george", "bm_fable",
+]  # fmt: skip
+
+
+async def voices(names: list[str]) -> None:
+    """Play Kokoro voices one after another, so the voice can be chosen by ear."""
+    from threading import Event
+
+    from sommus.interfaces import voice
+
+    cfg = config.load()
+    settings = {**config.section("voice"), "engine": "kokoro"}
+    engine = voice.make_voice(settings)
+    with console.status("[dim]Loading Kokoro (the first time downloads ~330 MB)…[/]"):
+        await asyncio.to_thread(engine.warm_up)
+    console.print(f"[dim]Current voice: {escape(engine.voice)} · speed {engine.speed} · Ctrl+C to stop[/]")
+    sample = VOICE_SAMPLE.format(user=cfg.user, name=cfg.name)
+    available = engine.english_voices()
+    stop = Event()
+    for name in names or VOICE_SHORTLIST:
+        console.print(f"[bold]{escape(name)}[/]")
+        if name not in available:
+            console.print(f"[red]  ! No English voice called {escape(name)}.[/]")
+            continue
+        engine.voice = name
+        audio = await asyncio.to_thread(engine.synthesize, sample)
+        await asyncio.to_thread(engine.play, audio, stop)
+        await asyncio.to_thread(engine.rest, stop)  # play it out fully before the next voice
+    console.print(
+        f"[dim]All English voices: {', '.join(available)}\n"
+        "Hear any: sommus voices am_adam bf_lily …\n"
+        'Pick one: config.toml → \\[voice] kokoro_voice = "…"  (speed = 1.1 talks a little faster)[/]'
+    )
 
 
 async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
@@ -565,11 +616,23 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["chat", "check", "tool", "eval", "telegram", "permissions", "start", "stop", "status", "voice"],
+        choices=[
+            "chat",
+            "check",
+            "tool",
+            "eval",
+            "telegram",
+            "permissions",
+            "start",
+            "stop",
+            "status",
+            "voice",
+            "voices",
+        ],
         default="chat",
     )
-    parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
-    parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments")
+    parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run · with `voices`: a voice to hear")
+    parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments · with `voices`: more voices")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
@@ -580,6 +643,8 @@ def main() -> None:
             asyncio.run(run_tool(args.tool_name, args.tool_args))
         elif args.command == "eval":
             asyncio.run(run_eval(args.live, args.only))
+        elif args.command == "voices":
+            asyncio.run(voices([n for n in [args.tool_name, *args.tool_args] if n]))
         elif args.command in ("start", "stop", "status"):
             asyncio.run(service(args.command))
         else:

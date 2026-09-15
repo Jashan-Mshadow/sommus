@@ -63,9 +63,13 @@ env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain" }
 # The "always_ask" tier still exists in code if a future tool ever earns it.
 
 [voice]
-# Any installed macOS voice: `say -v '?'`. Premium/Enhanced ones sound far better.
-voice = "Samantha (Enhanced)"
-rate = 190                                      # words per minute
+engine = "kokoro"                               # "kokoro" = natural, free, runs on the Mac · "say" = built-in macOS voice
+kokoro_voice = "af_heart"                       # hear the options: `sommus voices`
+speed = 1.0                                     # 1.1 talks a little faster
+kokoro_model = "mlx-community/Kokoro-82M-bf16"  # ~330 MB, downloaded once
+# Fallback if Kokoro can't load. Any installed macOS voice: `say -v '?'`.
+say_voice = "Samantha (Enhanced)"
+say_rate = 190                                  # words per minute
 stt_model = "mlx-community/whisper-small.en-mlx"  # runs on the M1, ~0.35s per command
 silence_seconds = 0.9                           # how long a pause ends what you're saying
 # input_device = "Jashan Microphone"            # e.g. use the iPhone as the mic

@@ -2,20 +2,24 @@
 
 Another interface over the same brain — it turns speech into text going in and text
 into speech coming out. Everything audio happens on this machine: recording, speech-to-
-text (Whisper on Apple silicon) and the voice (macOS `say`). Only the text reaches the
-model, so this runs unchanged once the brain lives somewhere else.
+text (Whisper on Apple silicon) and the voice (Kokoro on Apple silicon, or macOS `say`).
+Only the text reaches the model, so this runs unchanged once the brain lives somewhere else.
 
-V1 + V2: press Return, talk, and it stops listening when you go quiet. The wake word
-("Hey Sommus") replaces the Return key in V3.
+Press Return, talk, and it stops listening when you go quiet. The wake word
+("Hey Sommus") replaces the Return key in V4.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import subprocess
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -37,44 +41,214 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # [label](url) -> label, before bare URLs
     text = re.sub(r"https?://\S+", "a link", text)
     text = re.sub(r"[*`#>|]", "", text)  # markdown symbols (underscores stay: file_names read fine)
+    text = re.sub(r"\b(\d{1,2}):00\b", r"\1", text)  # 3:00 PM -> 3 PM
+    text = re.sub(r"\b(\d{1,2}):(\d{2})\b", r"\1 \2", text)  # 2:45 -> 2 45, or Kokoro skips the colon's word
+    text = re.sub(r"\s*°\s*[CF]?(?![A-Za-z])", " degrees", text)
     text = text.replace("→", " to ").replace("—", ", ").replace("·", ",")
     text = re.sub(r"\s+", " ", text)
     return re.sub(r"\s+([,.!?])", r"\1", text).strip(" ,")
 
 
-class Speaker:
-    """Speaks a streaming reply sentence by sentence, so the first words start early."""
+def _run_until_done(command: list[str], stop: threading.Event) -> None:
+    """Run a player process to the end, or kill it the moment `stop` is set."""
+    process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while process.poll() is None:
+        if stop.wait(0.02):
+            process.kill()
+            process.wait()
+            return
 
-    def __init__(self, voice: str, rate: int = 190):
+
+def quiet_hugging_face(model: str) -> None:
+    """Once a model is on disk, skip Hugging Face's online check and its progress bars,
+    which otherwise print a screen of "Downloading 0.00B" on every start."""
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    cached = Path.home() / ".cache/huggingface/hub" / f"models--{model.replace('/', '--')}"
+    if cached.is_dir():
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
+
+class SayVoice:
+    """macOS `say`: always there and instant, but robotic. The fallback voice."""
+
+    def __init__(self, voice: str = "Samantha", rate: int = 190):
         self.voice = voice
         self.rate = rate
-        self.buffer = ""
-        self.queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self.current: asyncio.subprocess.Process | None = None
-        self.worker = asyncio.create_task(self._run())
-        self.first_word_at: float | None = None
 
-    async def _run(self) -> None:
-        while True:
-            sentence = await self.queue.get()
-            if sentence is None:
-                self.queue.task_done()
+    @property
+    def label(self) -> str:
+        return f"{self.voice} (macOS say)"
+
+    def warm_up(self) -> None:
+        pass
+
+    def synthesize(self, sentence: str) -> str:
+        return sentence  # `say` makes the audio as it plays
+
+    def play(self, sentence: str, stop: threading.Event) -> None:
+        _run_until_done(["say", "-v", self.voice, "-r", str(self.rate), sentence], stop)
+
+    def rest(self, stop: threading.Event) -> None:
+        pass  # each `say` finishes on its own
+
+
+ENGLISH_VOICE = r"[ab][fm]_[a-z]+"
+
+
+def english_voice(name: str) -> str:
+    """Only English voices work: misaki's English phonemizer is the one installed.
+    The first letter is the accent (a = American, b = British), the second f/m."""
+    if not re.fullmatch(ENGLISH_VOICE, name):
+        raise ValueError(f"'{name}' isn't an English Kokoro voice — use one like af_heart, am_michael or bf_emma")
+    return name
+
+
+class KokoroVoice:
+    """Kokoro-82M through mlx-audio: a natural voice, free, and offline once downloaded (~330 MB).
+
+    Makes a sentence of audio in about a sixth of the time it takes to say it on an M1.
+    One output stream stays open for a whole reply, so sentences run together without the
+    gap a player process leaves (`afplay` hangs on ~1.3 s after the audio ends).
+    """
+
+    SAMPLE_RATE = 24_000
+
+    def __init__(self, voice: str = "af_heart", speed: float = 1.0, model: str = "mlx-community/Kokoro-82M-bf16"):
+        self.voice = english_voice(voice)
+        self.speed = speed
+        self.model_id = model
+        self.model = None
+        self._stream = None
+
+    @property
+    def label(self) -> str:
+        return f"{self.voice} (Kokoro)"
+
+    def warm_up(self) -> None:
+        """Load the model (~1 s) and build the phoneme pipeline (~4 s) before anyone is waiting."""
+        import warnings
+
+        quiet_hugging_face(self.model_id)
+        warnings.filterwarnings("ignore", category=FutureWarning)  # torch.jit notice from a dependency
+        from mlx_audio.tts.utils import load_model
+
+        self.model = load_model(self.model_id)
+        self.model.repo_id = self.model_id  # voices come from the same download, not a second repo fetched per voice
+        self.synthesize("Ready.")
+
+    def english_voices(self) -> list[str]:
+        """Every English voice in the downloaded model, e.g. af_heart, bm_george."""
+        from huggingface_hub import snapshot_download
+
+        folder = (
+            Path(snapshot_download(self.model_id, allow_patterns=["voices/*.safetensors"], local_files_only=True))
+            / "voices"
+        )
+        return sorted(v.stem for v in folder.glob("*.safetensors") if re.fullmatch(ENGLISH_VOICE, v.stem))
+
+    def synthesize(self, sentence: str) -> np.ndarray:
+        if self.model is None:
+            self.warm_up()
+        chunks = self.model.generate(text=sentence, voice=self.voice, speed=self.speed, lang_code=self.voice[0])
+        parts = [np.asarray(chunk.audio, dtype=np.float32) for chunk in chunks]
+        return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
+
+    def play(self, audio: np.ndarray, stop: threading.Event) -> None:
+        import sounddevice as sd
+
+        if self._stream is None:
+            _refresh_audio_devices()
+            self._stream = sd.OutputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="float32")
+            self._stream.start()
+        block = self.SAMPLE_RATE // 20  # check for an interruption every 50 ms
+        for start in range(0, len(audio), block):
+            if stop.is_set():
+                self.rest(stop)
                 return
-            if self.first_word_at is None:
-                self.first_word_at = time.monotonic()
-            self.current = await asyncio.create_subprocess_exec(
-                "say",
-                "-v",
-                self.voice,
-                "-r",
-                str(self.rate),
-                sentence,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await self.current.wait()
-            self.current = None
-            self.queue.task_done()
+            self._stream.write(audio[start : start + block])
+
+    def rest(self, stop: threading.Event) -> None:
+        """The reply is over: let the last words play out (or drop them if interrupted) and free the output."""
+        stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        if stop.is_set():
+            stream.abort()
+        else:
+            stream.stop()  # waits for buffered audio; close() alone would cut off the last word
+        stream.close()
+
+
+def _refresh_audio_devices() -> None:
+    """PortAudio reads the device list once, at startup. Re-read it before each reply so speech goes
+    to the current output — AirPods connected after Sommus started, not the speakers."""
+    import sounddevice as sd
+
+    sd._terminate()
+    sd._initialize()
+
+
+def make_voice(settings: dict) -> SayVoice | KokoroVoice:
+    """The voice named in [voice] config. `engine = "say"` keeps the built-in macOS voice."""
+    say = SayVoice(settings.get("say_voice", "Samantha"), int(settings.get("say_rate", 190)))
+    if settings.get("engine", "kokoro") == "say":
+        return say
+    return KokoroVoice(
+        settings.get("kokoro_voice", "af_heart"),
+        float(settings.get("speed", 1.0)),
+        settings.get("kokoro_model", "mlx-community/Kokoro-82M-bf16"),
+    )
+
+
+class Speaker:
+    """Speaks a streaming reply sentence by sentence, so the first words start early.
+
+    Two stages run side by side: sentences become audio as soon as they arrive, and audio
+    plays in order — so the next sentence is usually ready when the current one ends.
+    """
+
+    def __init__(self, engine: SayVoice | KokoroVoice, on_error: Callable[[Exception], None] | None = None):
+        self.engine = engine
+        self.on_error = on_error
+        self.buffer = ""
+        self.first_word_at: float | None = None
+        self._epoch = 0  # bumped by interrupt(); anything queued from an older epoch is dropped
+        self._stop = threading.Event()
+        self._text: asyncio.Queue[tuple[int, str] | None] = asyncio.Queue()
+        self._audio: asyncio.Queue[tuple[int, object] | None] = asyncio.Queue()
+        self._unfinished = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+        self._workers = [asyncio.create_task(self._synthesize()), asyncio.create_task(self._play())]
+
+    async def _synthesize(self) -> None:
+        while (item := await self._text.get()) is not None:
+            epoch, sentence = item
+            clip = None
+            if epoch == self._epoch:
+                try:
+                    clip = await asyncio.to_thread(self.engine.synthesize, sentence)
+                except Exception as e:  # a broken voice must not take the conversation down with it
+                    if self.on_error:
+                        self.on_error(e)
+            self._audio.put_nowait((epoch, clip))
+        self._audio.put_nowait(None)
+
+    async def _play(self) -> None:
+        while (item := await self._audio.get()) is not None:
+            epoch, clip = item
+            if epoch == self._epoch and clip is not None:
+                if self._stop.is_set():  # a reply was cut off: throw away its buffered audio first
+                    await asyncio.to_thread(self.engine.rest, self._stop)
+                    self._stop.clear()
+                if self.first_word_at is None:
+                    self.first_word_at = time.monotonic()
+                await asyncio.to_thread(self.engine.play, clip, self._stop)
+            if self._unfinished == 1:  # nothing else to say for now
+                await asyncio.to_thread(self.engine.rest, self._stop)
+            self._unfinished -= 1
+            if self._unfinished == 0:
+                self._idle.set()
 
     def feed(self, delta: str) -> None:
         self.buffer += delta
@@ -90,23 +264,23 @@ class Speaker:
     def _say(self, sentence: str) -> None:
         spoken = clean_for_speech(sentence)
         if spoken:
-            self.queue.put_nowait(spoken)
+            self._unfinished += 1
+            self._idle.clear()
+            self._text.put_nowait((self._epoch, spoken))
 
     async def finished(self) -> None:
-        await self.queue.join()
+        await self._idle.wait()
 
     def interrupt(self) -> None:
         """Stop talking now: drop what's queued and cut off the current sentence."""
-        while not self.queue.empty():
-            self.queue.get_nowait()
-            self.queue.task_done()
-        if self.current and self.current.returncode is None:
-            self.current.kill()
+        self.buffer = ""
+        self._epoch += 1
+        self._stop.set()
 
     async def close(self) -> None:
         self.interrupt()
-        self.queue.put_nowait(None)
-        await self.worker
+        self._text.put_nowait(None)
+        await asyncio.gather(*self._workers)
 
 
 # ---------------------------------------------------------------- listening
@@ -186,15 +360,7 @@ class Transcriber:
 
     def warm_up(self) -> None:
         """The first call loads the model (~1s); do it before the user is waiting."""
-        import os
-        from pathlib import Path
-
-        # Once the model is on disk, skip Hugging Face's online check and its progress bars,
-        # which otherwise print a screen of "Downloading 0.00B" on every start.
-        os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
-        cached = Path.home() / ".cache/huggingface/hub" / f"models--{self.model.replace('/', '--')}"
-        if cached.is_dir():
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        quiet_hugging_face(self.model)
         self.transcribe(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
 
     def transcribe(self, audio: np.ndarray) -> str:
