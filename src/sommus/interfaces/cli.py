@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.markup import escape
 
@@ -70,6 +71,9 @@ class TurnView:
         return answer.strip().lower() in ("y", "yes")
 
     async def run(self, brain: Brain, text: str) -> None:
+        if brain.lock.locked():
+            console.print("[dim]  waiting for a Telegram command to finish…[/]")
+        await brain.lock.acquire()
         self.status.start()
         try:
             async for event in brain.handle(text, self.confirm):
@@ -102,6 +106,7 @@ class TurnView:
                         )
         finally:
             self._break_line()
+            brain.lock.release()
 
 
 async def chat() -> None:
@@ -112,6 +117,7 @@ async def chat() -> None:
     store = Store(cfg.data_dir / "sommus.db")
     session: PromptSession = PromptSession(history=FileHistory(str(cfg.data_dir / "history")))
 
+    bot_task = None
     with console.status("[dim]Starting nodes…[/]"):
         hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
     try:
@@ -119,15 +125,17 @@ async def chat() -> None:
         for name, why in hub.unreachable.items():
             console.print(f"[yellow]! Node '{name}' is unreachable — its tools are unavailable. {escape(why)}[/]")
         count, spent = store.cost_today()
+        bot_task, telegram_note = await _start_telegram(cfg, brain, store)
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· {cfg.model} · {len(hub.api_tools())} tools · "
-            f"today {count} commands, ${spent:.2f} · /help[/]"
+            f"today {count} commands, ${spent:.2f}{telegram_note} · /help[/]"
         )
         loop = asyncio.get_running_loop()
 
         while True:
             try:
-                text = (await session.prompt_async(HTML("<b>you ›</b> "))).strip()
+                with patch_stdout(raw=True):
+                    text = (await session.prompt_async(HTML("<b>you ›</b> "))).strip()
             except KeyboardInterrupt:
                 continue
             except EOFError:
@@ -148,7 +156,40 @@ async def chat() -> None:
             finally:
                 loop.remove_signal_handler(signal.SIGINT)
     finally:
+        if bot_task:
+            bot_task.cancel()
         await hub.__aexit__(None, None, None)
+
+
+async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
+    """Serve Telegram from this same session, sharing the brain and its conversation."""
+    from sommus import service as background
+    from sommus.interfaces import telegram as tg
+
+    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+        return None, ""
+    if background.running_pid(cfg):
+        return None, " · Telegram handled by the background service"
+    try:
+        token, allowed = tg.credentials()
+        bot = tg.Bot(token, allowed, brain, store, cfg)
+        await bot.whoami()
+    except Exception as e:
+        console.print(f"[yellow]! Telegram didn't start: {escape(str(e))}[/]")
+        return None, ""
+
+    def log(line: str) -> None:
+        console.print(f"[dim]  telegram · {escape(line)}[/]")
+
+    async def serve() -> None:
+        try:
+            await bot.run(log)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await bot.close()
+
+    return asyncio.create_task(serve()), " · Telegram on"
 
 
 def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:

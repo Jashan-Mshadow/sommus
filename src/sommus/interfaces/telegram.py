@@ -98,6 +98,10 @@ class Bot:
             return
 
         await self.call("sendChatAction", chat_id=chat, action="typing")
+        async with self.brain.lock:
+            await self._turn(chat, text, log)
+
+    async def _turn(self, chat: int, text: str, log) -> None:
         reply, tools, notices, cost = [], [], [], 0.0
 
         async def allow(name: str, args: dict) -> bool:

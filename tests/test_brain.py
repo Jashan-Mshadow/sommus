@@ -167,7 +167,7 @@ async def test_the_cache_breakpoint_sits_on_the_stable_prefix(tmp_path):
 
     for request in claude.requests:
         assert "cache_control" not in request
-        assert request["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert request["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert request["system"][0]["text"] == brain.system
 
 
@@ -220,3 +220,51 @@ async def test_it_is_warned_before_the_budget_runs_out(tmp_path):
             if isinstance(block, dict) and block.get("type") == "text"
         ]
         assert any("steps left in this budget" in w for w in warnings)
+
+
+async def test_only_core_tools_are_loaded_up_front(tmp_path):
+    async with make_brain(tmp_path, text_reply("Hi.")) as (brain, claude, _):
+        brain.cfg = replace(brain.cfg, core_tools=("peek",))
+        await run(brain, "hello", never_confirm)
+
+    tools = {t["name"]: t for t in claude.requests[0]["tools"]}
+    assert "tool_search_tool_bm25" in tools  # the rest are found on demand
+    assert "defer_loading" not in tools["peek"]
+    assert tools["wipe"]["defer_loading"] is True
+
+
+async def test_nothing_is_deferred_without_a_core_set(tmp_path):
+    async with make_brain(tmp_path, text_reply("Hi.")) as (brain, claude, _):
+        await run(brain, "hello", never_confirm)
+    names = [t["name"] for t in claude.requests[0]["tools"]]
+    assert "tool_search_tool_bm25" not in names
+    assert not any(t.get("defer_loading") for t in claude.requests[0]["tools"])
+
+
+async def test_only_the_newest_tool_results_carry_a_cache_breakpoint(tmp_path):
+    async with make_brain(
+        tmp_path, tool_call("peek", {}), tool_call("peek", {}, id="toolu_2"), text_reply("Done.")
+    ) as (brain, claude, _):
+        await run(brain, "peek twice", never_confirm)
+
+    final = claude.requests[-1]["messages"]
+    marked = [
+        i
+        for i, m in enumerate(final)
+        if isinstance(m["content"], list)
+        for b in m["content"]
+        if isinstance(b, dict) and "cache_control" in b
+    ]
+    assert marked == [len(final) - 1]  # exactly one, on the latest results
+    assert claude.requests[0]["system"][0]["cache_control"]["ttl"] == "1h"
+
+
+async def test_old_turns_are_dropped_beyond_the_history_window(tmp_path):
+    async with make_brain(tmp_path, *[text_reply(f"reply {i}") for i in range(5)]) as (brain, _, _):
+        brain.cfg = replace(brain.cfg, history_turns=2)
+        for i in range(5):
+            await run(brain, f"message {i}", never_confirm)
+
+        user_texts = [m["content"] for m in brain.messages if m["role"] == "user"]
+        assert len(user_texts) == 2
+        assert "message 4" in user_texts[-1] and "message 3" in user_texts[0]

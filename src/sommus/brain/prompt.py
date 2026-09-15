@@ -14,7 +14,14 @@ def profile() -> str:
     return PROFILE_PATH.read_text().strip() if PROFILE_PATH.exists() else ""
 
 
-def system_prompt(cfg: Config) -> str:
+def system_prompt(cfg: Config, deferred: list[str] | None = None) -> str:
+    catalog = ""
+    if deferred:
+        catalog = (
+            "\n\nMore tools are available but not loaded, to keep requests small. Load one with tool search "
+            "before using it — never claim a tool doesn't exist, and never substitute run_shell or a "
+            "keystroke for a tool on this list:\n" + ", ".join(sorted(deferred))
+        )
     facts = profile()
     profile_block = f"\n\n--- About {cfg.user} ---\n{facts}" if facts else ""
     if cfg.ask_before_destructive:
@@ -70,7 +77,7 @@ a sentence to correct; a needless question costs {cfg.user} a round trip. Ask on
 destructive and the target is ambiguous.
 - Look things up before asking {cfg.user} for them: what you know about him is below, the rest is on the \
 laptop or the web.
-{profile_block}"""
+{catalog}{profile_block}"""
 
 
 def stamp(text: str, now: datetime | None = None) -> str:

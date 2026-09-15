@@ -81,13 +81,25 @@ class NodeHub:
     def tools(self) -> list[NodeTool]:
         return sorted(self._tools.values(), key=lambda t: t.tool.name)
 
-    def api_tools(self) -> list[dict[str, Any]]:
-        """Tool definitions for the Claude API. Sorted, so the prompt cache stays warm."""
-        return [
-            {"name": t.tool.name, "description": t.tool.description or "", "input_schema": t.tool.input_schema}
-            for t in self.tools
-            if t.tier is not Tier.BLOCKED
-        ]
+    def api_tools(self, core: tuple[str, ...] | set[str] = ()) -> list[dict[str, Any]]:
+        """Tool definitions for the API, sorted so the prompt cache stays warm.
+
+        When a core set is given, every other tool is marked defer_loading: it stays out of
+        the prompt until tool search finds it, which is most of what a request costs.
+        """
+        tools = []
+        for t in self.tools:
+            if t.tier is Tier.BLOCKED:
+                continue
+            definition = {
+                "name": t.tool.name,
+                "description": t.tool.description or "",
+                "input_schema": t.tool.input_schema,
+            }
+            if core and t.tool.name not in core:
+                definition["defer_loading"] = True
+            tools.append(definition)
+        return tools
 
     def tier(self, tool_name: str) -> Tier | None:
         found = self._tools.get(tool_name)

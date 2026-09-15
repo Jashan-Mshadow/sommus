@@ -32,6 +32,8 @@ class Config:
     overrides: dict[str, Tier]
     data_dir: Path
     ask_before_destructive: bool = False
+    core_tools: tuple[str, ...] = ()
+    history_turns: int = 12
 
 
 def load(path: Path | None = None) -> Config:
@@ -46,6 +48,8 @@ def load(path: Path | None = None) -> Config:
         max_steps=assistant.get("max_steps", 20),
         max_steps_hard=assistant.get("max_steps_hard", 60),
         web_search=assistant.get("web_search", True),
+        core_tools=tuple(assistant.get("core_tools", [])),
+        history_turns=assistant.get("history_turns", 12),
         nodes=tuple(
             NodeConfig(n["name"], n["module"], {k: os.path.expandvars(v) for k, v in n.get("env", {}).items()})
             for n in raw.get("nodes", [])

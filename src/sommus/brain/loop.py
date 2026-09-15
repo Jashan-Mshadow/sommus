@@ -7,6 +7,7 @@ talked to.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +28,12 @@ FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 # server-side result filtering (and a code-execution harness) worth ~3,150 extra input
 # tokens on *every* command, measured, which isn't worth it for a personal assistant.
 WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+TOOL_SEARCH_TOOL = {"type": "tool_search_tool_bm25_20251119", "name": "tool_search_tool_bm25"}
+SILENT_SERVER_TOOLS = {"tool_search_tool_bm25"}  # plumbing, not worth showing the user
+
+# An hour, not the default five minutes: commands from a phone arrive far apart, and every
+# expired cache means rewriting the whole prefix at 1.25-2x the input price.
+CACHE = {"type": "ephemeral", "ttl": "1h"}
 
 
 @dataclass(frozen=True)
@@ -84,8 +91,11 @@ class Brain:
         self.hub = hub
         self.store = store
         self.client = client or anthropic.AsyncAnthropic()
-        self.system = system_prompt(cfg)
+        deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
+        self.system = system_prompt(cfg, deferred)
         self.messages: list[dict[str, Any]] = []
+        # The terminal and Telegram can share one brain; a turn from one waits for the other.
+        self.lock = asyncio.Lock()
 
     def reset(self) -> None:
         self.messages = []
@@ -98,8 +108,8 @@ class Brain:
             # request (tools render before system). Auto top-level caching instead caches
             # the last block — the user's message — writing a fresh entry every turn, which
             # measured at ~85% of the cost per command.
-            system=[{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral"}}],
-            tools=[*self.hub.api_tools(), *([WEB_SEARCH_TOOL] if self.cfg.web_search else [])],
+            system=[{"type": "text", "text": self.system, "cache_control": CACHE}],
+            tools=self._tools(),
             messages=self.messages,
             thinking={"type": "adaptive"},
             output_config={"effort": self.cfg.effort},
@@ -110,6 +120,7 @@ class Brain:
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
         turn_id = self.store.start_turn(text)
+        self._trim_history()
         history_len = len(self.messages)
         self.messages.append({"role": "user", "content": stamp(text)})
         usage, reply, status, steps = Usage(), [], "error", 0
@@ -140,8 +151,8 @@ class Brain:
                 self.messages.append({"role": "assistant", "content": response.content})
 
                 for block in response.content:
-                    if block.type == "server_tool_use":  # ran on Anthropic's side; nothing to execute
-                        yield ToolStarted(block.name, dict(block.input), None)
+                    if block.type == "server_tool_use" and block.name not in SILENT_SERVER_TOOLS:
+                        yield ToolStarted(block.name, dict(block.input), None)  # ran server-side
 
                 if response.stop_reason == "tool_use":
                     results = []
@@ -172,6 +183,7 @@ class Brain:
                     # All results go back in one message, so parallel calls keep working.
                     self.messages.append({"role": "user", "content": results})
                     self._prune_images()
+                    self._mark_history_cache()
                     continue
 
                 if response.stop_reason == "pause_turn":
@@ -208,6 +220,37 @@ class Brain:
             self.store.finish_turn(turn_id, "".join(reply), status, self.cfg.model, usage)
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
+
+    def _tools(self) -> list[dict[str, Any]]:
+        tools = self.hub.api_tools(self.cfg.core_tools)
+        if any(t.get("defer_loading") for t in tools):
+            tools.insert(0, TOOL_SEARCH_TOOL)
+        if self.cfg.web_search:
+            tools.append(WEB_SEARCH_TOOL)
+        return tools
+
+    def _mark_history_cache(self) -> None:
+        """Put one cache breakpoint on the newest tool results, and only there.
+
+        Within a multi-step turn every step re-sends all the steps before it. With a
+        breakpoint at the end, the next step reads them from cache at a tenth of the price.
+        Older breakpoints are removed so the request never exceeds the limit of four.
+        """
+        for message in self.messages:
+            if isinstance(message.get("content"), list):
+                for block in message["content"]:
+                    if isinstance(block, dict):
+                        block.pop("cache_control", None)
+        last = self.messages[-1] if self.messages else None
+        if last and last["role"] == "user" and isinstance(last["content"], list) and last["content"]:
+            last["content"][-1]["cache_control"] = CACHE
+
+    def _trim_history(self) -> None:
+        """Keep only the most recent turns; a turn starts at a plain-text user message."""
+        starts = [i for i, m in enumerate(self.messages) if m["role"] == "user" and isinstance(m["content"], str)]
+        keep = self.cfg.history_turns - 1  # the turn about to start takes the last slot
+        if len(starts) > keep:
+            del self.messages[: starts[-keep] if keep > 0 else len(self.messages)]
 
     def _prune_images(self) -> None:
         """Replace all but the newest screenshot with a placeholder.

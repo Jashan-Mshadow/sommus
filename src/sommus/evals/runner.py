@@ -26,7 +26,7 @@ from sommus.brain.store import Store
 from sommus.config import ROOT, Config
 
 # Server-side helpers the search tool drives itself — not Sommus's choices.
-IGNORED_TOOLS = {"code_execution"}
+IGNORED_TOOLS = {"code_execution", "tool_search_tool_bm25"}
 
 
 @dataclass(frozen=True)
@@ -75,8 +75,8 @@ class SimulatingHub:
         self._hub = hub
         self.executed: list[str] = []
 
-    def api_tools(self) -> list[dict[str, Any]]:
-        return self._hub.api_tools()
+    def api_tools(self, core: tuple[str, ...] | set[str] = ()) -> list[dict[str, Any]]:
+        return self._hub.api_tools(core)
 
     def tier(self, tool_name: str) -> Tier | None:
         return self._hub.tier(tool_name)
