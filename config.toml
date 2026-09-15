@@ -64,7 +64,7 @@ env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain" }
 
 [voice]
 engine = "kokoro"                               # "kokoro" = natural, free, runs on the Mac · "say" = built-in macOS voice
-kokoro_voice = "af_heart"                       # hear the options: `sommus voices`
+kokoro_voice = "bf_isabella"                    # picked by ear; af_heart a close second · hear others: `sommus voices`
 speed = 1.0                                     # 1.1 talks a little faster
 kokoro_model = "mlx-community/Kokoro-82M-bf16"  # ~330 MB, downloaded once
 # Fallback if Kokoro can't load. Any installed macOS voice: `say -v '?'`.
