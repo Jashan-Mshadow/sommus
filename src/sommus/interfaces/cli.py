@@ -168,7 +168,7 @@ async def chat() -> None:
 
 
 async def voice_chat() -> None:
-    """Talk to Sommus: press Enter, speak, and hear the reply. Typing still works."""
+    """Talk to Sommus: press Return, speak, and hear the reply. Typing still works."""
     from sommus.interfaces import voice
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -190,7 +190,7 @@ async def voice_chat() -> None:
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· voice · {settings.get('voice', 'Samantha')}{telegram_note}[/]\n"
-            "[dim]Press [bold]Enter[/bold] and talk — it stops when you pause. Or type. /quit to exit.[/]"
+            "[dim]Press [bold]Return[/bold] and talk — it stops when you pause. Or type. /quit to exit.[/]"
         )
         speaker.feed(f"{cfg.name} is listening.")
         speaker.flush()

@@ -5,8 +5,8 @@ into speech coming out. Everything audio happens on this machine: recording, spe
 text (Whisper on Apple silicon) and the voice (macOS `say`). Only the text reaches the
 model, so this runs unchanged once the brain lives somewhere else.
 
-V1 + V2: press Enter, talk, and it stops listening when you go quiet. The wake word
-("Hey Sommus") replaces the Enter key in V3.
+V1 + V2: press Return, talk, and it stops listening when you go quiet. The wake word
+("Hey Sommus") replaces the Return key in V3.
 """
 
 from __future__ import annotations
