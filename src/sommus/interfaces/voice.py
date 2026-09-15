@@ -358,7 +358,7 @@ class SpeechDetector:
         silence_seconds: float = 0.9,
         min_speech_seconds: float = 0.25,
         max_seconds: float = 20.0,
-        pre_roll_seconds: float = 0.3,
+        pre_roll_seconds: float = 0.5,
         threshold: float = 0.5,
     ):
         self._probability = probability
@@ -574,10 +574,13 @@ class Transcriber:
         quiet_hugging_face(self.model)
         self.transcribe(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
 
-    def transcribe(self, audio: np.ndarray) -> str:
+    def transcribe(self, audio: np.ndarray, expecting: str | None = None) -> str:
+        """`expecting="digits"` when a PIN was asked for: Whisper writes what it expects, and a
+        half-caught number comes out as words ("day four") unless it is told numbers are coming."""
         import mlx_whisper
 
-        result = mlx_whisper.transcribe(audio, path_or_hf_repo=self.model, language="en", fp16=True)
+        hint = {"initial_prompt": "My PIN is 1234."} if expecting == "digits" else {}
+        result = mlx_whisper.transcribe(audio, path_or_hf_repo=self.model, language="en", fp16=True, **hint)
         text = result["text"].strip()
         return "" if text.lower().strip(" .!?") in HALLUCINATIONS else NAME_HEARD.sub("Sommus", text)
 

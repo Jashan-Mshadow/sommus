@@ -36,9 +36,12 @@ TEENS = {
     "seventeen": 17, "eighteen": 18, "nineteen": 19,
 }  # fmt: skip
 TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90}
-# Said around a PIN but not part of it: "my pin is 2684", "override 2684", "unlock, 2684".
-AROUND = {"my", "pin", "is", "its", "it", "the", "code", "passcode", "password", "override", "unlock", "sommus", "hey",
-          "ok", "okay", "number"}  # fmt: skip
+# Said around a PIN but not part of it: "my pin is 2684", "override 2684", "unlock, 2684". The last
+# few come from Whisper, which pads a bare number when it is told to expect one ("It is 2684.").
+AROUND = {
+    "my", "pin", "is", "its", "it", "the", "code", "passcode", "password", "override", "unlock", "sommus",
+    "hey", "ok", "okay", "number", "i", "am", "was", "sure", "yes", "yeah", "here", "alright", "thats", "that",
+}  # fmt: skip
 
 
 def spoken_digits(text: str, least: int = 4) -> str | None:

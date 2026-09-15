@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import signal
 import time
 from datetime import datetime
@@ -224,7 +225,9 @@ async def voice_chat() -> None:
 
     def deaf() -> bool:  # runs on the listener thread; plain reads only
         now = time.monotonic()
-        return state["busy"] or speaker.speaking or now < state["deaf_until"] or now < speaker.quiet_since + 0.5
+        # Only just after the last word: he often answers the moment Sommus stops, and a closed
+        # mic swallows the first syllables (a PIN came through as "day four").
+        return state["busy"] or speaker.speaking or now < state["deaf_until"] or now < speaker.quiet_since + 0.2
 
     def chime(path: str) -> None:
         state["deaf_until"] = time.monotonic() + 0.6  # don't hear our own chime
@@ -324,7 +327,12 @@ async def voice_chat() -> None:
 
             audio = listening.result()
             stt_started = time.monotonic()
-            text = await asyncio.to_thread(transcriber.transcribe, audio)
+            waiting_for_pin = bool(brain.gate.pending) and not brain.gate.unlocked
+            text = await asyncio.to_thread(transcriber.transcribe, audio, "digits" if waiting_for_pin else None)
+            if waiting_for_pin and not re.search(r"\d", text):
+                text = await asyncio.to_thread(transcriber.transcribe, audio)  # not a PIN after all
+                if not pin.spoken_digits(text, least=1):
+                    console.print(f"[dim]  (that wasn't a PIN — heard “{escape(text)}”)[/]")
             heard_in = time.monotonic() - stt_started
             if not text:
                 continue

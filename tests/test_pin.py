@@ -27,6 +27,8 @@ PIN = "5173"  # a test PIN, not anyone's real one
         ("My PIN is 5173.", "5173"),
         ("Override, 5173", "5173"),
         ("oh four two nine", "0429"),
+        ("It is 2684.", "2684"),  # Whisper pads a bare number when told to expect one
+        ("I am 5173", "5173"),
     ],
 )
 def test_a_pin_is_heard_however_it_is_said(said, digits):
