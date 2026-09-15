@@ -17,7 +17,7 @@ web_search = false
 core_tools = [
     "get_battery", "get_volume", "set_volume", "set_mute", "set_brightness", "list_apps", "open_app",
     "quit_app", "open_url", "media_control", "notify", "create_reminder", "find_contact", "send_message",
-    "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search",
+    "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search", "ask_claude",
 ]
 # Conversation memory: older turns beyond this are dropped so every request doesn't
 # keep re-sending the whole day. /new clears it entirely.
@@ -50,6 +50,13 @@ env = { GMAIL_ADDRESS = "${GMAIL_ADDRESS}", GMAIL_APP_PASSWORD = "${GMAIL_APP_PA
 name = "web"
 module = "sommus.nodes.web.server"
 env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
+
+# Claude Code on this Mac, on the subscription: Google Calendar, Drive, Notion, Goodnotes, its memory of Jashan.
+# Full rights (Jashan, 2026-09-15); ask_claude is behind the PIN in [security].
+[[nodes]]
+name = "claude"
+module = "sommus.nodes.claude.server"
+env = { SOMMUS_CLAUDE_MODEL = "sonnet", SOMMUS_CLAUDE_CWD = "~/Documents" }
 
 [[nodes]]
 name = "vault"
