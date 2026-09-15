@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import signal
+import time
 from datetime import datetime
 from typing import Any
 
@@ -50,9 +51,10 @@ def _format_args(args: dict[str, Any]) -> str:
 class TurnView:
     """Renders one turn's events and asks for confirmations."""
 
-    def __init__(self, cfg: config.Config, session: PromptSession):
+    def __init__(self, cfg: config.Config, session: PromptSession, speaker=None):
         self.cfg = cfg
         self.session = session
+        self.speaker = speaker  # voice mode: replies are also spoken as they stream
         self.status = console.status(f"[dim]{cfg.name} is thinking…[/]", spinner="dots")
         self.mid_line = False
 
@@ -84,6 +86,8 @@ class TurnView:
                             console.print(f"[bold magenta]{self.cfg.name.lower()} ›[/] ", end="")
                             self.mid_line = True
                         console.print(delta, end="", markup=False, soft_wrap=True)
+                        if self.speaker:
+                            self.speaker.feed(delta)
                     case ToolStarted(name=name, input=args, tier=tier):
                         self._break_line()
                         style = TIER_STYLE.get(tier, "red")
@@ -106,6 +110,8 @@ class TurnView:
                         )
         finally:
             self._break_line()
+            if self.speaker:
+                self.speaker.flush()
             brain.lock.release()
 
 
@@ -158,6 +164,100 @@ async def chat() -> None:
     finally:
         if bot_task:
             bot_task.cancel()
+        await hub.__aexit__(None, None, None)
+
+
+async def voice_chat() -> None:
+    """Talk to Sommus: press Enter, speak, and hear the reply. Typing still works."""
+    from sommus.interfaces import voice
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print("[red]No API key.[/] See [bold]sommus check[/].")
+        return
+    cfg = config.load()
+    settings = config.section("voice")
+    store = Store(cfg.data_dir / "sommus.db")
+    session: PromptSession = PromptSession(history=FileHistory(str(cfg.data_dir / "history")))
+    transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
+
+    bot_task = None
+    with console.status("[dim]Starting nodes and loading speech recognition…[/]"):
+        hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
+        await asyncio.to_thread(transcriber.warm_up)
+    speaker = voice.Speaker(settings.get("voice", "Samantha"), int(settings.get("rate", 190)))
+    try:
+        brain = Brain(cfg, hub, store)
+        bot_task, telegram_note = await _start_telegram(cfg, brain, store)
+        console.print(
+            f"[bold magenta]{cfg.name}[/] [dim]· voice · {settings.get('voice', 'Samantha')}{telegram_note}[/]\n"
+            "[dim]Press [bold]Enter[/bold] and talk — it stops when you pause. Or type. /quit to exit.[/]"
+        )
+        speaker.feed(f"{cfg.name} is listening.")
+        speaker.flush()
+        loop = asyncio.get_running_loop()
+
+        while True:
+            await speaker.finished()
+            try:
+                with patch_stdout(raw=True):
+                    typed = (await session.prompt_async(HTML("<b>🎙  </b>"))).strip()
+            except KeyboardInterrupt:
+                speaker.interrupt()
+                continue
+            except EOFError:
+                break
+            if typed.startswith("/"):
+                if not handle_command(typed, brain, hub, store):
+                    break
+                continue
+
+            if typed:
+                text, heard_in = typed, None
+            else:
+                voice.chime(voice.CHIME_START)
+                console.print("[dim]  listening…[/]")
+                detector = voice.SilenceDetector(silence_seconds=float(settings.get("silence_seconds", 0.9)))
+                started = time.monotonic()
+                try:
+                    audio = await asyncio.to_thread(voice.record_until_silence, detector, settings.get("input_device"))
+                except Exception as e:  # no mic permission, device unplugged
+                    console.print(f"[red]! Couldn't use the microphone: {escape(str(e))}[/]")
+                    continue
+                voice.chime(voice.CHIME_STOP)
+                if audio is None:
+                    console.print("[dim]  didn't hear anything.[/]")
+                    continue
+                spoke_for = time.monotonic() - started
+                stt_started = time.monotonic()
+                text = await asyncio.to_thread(transcriber.transcribe, audio)
+                heard_in = time.monotonic() - stt_started
+                if not text:
+                    console.print("[dim]  didn't catch that — try again.[/]")
+                    continue
+                console.print(
+                    f"[bold]you ›[/] {escape(text)} [dim]({spoke_for:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+                )
+
+            speaker.first_word_at = None
+            asked_at = time.monotonic()
+            turn = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
+            loop.add_signal_handler(signal.SIGINT, turn.cancel)
+            try:
+                await turn
+            except asyncio.CancelledError:
+                speaker.interrupt()
+                console.print("[yellow]! Cancelled.[/]")
+            finally:
+                loop.remove_signal_handler(signal.SIGINT)
+            if speaker.first_word_at and heard_in is not None:
+                console.print(
+                    f"[dim]  first spoken word {speaker.first_word_at - asked_at + heard_in:.1f}s "
+                    "after you stopped talking[/]"
+                )
+    finally:
+        if bot_task:
+            bot_task.cancel()
+        await speaker.close()
         await hub.__aexit__(None, None, None)
 
 
@@ -450,7 +550,7 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["chat", "check", "tool", "eval", "telegram", "permissions", "start", "stop", "status"],
+        choices=["chat", "check", "tool", "eval", "telegram", "permissions", "start", "stop", "status", "voice"],
         default="chat",
     )
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run (omit to list them)")
@@ -459,7 +559,7 @@ def main() -> None:
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
-    commands = {"chat": chat, "check": check, "telegram": telegram, "permissions": permissions}
+    commands = {"chat": chat, "check": check, "telegram": telegram, "permissions": permissions, "voice": voice_chat}
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))

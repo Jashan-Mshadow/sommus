@@ -37,6 +37,12 @@ class Config:
     fast_path: bool = True
 
 
+def section(name: str, path: Path | None = None) -> dict:
+    """A raw config table, for interfaces with their own settings (e.g. [voice])."""
+    path = path or Path(os.environ.get("SOMMUS_CONFIG", ROOT / "config.toml"))
+    return tomllib.loads(path.read_text()).get(name, {})
+
+
 def load(path: Path | None = None) -> Config:
     path = path or Path(os.environ.get("SOMMUS_CONFIG", ROOT / "config.toml"))
     raw = tomllib.loads(path.read_text())
