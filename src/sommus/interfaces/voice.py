@@ -49,6 +49,14 @@ def clean_for_speech(text: str) -> str:
     return re.sub(r"\s+([,.!?])", r"\1", text).strip(" ,")
 
 
+# The name is said SO-mis. Kokoro takes phonemes inline (misaki's "O" is American oʊ, "Q" British əʊ);
+# `say` gets a spelling that comes out right; Whisper's usual spellings of it are mapped back.
+NAME = re.compile(r"\bsommus\b", re.I)
+NAME_PHONEMES = {"a": "sˈOmɪs", "b": "sˈQmɪs"}
+NAME_SAY = "Sowmiss"
+NAME_HEARD = re.compile(r"\b(?:somm?iss?|sowmiss?|somm?us|summus|samus)\b", re.I)
+
+
 def _run_until_done(command: list[str], stop: threading.Event) -> None:
     """Run a player process to the end, or kill it the moment `stop` is set."""
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -86,7 +94,7 @@ class SayVoice:
         return sentence  # `say` makes the audio as it plays
 
     def play(self, sentence: str, stop: threading.Event) -> None:
-        _run_until_done(["say", "-v", self.voice, "-r", str(self.rate), sentence], stop)
+        _run_until_done(["say", "-v", self.voice, "-r", str(self.rate), NAME.sub(NAME_SAY, sentence)], stop)
 
     def rest(self, stop: threading.Event) -> None:
         pass  # each `say` finishes on its own
@@ -149,6 +157,7 @@ class KokoroVoice:
     def synthesize(self, sentence: str) -> np.ndarray:
         if self.model is None:
             self.warm_up()
+        sentence = NAME.sub(f"[Sommus](/{NAME_PHONEMES[self.voice[0]]}/)", sentence)
         chunks = self.model.generate(text=sentence, voice=self.voice, speed=self.speed, lang_code=self.voice[0])
         parts = [np.asarray(chunk.audio, dtype=np.float32) for chunk in chunks]
         return np.concatenate(parts) if parts else np.zeros(0, dtype=np.float32)
@@ -330,22 +339,60 @@ class SilenceDetector:
 
 def record_until_silence(detector: SilenceDetector, device: str | int | None = None) -> np.ndarray | None:
     """Record from the microphone until the speaker goes quiet. None if nobody spoke."""
-    import sounddevice as sd
-
+    stream, rate = open_microphone(device)
     frames: list[np.ndarray] = []
-    blocksize = int(SAMPLE_RATE * FRAME_SECONDS)
-    with sd.InputStream(
-        samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=blocksize, device=device
-    ) as stream:
+    blocksize = int(rate * FRAME_SECONDS)
+    with stream:
         while True:
             block, _ = stream.read(blocksize)
             mono = block[:, 0].copy()
             frames.append(mono)
             state = detector.update(float(np.sqrt(np.mean(mono**2))))
             if state == "done":
-                return np.concatenate(frames)
+                return to_16k(np.concatenate(frames), rate)
             if state == "timeout":
                 return None
+
+
+def open_microphone(device: str | int | None = None):
+    """An open input stream and its sample rate, getting past the ways Core Audio refuses one.
+
+    PortAudio's device list goes stale when AirPods or an iPhone mic come and go ("!obj",
+    PaErrorCode -9986), and Bluetooth mics can reject 16 kHz (-10851). So: re-read the devices,
+    try 16 kHz, then the mic's own rate, then the built-in microphone.
+    """
+    import sounddevice as sd
+
+    _refresh_audio_devices()
+    attempts: list[tuple[str | int | None, float]] = [(device, SAMPLE_RATE)]
+    try:
+        attempts.append((device, float(sd.query_devices(device, kind="input")["default_samplerate"])))
+    except Exception:
+        pass
+    built_in = next((d["name"] for d in sd.query_devices() if d["max_input_channels"] and "MacBook" in d["name"]), None)
+    if built_in and built_in != device:
+        attempts.append((built_in, SAMPLE_RATE))
+    error: Exception | None = None
+    for name, rate in attempts:
+        try:
+            stream = sd.InputStream(
+                samplerate=rate, channels=1, dtype="float32", blocksize=int(rate * FRAME_SECONDS), device=name
+            )
+            stream.start()
+            return stream, int(rate)
+        except Exception as e:
+            error = e
+    raise error or RuntimeError("no microphone found")
+
+
+def to_16k(audio: np.ndarray, rate: int) -> np.ndarray:
+    """Whisper wants 16 kHz."""
+    if rate == SAMPLE_RATE:
+        return audio
+    from scipy.signal import resample_poly
+
+    divisor = np.gcd(SAMPLE_RATE, rate)
+    return resample_poly(audio, SAMPLE_RATE // divisor, rate // divisor).astype(np.float32)
 
 
 # ---------------------------------------------------------------- understanding
@@ -368,7 +415,7 @@ class Transcriber:
 
         result = mlx_whisper.transcribe(audio, path_or_hf_repo=self.model, language="en", fp16=True)
         text = result["text"].strip()
-        return "" if text.lower().strip(" .!?") in HALLUCINATIONS else text
+        return "" if text.lower().strip(" .!?") in HALLUCINATIONS else NAME_HEARD.sub("Sommus", text)
 
 
 def chime(path: str) -> None:

@@ -11,17 +11,19 @@ so the rule leans hard towards missing.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # Words that carry no intent of their own.
 FILLER = {
     "please", "pls", "can", "could", "would", "will", "you", "u", "the", "my", "a", "an", "it", "its",
-    "sommus", "hey", "yo", "ok", "okay", "just", "set", "turn", "make", "put", "change", "get", "give",
-    "tell", "me", "to", "at", "by", "percent", "so", "is", "whats", "what", "of", "level", "current",
+    "sommus", "somis", "sommis", "hey", "yo", "ok", "okay", "just", "set", "turn", "make", "put", "change", "get",
+    "give", "tell", "me", "to", "at", "by", "percent", "so", "is", "whats", "what", "of", "level", "current",
     "currently", "now", "right", "laptop", "mac", "macbook", "computer", "for", "be", "how", "much",
     "bit", "little", "slightly", "lot", "some", "abit", "thanks", "thank", "up", "down",
 }  # fmt: skip
@@ -52,10 +54,15 @@ VOCAB = {
     "screen_off": {"off", "screen", "display", "sleep", "monitor"},
     "weather": WEATHER_TRIGGERS
     | {"outside", "today", "tomorrow", "degrees", "like", "going", "need", "i", "do", "an", "does", "feel"},
-}
+
+    "holiday": {"holiday", "holidays", "next", "upcoming", "coming", "stat", "statutory", "long", "weekend", "day",
+                "off", "when", "does", "fall", "on", "this", "year", "are", "there", "any"},
+}  # fmt: skip
 
 # Words that make a sentence more than one simple command.
 STOP_WORDS = {"and", "then", "also", "after", "before", "if", "when", "why", "dont", "not", "never", "no", "or"}
+# Said after the place ("time in Delhi right now"), so not part of its name.
+AFTER_PLACE = {"right", "now", "rn", "today", "tomorrow", "currently", "please", "pls", "tonight", "outside"}
 
 
 @dataclass(frozen=True)
@@ -121,11 +128,29 @@ def _level_change(intent: str, tokens: list[str], raw: str) -> Match | None:
     return Match(intent, read_tool)  # "what's the volume"
 
 
-def match(text: str, weather: Callable[[list[str]], str] | None = None) -> Match | None:
+def split_place(tokens: list[str]) -> tuple[list[str], str | None]:
+    """'what time is it in new delhi right now' -> (['what', 'time', 'is', 'it', 'right', 'now'], 'new delhi')"""
+    if "in" not in tokens:
+        return tokens, None
+    at = len(tokens) - 1 - tokens[::-1].index("in")
+    after = tokens[at + 1 :]
+    place = [t for t in after if t not in AFTER_PLACE and t not in {"the"}]
+    if not place or len(place) > 3 or any(t.isdigit() for t in place):
+        return tokens, None
+    return tokens[:at] + [t for t in after if t in AFTER_PLACE], " ".join(place)
+
+
+def match(
+    text: str,
+    weather: Callable[[list[str]], str] | None = None,
+    places: Callable[[str], Any] | None = None,
+) -> Match | None:
     raw = " ".join(text.strip().lower().split())
     tokens = words(raw)
     present = set(tokens)
-    if not tokens or len(tokens) > 12 or present & STOP_WORDS:
+    # "when is Diwali" is a question, not "when X happens, do Y" — only a holiday intent can claim it.
+    stopped = present & STOP_WORDS - ({"when"} if tokens[:1] == ["when"] else set())
+    if not tokens or len(tokens) > 12 or stopped:
         return None
 
     if _claims("screen_off", tokens) and present & {"off", "sleep"} and present & {"screen", "display", "monitor"}:
@@ -146,6 +171,17 @@ def match(text: str, weather: Callable[[list[str]], str] | None = None) -> Match
         return Match("battery", "get_battery", phrase=say_battery)
     if _claims("time", tokens) and "time" in present:
         return Match("time", local=lambda: f"It's {datetime.now():%-I:%M %p}.")
+    rest, place = split_place(tokens)
+    if place and places:
+        if _claims("time", rest) and "time" in rest:
+            return Match("time_in", local=lambda: time_in(places(place)))
+        if weather and _claims("weather", rest) and set(rest) & WEATHER_TRIGGERS:
+            return Match("weather_in", local=lambda: weather(rest, places(place)))
+    if _claims("holiday", tokens) and present & {"holiday", "holidays"} and present & {"next", "upcoming", "coming"}:
+        return Match("holiday", local=next_holidays)
+    if tokens[:2] == ["when", "is"] and (name := " ".join(t for t in tokens[2:] if t not in FILLER)):
+        if holiday_named(name):
+            return Match("holiday", local=lambda: when_is(name))
     if _claims("date", tokens) and present & {"date", "day"}:
         return Match("date", local=lambda: f"It's {datetime.now():%A, %B %-d}.")
     for intent in ("volume", "brightness"):
@@ -154,7 +190,7 @@ def match(text: str, weather: Callable[[list[str]], str] | None = None) -> Match
             if found:
                 return found
     if weather and _claims("weather", tokens) and present & WEATHER_TRIGGERS:
-        return Match("weather", local=lambda: weather(tokens))
+        return Match("weather", local=lambda: weather(tokens, None))
     return None
 
 
@@ -237,3 +273,145 @@ def weather_answer(tokens: list[str], place: str, latitude: float, longitude: fl
         return f"There's a {rain}% chance of rain today. Right now it's {temp} degrees and {sky}."
     feels_part = f", feels like {feels}" if abs(feels - temp) >= 3 else ""
     return f"It's {temp} degrees and {sky} in {place}{feels_part}. High of {high} today, {rain}% chance of rain."
+
+
+# ---------------------------------------------------------------- anywhere in the world
+
+
+@dataclass(frozen=True)
+class Place:
+    name: str
+    latitude: float
+    longitude: float
+    timezone: str
+    country_code: str = ""
+    is_country: bool = False
+
+
+# Countries where one clock would be wrong; answered with a city on each side.
+SPREAD_OUT = {
+    "US": [("New York", "America/New_York"), ("Los Angeles", "America/Los_Angeles")],
+    "CA": [("Toronto", "America/Toronto"), ("Vancouver", "America/Vancouver")],
+    "AU": [("Sydney", "Australia/Sydney"), ("Perth", "Australia/Perth")],
+    "BR": [("São Paulo", "America/Sao_Paulo"), ("Manaus", "America/Manaus")],
+    "RU": [("Moscow", "Europe/Moscow"), ("Vladivostok", "Asia/Vladivostok")],
+    "MX": [("Mexico City", "America/Mexico_City"), ("Tijuana", "America/Tijuana")],
+}
+ALIASES = {
+    "usa": "United States", "us": "United States", "america": "United States", "the us": "United States",
+    "uk": "United Kingdom", "england": "United Kingdom", "britain": "United Kingdom", "uae": "United Arab Emirates",
+    "punjab": "Amritsar", "delhi": "New Delhi", "nyc": "New York", "la": "Los Angeles", "sf": "San Francisco",
+}  # fmt: skip
+SAID_AS = {"punjab": "Punjab"}  # looked up through a city, but answered with the name that was asked
+
+
+@functools.lru_cache(maxsize=256)
+def find_place(name: str) -> Place:
+    """Any city or country, from Open-Meteo's free geocoder. Raises if it isn't a real, sizeable place,
+    so the request goes to the model rather than answering for a village that happens to share a word."""
+    import httpx2
+
+    response = httpx2.get(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        params={"name": ALIASES.get(name, name), "count": 5, "language": "en"},
+        timeout=6,
+    )
+    response.raise_for_status()
+    for found in response.json().get("results", []):
+        is_country = found.get("feature_code", "").startswith("PCL")
+        if is_country or (found.get("population") or 0) >= 20_000:
+            if not found.get("timezone") and found.get("country_code") not in SPREAD_OUT:
+                continue
+            return Place(
+                SAID_AS.get(name, found["name"]),
+                found["latitude"],
+                found["longitude"],
+                found.get("timezone", ""),
+                found.get("country_code", ""),
+                is_country,
+            )
+    raise LookupError(f"no sizeable place called {name!r}")
+
+
+def _clock(zone: str, now: datetime) -> str:
+    there = now.astimezone(ZoneInfo(zone))
+    day = f" {there:%A}" if there.date() != now.date() else ""
+    return f"{there:%-I:%M %p}{day}"
+
+
+def _gap(zone: str, now: datetime) -> str:
+    offset = now.astimezone(ZoneInfo(zone)).utcoffset() - now.utcoffset()
+    hours = offset.total_seconds() / 3600
+    if hours == 0:
+        return "the same time as here"
+    whole, part = int(abs(hours)), abs(hours) % 1
+    amount = f"{whole}" + {0.5: " and a half", 0.25: " and a quarter", 0.75: " and three quarters"}.get(part, "")
+    unit = "hour" if abs(hours) == 1 else "hours"
+    return f"{amount} {unit} {'ahead' if hours > 0 else 'behind'}"
+
+
+def time_in(place: Place, now: datetime | None = None) -> str:
+    now = (now or datetime.now()).astimezone()
+    if place.is_country and place.country_code in SPREAD_OUT:
+        (a, zone_a), (b, zone_b) = SPREAD_OUT[place.country_code]
+        return f"It's {_clock(zone_a, now)} in {a} and {_clock(zone_b, now)} in {b}."
+    return f"It's {_clock(place.timezone, now)} in {place.name}, {_gap(place.timezone, now)}."
+
+
+# ---------------------------------------------------------------- holidays: Ontario, plus Indian festivals
+
+
+def _holidays(start: date) -> list[tuple[date, str]]:
+    import holidays
+
+    years = [start.year, start.year + 1]
+    ontario = holidays.Canada(subdiv="ON", years=years)
+    india = holidays.India(years=years, categories=("public", "optional"))
+    found: dict[tuple[date, str], None] = {}
+    for calendar, suffix in ((ontario, ""), (india, " (India)")):
+        for day, names in calendar.items():
+            for name in names.split("; "):
+                if day >= start and "(estimated)" not in name:
+                    found[(day, name.replace(" (observed)", "") + suffix)] = None
+    return sorted(found)
+
+
+def _say_day(day: date, today: date) -> str:
+    if day == today:
+        return "today"
+    if day == today + timedelta(days=1):
+        return "tomorrow"
+    return f"{day:%A, %B %-d}" + (f", {day.year}" if day.year != today.year else "")
+
+
+def next_holidays(today: date | None = None) -> str:
+    today = today or date.today()
+    ontario = [(d, n) for d, n in _holidays(today) if not n.endswith("(India)")]
+    (day, name), (day2, name2) = ontario[0], ontario[1]
+    return (
+        f"The next Ontario holiday is {name}, {_say_day(day, today)}. After that, {name2} on {_say_day(day2, today)}."
+    )
+
+
+def _holiday_words(name: str) -> set[str]:
+    return set(words(name)) - {"day", "s", "india", "the", "of", "jayanti", "observed"}
+
+
+def holiday_named(query: str, today: date | None = None) -> tuple[date, str] | None:
+    """'diwali' -> (2026-11-08, 'Diwali (Deepavali) (India)'). Every query word must be in the name."""
+    wanted = set(words(query)) - {"day", "s", "the"}
+    if not wanted:
+        return None
+    for day, name in _holidays(today or date.today()):
+        if wanted <= _holiday_words(name):
+            return day, name
+    return None
+
+
+def when_is(query: str, today: date | None = None) -> str:
+    today = today or date.today()
+    found = holiday_named(query, today)
+    if not found:
+        raise LookupError(query)
+    day, name = found
+    return f"{name.replace(' (India)', '')} is {_say_day(day, today)}."

@@ -135,7 +135,7 @@ class Brain:
         return request
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
-        quick = fastpath.match(text, self._weather) if self.cfg.fast_path else None
+        quick = fastpath.match(text, self._weather, self._place) if self.cfg.fast_path else None
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):
@@ -249,14 +249,22 @@ class Brain:
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
 
-    def _weather(self, tokens: list[str]) -> str:
-        place = self.fast_settings
-        return fastpath.weather_answer(
-            tokens,
-            place.get("place", "Waterloo"),
-            float(place.get("latitude", 43.4643)),
-            float(place.get("longitude", -80.5204)),
+    def _home(self) -> fastpath.Place:
+        home = self.fast_settings
+        return fastpath.Place(
+            home.get("place", "Waterloo"),
+            float(home.get("latitude", 43.4643)),
+            float(home.get("longitude", -80.5204)),
+            home.get("timezone", "America/Toronto"),
         )
+
+    def _place(self, name: str) -> fastpath.Place:
+        home = self._home()
+        return home if name == home.name.lower() else fastpath.find_place(name)
+
+    def _weather(self, tokens: list[str], place: fastpath.Place | None) -> str:
+        place = place or self._home()
+        return fastpath.weather_answer(tokens, place.name, place.latitude, place.longitude)
 
     def _fast_ready(self, quick: fastpath.Match) -> bool:
         needed = [t for t in (quick.tool, quick.read_tool) if t]

@@ -1,5 +1,8 @@
 """Fixed commands: what must match, and — more important — what must not."""
 
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 from fakes import FakeModel, build_node, config, text_reply
 from mcp import Client
@@ -12,7 +15,8 @@ from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
 
-WEATHER = lambda tokens: "sunny"  # noqa: E731
+WEATHER = lambda tokens, place: "sunny"  # noqa: E731
+PLACES = lambda name: fastpath.Place(name.title(), 0.0, 0.0, "Asia/Kolkata")  # noqa: E731
 
 
 @pytest.mark.parametrize(
@@ -66,11 +70,16 @@ def test_everyday_requests_skip_the_model(text, intent, tool, args, delta):
         "don't mute",
         "lock the door",
         "pause for a second and tell me the time",
-        "what's the weather in toronto",  # a different place: leave it to search
+        "what's the weather in toronto and open spotify",  # compound, even with a place
+        "what time is my class in e7 5353",  # a room, not a place
+        "when is my next class",  # calendar, not a holiday
+        "when is my midterm",
+        "what time does the store in waterloo close",
+        "set a timer in 10 minutes",
     ],
 )
 def test_anything_less_certain_goes_to_the_model(text):
-    assert fastpath.match(text, WEATHER) is None
+    assert fastpath.match(text, WEATHER, PLACES) is None
 
 
 @pytest.mark.parametrize(
@@ -138,7 +147,7 @@ async def test_a_failing_local_answer_falls_back_to_the_model(tmp_path):
         model = FakeModel(text_reply("It's sunny."))
         brain = Brain(config(tmp_path), hub, Store(tmp_path / "t.db"), client=model)
 
-        def broken_weather(tokens):
+        def broken_weather(tokens, place):
             raise ConnectionError("weather API down")
 
         brain._weather = broken_weather
@@ -158,3 +167,76 @@ async def test_a_fast_pattern_for_a_missing_tool_falls_through_to_the_model(tmp_
         [e async for e in brain.handle("brightness 20", lambda *_: True)]
 
         assert len(model.requests) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "intent", "place"),
+    [
+        ("what time is it in india", "time_in", "india"),
+        ("what's the time in new delhi right now", "time_in", "new delhi"),
+        ("time in tokyo", "time_in", "tokyo"),
+        ("what is the temperature in waterloo", "weather_in", "waterloo"),
+        ("is it going to rain in toronto tomorrow", "weather_in", "toronto"),
+        ("what's the weather like in brampton", "weather_in", "brampton"),
+    ],
+)
+def test_time_and_weather_anywhere_skip_the_model(text, intent, place):
+    looked_up = []
+    found = fastpath.match(
+        text, lambda tokens, p: f"{p.name} {tokens}", lambda name: looked_up.append(name) or PLACES(name)
+    )
+    assert found is not None and found.intent == intent, text
+    answer = found.local()
+    assert looked_up == [place]
+    if intent == "weather_in" and "tomorrow" in text:
+        assert "tomorrow" in answer  # the day survives splitting the place off
+
+
+def test_the_place_is_split_from_the_words_around_it():
+    assert fastpath.split_place(fastpath.words("time in new delhi right now")) == (
+        ["time", "right", "now"],
+        "new delhi",
+    )
+    assert fastpath.split_place(fastpath.words("volume up")) == (["volume", "up"], None)
+
+
+EDT = ZoneInfo("America/Toronto")
+
+
+def test_time_in_a_place_says_how_far_ahead_it_is():
+    now = datetime(2026, 9, 15, 14, 18, tzinfo=EDT)
+    india = fastpath.Place("India", 22.0, 79.0, "Asia/Kolkata", "IN", True)
+    assert fastpath.time_in(india, now) == "It's 11:48 PM in India, 9 and a half hours ahead."
+    tokyo = fastpath.Place("Tokyo", 35.7, 139.7, "Asia/Tokyo", "JP")
+    assert fastpath.time_in(tokyo, now) == "It's 3:18 AM Wednesday in Tokyo, 13 hours ahead."
+    vancouver = fastpath.Place("Vancouver", 49.2, -123.1, "America/Vancouver", "CA")
+    assert fastpath.time_in(vancouver, now) == "It's 11:18 AM in Vancouver, 3 hours behind."
+
+
+def test_a_country_with_many_time_zones_gets_two_cities():
+    now = datetime(2026, 9, 15, 14, 18, tzinfo=EDT)
+    usa = fastpath.Place("United States", 39.8, -98.5, "America/Chicago", "US", True)
+    assert fastpath.time_in(usa, now) == "It's 2:18 PM in New York and 11:18 AM in Los Angeles."
+
+
+@pytest.mark.parametrize(
+    ("text", "spoken"),
+    [
+        ("when is diwali", "Diwali (Deepavali) is Sunday, November 8."),
+        ("when is thanksgiving", "Thanksgiving Day is Monday, October 12."),
+        ("when is vaisakhi", "Vaisakhi is Wednesday, April 14, 2027."),
+        ("when is family day", "Family Day is Monday, February 15, 2027."),
+    ],
+)
+def test_holiday_dates_are_answered_locally(text, spoken):
+    found = fastpath.match(text, WEATHER, PLACES)
+    assert found is not None and found.intent == "holiday"
+    assert fastpath.when_is(" ".join(fastpath.words(text)[2:]), date(2026, 9, 15)) == spoken
+
+
+def test_next_holiday():
+    assert fastpath.match("what's the next holiday", WEATHER, PLACES).intent == "holiday"
+    assert fastpath.next_holidays(date(2026, 9, 15)) == (
+        "The next Ontario holiday is Thanksgiving Day, Monday, October 12. "
+        "After that, Christmas Day on Friday, December 25."
+    )

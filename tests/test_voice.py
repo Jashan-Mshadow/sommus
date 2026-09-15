@@ -182,3 +182,32 @@ def test_whisper_hallucinations_on_silence_are_dropped(monkeypatch, heard):
     fake = types.SimpleNamespace(transcribe=lambda *a, **k: {"text": heard})
     monkeypatch.setitem(sys.modules, "mlx_whisper", fake)
     assert voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32)) == ""
+
+
+@pytest.mark.parametrize("engine_voice", ["bf_isabella", "af_heart"])
+def test_kokoro_is_told_how_to_say_sommus(engine_voice):
+    class FakeModel:
+        def generate(self, text, **kwargs):
+            self.text = text
+            return []
+
+    engine = voice.KokoroVoice(engine_voice)
+    engine.model = FakeModel()
+    engine.synthesize("Sommus is listening, and sommus's voice works.")
+    phonemes = "sˈQmɪs" if engine_voice.startswith("b") else "sˈOmɪs"
+    assert engine.model.text == f"[Sommus](/{phonemes}/) is listening, and [Sommus](/{phonemes}/)'s voice works."
+
+
+@pytest.mark.parametrize("heard", ["Hey Somis, mute.", "Hey Sommis, mute.", "Hey Samus, mute.", "Hey Sowmiss, mute."])
+def test_whisper_spellings_of_the_name_are_fixed(monkeypatch, heard):
+    import sys
+    import types
+
+    monkeypatch.setitem(sys.modules, "mlx_whisper", types.SimpleNamespace(transcribe=lambda *a, **k: {"text": heard}))
+    assert voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32)) == "Hey Sommus, mute."
+
+
+def test_microphone_audio_at_another_rate_becomes_16k():
+    one_second = np.sin(np.linspace(0, 440 * 2 * np.pi, 44_100)).astype(np.float32)
+    converted = voice.to_16k(one_second, 44_100)
+    assert converted.dtype == np.float32 and abs(len(converted) - 16_000) <= 1

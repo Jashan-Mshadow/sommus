@@ -743,6 +743,18 @@ wheels = [
 ]
 
 [[package]]
+name = "holidays"
+version = "0.104"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/23/9d0f6c31dda49b50efecdac7b76d979fa37b6267e55bab4907a58f02e8ac/holidays-0.104.tar.gz", hash = "sha256:7e327b255dee3de3c8f7fef58f835ccb7685881ea72176697ff60269c57743b2", size = 1021650, upload-time = "2026-09-07T17:49:30.506Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/63/e6d7af3e7cd7ce095aee210204fce64b2ce5164c0c3c79d70e335837886c/holidays-0.104-py3-none-any.whl", hash = "sha256:e0db9ff1d5588e3349bf2de6a597421e39cb7299b64a015170a0a0886940c384", size = 1619592, upload-time = "2026-09-07T17:49:28.243Z" },
+]
+
+[[package]]
 name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
@@ -2772,6 +2784,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "en-core-web-sm" },
+    { name = "holidays" },
     { name = "httpx2" },
     { name = "mcp", extra = ["cli"] },
     { name = "misaki", extra = ["en"] },
@@ -2799,6 +2812,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=1.5.0" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
+    { name = "holidays", specifier = ">=0.104" },
     { name = "httpx2", specifier = ">=2.12.0" },
     { name = "mcp", extras = ["cli"], specifier = ">=2.2.0" },
     { name = "misaki", extras = ["en"], specifier = ">=0.9.4" },
