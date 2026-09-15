@@ -69,7 +69,7 @@ RULES: list[tuple[re.Pattern[str], Any]] = [
     ),
     (
         re.compile(
-            rf"^{POLITE}(?:what'?s\s+|how'?s\s+|check\s+)?(?:my\s+|the\s+)?battery(?:\s+(?:level|at|percentage|life))?{END}"
+            rf"^{POLITE}(?:what'?s\s+|what\s+is\s+|how'?s\s+|how\s+is\s+|check\s+)?(?:my\s+|the\s+)?battery(?:\s+(?:level|at|percentage|life))?{END}"
         ),
         lambda m: Match("get_battery", {}),
     ),

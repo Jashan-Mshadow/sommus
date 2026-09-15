@@ -31,6 +31,8 @@ from sommus.brain.store import Store
         ("turn off the screen", "sleep_display", {}),
         ("what's my battery", "get_battery", {}),
         ("battery?", "get_battery", {}),
+        ("what is my battery", "get_battery", {}),
+        ("how is my battery", "get_battery", {}),
     ],
 )
 def test_simple_commands_skip_the_model(text, tool, args):

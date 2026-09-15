@@ -229,9 +229,11 @@ class Brain:
         except anthropic.APIStatusError as e:
             del self.messages[history_len:]
             yield Notice(f"API error {e.status_code}: {e.message}")
-        except anthropic.APIConnectionError:
+        except anthropic.APIConnectionError as e:
             del self.messages[history_len:]
-            yield Notice("Couldn't reach the model API. Check the internet connection.")
+            cause = e.__cause__ or e.__context__
+            detail = f" ({type(cause).__name__}: {cause})" if cause else ""
+            yield Notice(f"Couldn't reach the model API.{detail}")
         except BaseException:  # Ctrl+C mid-turn: forget the half-finished turn
             del self.messages[history_len:]
             status = "interrupted"
