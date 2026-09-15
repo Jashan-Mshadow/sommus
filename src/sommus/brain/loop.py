@@ -107,6 +107,9 @@ class Brain:
         deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
         self.system = system_prompt(cfg, deferred)
         self.messages: list[dict[str, Any]] = []
+        from sommus import config as config_module
+
+        self.fast_settings = config_module.section("fastpath")
         # The terminal and Telegram can share one brain; a turn from one waits for the other.
         self.lock = asyncio.Lock()
 
@@ -132,11 +135,14 @@ class Brain:
         return request
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
-        quick = fastpath.match(text) if self.cfg.fast_path else None
-        if quick and self.hub.tier(quick.tool) is not None:
+        quick = fastpath.match(text, self._weather) if self.cfg.fast_path else None
+        if quick and self._fast_ready(quick):
+            handled = False
             async for event in self._fast(text, quick, confirm):
+                handled = True
                 yield event
-            return
+            if handled:
+                return
         turn_id = self.store.start_turn(text)
         self._trim_history()
         self._compact_finished_turns()
@@ -243,18 +249,68 @@ class Brain:
 
         yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
 
+    def _weather(self, tokens: list[str]) -> str:
+        place = self.fast_settings
+        return fastpath.weather_answer(
+            tokens,
+            place.get("place", "Waterloo"),
+            float(place.get("latitude", 43.4643)),
+            float(place.get("longitude", -80.5204)),
+        )
+
+    def _fast_ready(self, quick: fastpath.Match) -> bool:
+        needed = [t for t in (quick.tool, quick.read_tool) if t]
+        return all(self.hub.tier(t) is not None for t in needed)
+
     async def _fast(self, text: str, quick: fastpath.Match, confirm: ConfirmFn) -> AsyncIterator[Event]:
-        """Run a fixed command straight against the node — no model call, no cost."""
-        turn_id = self.store.start_turn(text)
-        yield ToolStarted(quick.tool, quick.args, self.hub.tier(quick.tool))
-        result = await self._run_tool(turn_id, quick.tool, quick.args, confirm)
-        yield ToolFinished(quick.tool, result.text, result.is_error, result.decision)
-        yield TextDelta(result.text)
-        # Recorded as plain text so a follow-up ("a bit higher") still has the context.
-        self.messages.append({"role": "user", "content": stamp(text)})
-        self.messages.append({"role": "assistant", "content": result.text})
-        self.store.finish_turn(turn_id, result.text, "ok" if not result.is_error else "error", "fastpath", Usage())
+        """Answer an everyday command with no model call. Yields nothing if it can't, so the
+        caller falls through to the model (e.g. the weather API is down)."""
+        if quick.local:
+            try:
+                reply = await asyncio.to_thread(quick.local)
+            except Exception:
+                return
+            turn_id = self.store.start_turn(text)
+            yield ToolStarted(quick.intent, {}, Tier.READ)
+            yield ToolFinished(quick.intent, reply, False, "ran")
+        else:
+            turn_id = self.store.start_turn(text)
+            args = dict(quick.args)
+            if quick.read_tool and quick.delta:
+                yield ToolStarted(quick.read_tool, {}, self.hub.tier(quick.read_tool))
+                current = await self._run_tool(turn_id, quick.read_tool, {}, confirm)
+                yield ToolFinished(quick.read_tool, current.text, current.is_error, current.decision)
+                level = fastpath.level_from(current.text)
+                if current.is_error or level is None:
+                    reply = current.text
+                    yield TextDelta(reply)
+                    self._remember(text, reply)
+                    self.store.finish_turn(turn_id, reply, "error", "fastpath", Usage())
+                    yield TurnDone(Usage(), 0.0, 0)
+                    return
+                args = {"level": max(0, min(100, level + quick.delta))}
+            tool = quick.tool if (quick.args or quick.delta or not quick.read_tool) else quick.read_tool
+            tool = tool or quick.read_tool
+            yield ToolStarted(tool, args, self.hub.tier(tool))
+            result = await self._run_tool(turn_id, tool, args, confirm)
+            yield ToolFinished(tool, result.text, result.is_error, result.decision)
+            if result.is_error:
+                reply = result.text
+            elif quick.phrase:
+                reply = quick.phrase(result.text)
+            elif quick.intent in ("brightness", "volume") and (level := fastpath.level_from(result.text)) is not None:
+                reply = fastpath.say_level(quick.intent, level)
+            else:
+                reply = result.text
+        yield TextDelta(reply)
+        self._remember(text, reply)
+        self.store.finish_turn(turn_id, reply, "ok", "fastpath", Usage())
         yield TurnDone(Usage(), 0.0, 0)
+
+    def _remember(self, text: str, reply: str) -> None:
+        # Plain text in the conversation, so a follow-up ("a bit higher") still has context.
+        self.messages.append({"role": "user", "content": stamp(text)})
+        self.messages.append({"role": "assistant", "content": reply})
 
     def _tools(self) -> list[dict[str, Any]]:
         tools = self.hub.api_tools(self.cfg.core_tools)

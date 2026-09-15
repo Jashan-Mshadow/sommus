@@ -12,49 +12,78 @@ from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
 
+WEATHER = lambda tokens: "sunny"  # noqa: E731
+
 
 @pytest.mark.parametrize(
-    ("text", "tool", "args"),
+    ("text", "intent", "tool", "args", "delta"),
     [
-        ("brightness 20", "set_brightness", {"level": 20}),
-        ("Turn my laptop brightness to 20", "set_brightness", {"level": 20}),
-        ("set brightness to 75%", "set_brightness", {"level": 75}),
-        ("please set the screen brightness to 40!", "set_brightness", {"level": 40}),
-        ("volume 30", "set_volume", {"level": 30}),
-        ("set the volume to 0", "set_volume", {"level": 0}),
-        ("mute", "set_mute", {"muted": True}),
-        ("unmute the sound", "set_mute", {"muted": False}),
-        ("pause", "media_control", {"action": "play_pause"}),
-        ("pause the music", "media_control", {"action": "play_pause"}),
-        ("skip this song", "media_control", {"action": "next"}),
-        ("lock my laptop", "lock_screen", {}),
-        ("turn off the screen", "sleep_display", {}),
-        ("what's my battery", "get_battery", {}),
-        ("battery?", "get_battery", {}),
-        ("what is my battery", "get_battery", {}),
-        ("how is my battery", "get_battery", {}),
+        # people phrase the same request many ways
+        ("what's the battery", "battery", "get_battery", {}, 0),
+        ("what is my battery at", "battery", "get_battery", {}, 0),
+        ("how much battery is left", "battery", "get_battery", {}, 0),
+        ("brightness 20", "brightness", "set_brightness", {"level": 20}, 0),
+        ("Turn my laptop brightness to 20", "brightness", "set_brightness", {"level": 20}, 0),
+        ("lower brightness by 12%", "brightness", "set_brightness", {}, -12),
+        ("brightness down 12", "brightness", "set_brightness", {}, -12),
+        ("make the screen a bit dimmer", "brightness", "set_brightness", {}, -10),
+        ("brightness up", "brightness", "set_brightness", {}, 10),
+        ("full brightness", "brightness", "set_brightness", {"level": 100}, 0),
+        ("volume 30", "volume", "set_volume", {"level": 30}, 0),
+        ("turn the volume up a lot", "volume", "set_volume", {}, 25),
+        ("make it slightly louder", "volume", "set_volume", {}, 5),
+        ("what's the volume", "volume", "get_volume", {}, 0),
+        ("mute", "mute", "set_mute", {"muted": True}, 0),
+        ("unmute the sound", "unmute", "set_mute", {"muted": False}, 0),
+        ("pause the music", "play_pause", "media_control", {"action": "play_pause"}, 0),
+        ("skip this song", "next", "media_control", {"action": "next"}, 0),
+        ("lock my laptop", "lock", "lock_screen", {}, 0),
+        ("turn off the screen", "screen_off", "sleep_display", {}, 0),
+        ("what time is it", "time", None, {}, 0),
+        ("what's the date today", "date", None, {}, 0),
+        ("what's the temperature", "weather", None, {}, 0),
+        ("is it going to rain tomorrow", "weather", None, {}, 0),
+        ("do i need an umbrella", "weather", None, {}, 0),
     ],
 )
-def test_simple_commands_skip_the_model(text, tool, args):
-    assert fastpath.match(text) == fastpath.Match(tool, args)
+def test_everyday_requests_skip_the_model(text, intent, tool, args, delta):
+    found = fastpath.match(text, WEATHER)
+    assert found is not None, text
+    assert (found.intent, found.tool, found.args, found.delta) == (intent, tool, args, delta)
 
 
 @pytest.mark.parametrize(
     "text",
     [
-        "make it a bit brighter",  # relative amounts need judgement
-        "brightness 150",  # out of range
-        "volume up",
         "set brightness to 20 and open spotify",  # compound
-        "why is my battery draining so fast",  # a question, not a command
-        "pause for a second and tell me the time",
+        "why is my battery draining so fast",  # a real question
+        "turn off my laptop",  # sleep_computer is not a fast-path action
+        "play lofi on spotify",  # needs a search
+        "open the screen settings",
+        "brightness by 12",  # which direction?
+        "brightness 150",
+        "what's on my screen",
         "don't mute",
-        "lock the door",  # not a device we have
-        "turn off my laptop",  # sleep_computer is destructive — leave it to the model
+        "lock the door",
+        "pause for a second and tell me the time",
+        "what's the weather in toronto",  # a different place: leave it to search
     ],
 )
-def test_anything_less_exact_goes_to_the_model(text):
-    assert fastpath.match(text) is None
+def test_anything_less_certain_goes_to_the_model(text):
+    assert fastpath.match(text, WEATHER) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "spoken"),
+    [
+        ("63%, discharging, 5:08 remaining, on Battery Power", "You're at 63%, about 5 hours left."),
+        ("63%, discharging, 4:41 remaining, on Battery Power", "You're at 63%, about 5 hours left."),
+        ("12%, discharging, 0:35 remaining, on Battery Power", "You're at 12%, about 35 minutes left."),
+        ("80%, charging, on AC Power", "You're at 80% and charging."),
+    ],
+)
+def test_battery_replies_sound_like_a_person(raw, spoken):
+    assert fastpath.say_battery(raw) == spoken
 
 
 def device_node():
@@ -66,6 +95,11 @@ def device_node():
         """Set brightness."""
         calls.append(level)
         return f"Brightness {level}%."
+
+    @node.tool(annotations=ToolAnnotations(read_only_hint=True), structured_output=False)
+    def get_brightness() -> str:
+        """Read brightness."""
+        return "Brightness 52%."
 
     return node, calls
 
@@ -80,9 +114,38 @@ async def test_a_fast_command_never_calls_the_model(tmp_path):
         events = [e async for e in brain.handle("brightness 20", lambda *_: True)]
 
         assert calls == [20] and model.requests == []
-        assert [e.text for e in events if isinstance(e, TextDelta)] == ["Brightness 20%."]
+        assert [e.text for e in events if isinstance(e, TextDelta)] == ["Brightness is at 20."]
         assert isinstance(events[-1], TurnDone) and events[-1].cost_usd == 0
-        assert brain.messages[-1] == {"role": "assistant", "content": "Brightness 20%."}  # follow-ups have context
+        assert brain.messages[-1] == {"role": "assistant", "content": "Brightness is at 20."}  # follow-ups have context
+
+
+async def test_a_relative_change_reads_the_level_then_adjusts_it(tmp_path):
+    node, calls = device_node()
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("device", Client(node))
+        model = FakeModel()
+        brain = Brain(config(tmp_path), hub, Store(tmp_path / "t.db"), client=model)
+
+        [e async for e in brain.handle("lower brightness by 12%", lambda *_: True)]
+
+        assert calls == [40] and model.requests == []  # 52 - 12
+
+
+async def test_a_failing_local_answer_falls_back_to_the_model(tmp_path):
+    node, _ = device_node()
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("device", Client(node))
+        model = FakeModel(text_reply("It's sunny."))
+        brain = Brain(config(tmp_path), hub, Store(tmp_path / "t.db"), client=model)
+
+        def broken_weather(tokens):
+            raise ConnectionError("weather API down")
+
+        brain._weather = broken_weather
+        events = [e async for e in brain.handle("what's the temperature", lambda *_: True)]
+
+        assert len(model.requests) == 1
+        assert [e.text for e in events if isinstance(e, TextDelta)] == ["It's sunny."]
 
 
 async def test_a_fast_pattern_for_a_missing_tool_falls_through_to_the_model(tmp_path):
