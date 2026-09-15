@@ -1,4 +1,4 @@
-"""Scripted fake Claude, a fake MCP node, and a test Config — shared by the test modules."""
+"""Scripted fake model, a fake MCP node, and a test Config — shared by the test modules."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
+from sommus.brain.loop import FALLBACK_MODELS
 from sommus.config import Config
 
 
@@ -45,7 +46,7 @@ class FakeStream:
         return self.message
 
 
-class FakeClaude:
+class FakeModel:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.requests = []
@@ -85,7 +86,7 @@ def config(tmp_path: Path, overrides=None, ask=True) -> Config:
     return Config(
         name="Sommus",
         user="Jashan",
-        model="claude-opus-5",
+        model=sorted(FALLBACK_MODELS)[0],
         effort="medium",
         max_steps=4,
         max_steps_hard=4,

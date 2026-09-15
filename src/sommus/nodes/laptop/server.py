@@ -1,7 +1,7 @@
 """Laptop node: exposes macOS actions as MCP tools.
 
 Run standalone with `python -m sommus.nodes.laptop.server` (stdio), which is
-also how Claude Desktop or Claude Code can use it directly.
+also how any MCP client can use it directly.
 
 Each tool's annotations declare its permission tier; the brain enforces it:
   READ         read_only_hint=True                   → runs immediately

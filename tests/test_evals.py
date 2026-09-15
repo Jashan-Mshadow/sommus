@@ -1,6 +1,6 @@
 """The eval runner: scoring rules, and that simulated tools never actually run."""
 
-from fakes import FakeClaude, build_node, config, text_reply, tool_call
+from fakes import FakeModel, build_node, config, text_reply, tool_call
 from mcp import Client
 
 from sommus import evals
@@ -44,10 +44,10 @@ async def test_non_read_tools_are_simulated_not_run(tmp_path):
     async with NodeHub((), Policy()) as real_hub:
         await real_hub.add("test", Client(node))
         hub = evals.SimulatingHub(real_hub)
-        claude = FakeClaude(tool_call("wipe", {"target": "disk"}), text_reply("Wiped."))
+        model = FakeModel(tool_call("wipe", {"target": "disk"}), text_reply("Wiped."))
 
         r = await evals.run_case(
-            config(tmp_path), hub, Store(tmp_path / "t.db"), evals.Case("wipe the disk", ("wipe",)), client=claude
+            config(tmp_path), hub, Store(tmp_path / "t.db"), evals.Case("wipe the disk", ("wipe",)), client=model
         )
 
         assert r.passed and r.called == ["wipe"]
@@ -59,13 +59,13 @@ async def test_read_tools_still_run_for_real(tmp_path):
     async with NodeHub((), Policy()) as real_hub:
         await real_hub.add("test", Client(node))
         hub = evals.SimulatingHub(real_hub)
-        claude = FakeClaude(tool_call("peek", {}), text_reply("All quiet."))
+        model = FakeModel(tool_call("peek", {}), text_reply("All quiet."))
         r = await evals.run_case(
             config(tmp_path),
             hub,
             Store(tmp_path / "t.db"),
             evals.Case("anything happening?", ("peek",)),
-            client=claude,
+            client=model,
         )
         assert calls == ["peek"] and hub.executed == ["peek"] and r.passed
 

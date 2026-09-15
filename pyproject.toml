@@ -1,7 +1,7 @@
 [project]
 name = "sommus"
 version = "0.1.0"
-description = "Sommus — a personal assistant that controls my devices, built on Claude and MCP."
+description = "Sommus — a personal assistant that controls my devices, built on an LLM agent loop and MCP."
 readme = "README.md"
 authors = [
     { name = "Jashan Multani", email = "jashandeepm2008@gmail.com" }

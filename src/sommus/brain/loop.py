@@ -192,7 +192,7 @@ class Brain:
                 if response.stop_reason == "refusal":
                     status = "refusal"
                     del self.messages[history_len:]  # a refused turn doesn't stay in context
-                    yield Notice("Claude declined that request.")
+                    yield Notice("The model declined that request.")
                 elif response.stop_reason == "max_tokens":
                     status = "max_tokens"
                     yield Notice("The reply hit the length limit and was cut off.")
@@ -211,7 +211,7 @@ class Brain:
             yield Notice(f"API error {e.status_code}: {e.message}")
         except anthropic.APIConnectionError:
             del self.messages[history_len:]
-            yield Notice("Couldn't reach the Claude API. Check the internet connection.")
+            yield Notice("Couldn't reach the model API. Check the internet connection.")
         except BaseException:  # Ctrl+C mid-turn: forget the half-finished turn
             del self.messages[history_len:]
             status = "interrupted"

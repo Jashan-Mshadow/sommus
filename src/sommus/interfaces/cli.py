@@ -304,7 +304,7 @@ async def run_tool(name: str | None, pairs: list[str]) -> None:
 async def run_eval(live: bool, only: str | None) -> None:
     """Score Sommus against evals/commands.toml."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        console.print("[red]No API key.[/] The eval calls Claude — see [bold]sommus check[/].")
+        console.print("[red]No API key.[/] The eval calls the model — see [bold]sommus check[/].")
         return
     cfg = config.load()
     cases = [c for c in evals.load_cases() if only is None or only.lower() in c.text.lower()]

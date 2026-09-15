@@ -39,7 +39,7 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 | Documents | read a PDF as text — scanned pages go through macOS Vision OCR |
 | Contacts | look up anyone's number or email from the Contacts app |
 | Downloads | fetch a file straight to disk, or save a logged-in page with Cmd+S |
-| Messaging | send an iMessage (always confirms first), write or send a Gmail |
+| Messaging | send an iMessage, write or send a Gmail |
 | Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
 | Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
 
@@ -62,25 +62,26 @@ The brain doesn't change — Telegram is a second interface over the same event 
 
 1. Message [@BotFather](https://t.me/botfather) on Telegram, send `/newbot`, pick a name, copy the token.
 2. Put it in `.env` as `TELEGRAM_BOT_TOKEN=...` and leave `TELEGRAM_ALLOWED_IDS` empty for now.
-3. Run it, message your bot once, and it prints your chat id:
+3. Start Sommus, message your bot once, and it prints your chat id:
 
 ```bash
-uv run sommus telegram
+sommus
 ```
 
 4. Put that id in `TELEGRAM_ALLOWED_IDS` and restart. Anyone not on that list is ignored and logged —
    without it, whoever finds the bot could drive the laptop.
 
-`/new` starts a fresh conversation, `/cost` reports the day's spend.
+Plain `sommus` answers the terminal and Telegram together, sharing one conversation — a lock keeps a
+phone command and a typed one from interleaving. `/new` starts fresh, `/cost` reports the day's spend.
 
 ### Keeping it running
 
-The bot stops when its terminal closes, so start it detached instead:
+The terminal session stops when its window closes. For Telegram only, detached:
 
 ```bash
-uv run sommus start     # background, survives closing the window
-uv run sommus status    # is it alive, plus the last log lines
-uv run sommus stop
+sommus start     # background, survives closing the window
+sommus status    # is it alive, plus the last log lines
+sommus stop
 ```
 
 Not a LaunchAgent on purpose: macOS ties Accessibility and Automation permissions to the *responsible*
@@ -93,7 +94,7 @@ The laptop still has to be awake: closing the lid pauses everything until it's o
 ### Permissions, once
 
 ```bash
-uv run sommus permissions
+sommus permissions
 ```
 
 Triggers every macOS prompt in one go — Accessibility, Screen Recording, Contacts, Reminders, Chrome,
@@ -118,7 +119,7 @@ GMAIL_ADDRESS=you@gmail.com
 GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
 ```
 
-`uv run sommus check` verifies the login. Without it, email still works through the browser
+`sommus check` verifies the login. Without it, email still works through the browser
 (`compose_email`) and the Gmail tools just explain the setup.
 
 ## Architecture
@@ -127,7 +128,7 @@ GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
   INTERFACES                      BRAIN                         NODES
   ┌──────────────┐          ┌──────────────────────┐   MCP    ┌──────────────────┐
   │ terminal     │─ text ─► │ agent loop           │ ───────► │ laptop (macOS)   │
-  │ telegram     │ ◄ events │ Claude API           │ ───────► │ vault (notes)    │
+  │ telegram     │ ◄ events │ LLM API              │ ───────► │ vault (notes)    │
   │ voice (next) │          │ permission tiers     │ ───────► │ gmail            │
   └──────────────┘          │ audit log + cost     │          └──────────────────┘
                             └──────────────────────┘
@@ -136,7 +137,7 @@ GMAIL_APP_PASSWORD=abcd efgh ijkl mnop
 - **Interfaces** only exchange text and events with the brain. Voice will be a new interface, not a rewrite.
 - **Nodes** are [MCP](https://modelcontextprotocol.io) servers. Each device lists its tools; the brain routes calls.
   A new device is a new node.
-- **The agent loop** is hand-written on the Claude Messages API (`src/sommus/brain/loop.py`): streaming,
+- **The agent loop** is hand-written on the Messages API (`src/sommus/brain/loop.py`): streaming,
   adaptive thinking, prompt caching, refusal fallback, and a step limit.
 
 ### Permission tiers
@@ -150,7 +151,7 @@ through MCP annotations, and every call is logged with its tier, so the gate can
 | read | runs | runs | `get_battery`, `list_apps`, `read_file` |
 | reversible | runs | runs | `set_volume`, `open_app`, `press_keys`, `create_reminder` |
 | destructive | runs | asks y/N first | `quit_app`, `sleep_computer`, `set_wifi` |
-| always_ask | **asks every time** | asks every time | `send_message` — it reaches another person |
+| always_ask | **asks every time** | asks every time | unused today; for tools that should never run unattended |
 | blocked | never runs, hidden from the model | same | set per tool in `config.toml` |
 
 A tool with no annotations counts as destructive.
@@ -166,9 +167,15 @@ Needs macOS, Python 3.12, and [uv](https://docs.astral.sh/uv/) (`brew install uv
 
 ```bash
 uv sync
-cp .env.example .env        # then paste your Anthropic API key into .env
+cp .env.example .env        # then paste your model API key into .env
 uv run sommus check         # verifies the key, nodes, and macOS permissions
 uv run sommus
+```
+
+To run it from any folder, add a shell function (this is what `sommus` means elsewhere in this README):
+
+```bash
+echo 'sommus() { uv run --quiet --project "'"$PWD"'" sommus "$@"; }' >> ~/.zshrc
 ```
 
 **macOS Accessibility permission** (for `media_control`, `press_keys` and `lock_screen`): System Settings →
@@ -187,12 +194,14 @@ uv run sommus tool set_volume level=20
 uv run sommus tool notify title=Hi message="From Sommus"
 ```
 
-### Use the laptop node from Claude Desktop or Claude Code
+### Use the laptop node from any MCP client
 
-The node is a standard MCP server, so it works without the brain:
+The node is a standard MCP server, so any MCP-capable app can use it without the brain. Point the
+client at:
 
-```bash
-claude mcp add sommus-laptop -- "$(pwd)/.venv/bin/python" -m sommus.nodes.laptop.server
+```
+command: .venv/bin/python
+args:    -m sommus.nodes.laptop.server
 ```
 
 ## Scoring it
@@ -218,7 +227,7 @@ src/sommus/
 ├── evals/        runner.py
 └── nodes/laptop/ server.py (MCP tools) · macos.py (system) · apps.py (music, Shortcuts, Reminders) · files.py
 evals/commands.toml   the 20 commands Phase 1 must handle
-tests/                agent loop + permission gate against a fake Claude and a real in-process node
+tests/                agent loop + permission gate against a scripted fake model and a real in-process node
 ```
 
 ## Development
