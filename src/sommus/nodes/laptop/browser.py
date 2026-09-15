@@ -107,7 +107,28 @@ def _js(tab: Tab, expression: str, timeout: float = 30) -> str:
     """
     one_line = " ".join(expression.split())
     escaped = one_line.replace("\\", "\\\\").replace('"', '\\"')
-    return _script(f'execute tab {tab.index} of window {tab.window} javascript "{escaped}"', timeout=timeout)
+    command = f'execute tab {tab.index} of window {tab.window} javascript "{escaped}"'
+    try:
+        return _script(command, timeout=min(timeout, 4))  # a live tab answers in well under a second
+    except ActionError as e:
+        if "timed out" not in str(e):
+            raise
+    # Chrome's Memory Saver unloads background tabs, and JavaScript sent to a sleeping tab
+    # never returns. Reloading wakes it without pulling it in front of the user; then retry.
+    import time
+
+    _script(f"tell tab {tab.index} of window {tab.window} to reload")
+    deadline = time.time() + 15
+    while time.time() < deadline:
+        time.sleep(1)
+        if _script(f"get loading of tab {tab.index} of window {tab.window}", timeout=5) == "false":
+            break
+    try:
+        return _script(command, timeout=min(timeout, 10))
+    except ActionError as e:
+        if "timed out" in str(e):
+            raise ActionError(f"'{tab.title}' is asleep and didn't wake after a reload — open it once.") from e
+        raise
 
 
 # D2L, Gmail and Google Docs build their UI from web components, so links live inside

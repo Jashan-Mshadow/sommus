@@ -372,8 +372,15 @@ def _chrome_js_check() -> str:
     web_tabs = [tab for tab in browser.list_tabs() if tab.url.startswith(("http://", "https://"))]
     if not web_tabs:
         raise RuntimeError("open any website in Chrome, then run this again")
-    browser._js(web_tabs[0], "1+1", timeout=15)
-    return "on"
+    # Sleeping (Memory Saver) tabs never answer, so one live tab is enough to prove the setting is on.
+    for tab in web_tabs:
+        try:
+            browser._script(f'execute tab {tab.index} of window {tab.window} javascript "1+1"', timeout=4)
+            return "on"
+        except Exception as e:
+            if "turned off" in str(e):
+                raise RuntimeError("off — in Chrome: View → Developer → Allow JavaScript from Apple Events") from e
+    raise RuntimeError("no tab answered — open or reload any website in Chrome and retry")
 
 
 async def permissions() -> None:
