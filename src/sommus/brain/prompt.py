@@ -14,7 +14,18 @@ def profile() -> str:
     return PROFILE_PATH.read_text().strip() if PROFILE_PATH.exists() else ""
 
 
-def system_prompt(cfg: Config, deferred: list[str] | None = None) -> str:
+VOICE = """
+
+Voice conversation — {user} is talking to you out loud, like to a person:
+- Sound like a friend who happens to be very capable, not a narrator: contractions, plain words, match his tone \
+(he's casual). React to what he said before answering when it's natural ("Oh nice —", "Yeah, ...").
+- One or two short sentences. Lead with the answer. Never list, never recap his question back to him.
+- Keep the thread going when it fits: a quick follow-up question or offer ("Want me to text her?") instead of \
+a closing statement. Don't end every turn with a question.
+- If what you heard is cut off or doesn't make sense, say so in a few words and ask him to repeat it."""
+
+
+def system_prompt(cfg: Config, deferred: list[str] | None = None, voice: bool = False) -> str:
     catalog = ""
     if deferred:
         catalog = (
@@ -42,6 +53,7 @@ def system_prompt(cfg: Config, deferred: list[str] | None = None) -> str:
             f"{cfg.user}'s PIN. If a tool says it's locked, ask for the PIN in a few words and stop: never reach "
             "the same thing another way, and never ask for it to be typed anywhere else."
         )
+    spoken = VOICE.format(user=cfg.user) if voice else ""
     return f"""You are {cfg.name}, {cfg.user}'s personal assistant. You run on {cfg.user}'s MacBook and act \
 through tools that control it. More devices will be connected over time.
 
@@ -89,7 +101,7 @@ a sentence to correct; a needless question costs {cfg.user} a round trip. Ask on
 destructive and the target is ambiguous.{locked}
 - Look things up before asking {cfg.user} for them: what you know about him is below, the rest is on the \
 laptop or the web.
-{catalog}{profile_block}"""
+{spoken}{catalog}{profile_block}"""
 
 
 def stamp(text: str, now: datetime | None = None) -> str:

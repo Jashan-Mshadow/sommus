@@ -101,13 +101,23 @@ IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a brow
 
 
 class Brain:
-    def __init__(self, cfg: Config, hub: NodeHub, store: Store, client: anthropic.AsyncAnthropic | None = None):
+    def __init__(
+        self,
+        cfg: Config,
+        hub: NodeHub,
+        store: Store,
+        client: anthropic.AsyncAnthropic | None = None,
+        voice: bool = False,
+    ):
         self.cfg = cfg
         self.hub = hub
         self.store = store
         self.client = client or anthropic.AsyncAnthropic()
         deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
-        self.system = system_prompt(cfg, deferred)
+        self.system = system_prompt(cfg, deferred, voice=voice)
+        # Spoken, a pause before the first word feels broken. Measured on Sonnet 5 (2026-09-16): the
+        # first word of a plain answer came at ~1.5 s with adaptive thinking, ~0.7 s without.
+        self.thinking = {"type": "disabled"} if voice else {"type": "adaptive"}
         self.messages: list[dict[str, Any]] = []
         from sommus import config as config_module
 
@@ -131,7 +141,7 @@ class Brain:
             system=[{"type": "text", "text": self.system, "cache_control": CACHE}],
             tools=self._tools(),
             messages=self.messages,
-            thinking={"type": "adaptive"},
+            thinking=self.thinking,
             output_config={"effort": self.cfg.effort},
         )
         if self.cfg.model in FALLBACK_MODELS:
@@ -353,6 +363,19 @@ class Brain:
         yield TextDelta(" ")
         async for event in self.handle(request, confirm):
             yield event
+
+    def last_reply(self) -> str:
+        """What Sommus said last, as plain text — context for telling follow-ups from room chatter."""
+        for message in reversed(self.messages):
+            if message["role"] != "assistant":
+                continue
+            content = message["content"]
+            if isinstance(content, str):
+                return content
+            texts = [b.get("text", "") if isinstance(b, dict) else getattr(b, "text", "") for b in content]
+            if any(texts):
+                return " ".join(t for t in texts if t)
+        return ""
 
     def _remember(self, text: str, reply: str) -> None:
         # Plain text in the conversation, so a follow-up ("a bit higher") still has context.

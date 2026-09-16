@@ -191,7 +191,7 @@ async def chat() -> None:
 async def voice_chat() -> None:
     """Talk to Sommus hands-free: say "Hey Sommus", then just talk until the conversation ends.
     Typing works too, and Return wakes it without the wake phrase."""
-    from sommus.interfaces import voice
+    from sommus.interfaces import addressee, voice
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print("[red]No API key.[/] See [bold]sommus check[/].")
@@ -274,7 +274,7 @@ async def voice_chat() -> None:
             )
 
     try:
-        brain = Brain(cfg, hub, store)
+        brain = Brain(cfg, hub, store, voice=True)
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· voice · {escape(engine.label)}{telegram_note}[/]\n"
@@ -342,7 +342,14 @@ async def voice_chat() -> None:
                     continue  # not said to Sommus: not shown, not kept
                 wake_up()
             elif request is None:
-                request = text  # awake: no wake phrase needed
+                # Awake and no wake phrase: a follow-up, or talk to someone else in the room? PINs go
+                # straight to the brain, never to the check.
+                given, _ = pin.split_pin(text)
+                if given is None and settings.get("room_filter", True):
+                    if not await addressee.said_to_sommus(brain.client, cfg.user, brain.last_reply(), text):
+                        console.print(f"[dim]  (not for me: “{escape(text)}”)[/]")
+                        continue
+                request = text
             if not request:  # just the name
                 wake_up()
                 console.print("[dim]  listening…[/]")

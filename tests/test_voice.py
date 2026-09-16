@@ -198,6 +198,8 @@ WAKE = voice.wake_pattern(["sommus", "hey sommus", "what's up sommus", "yo sommu
         ("hey, sommus! mute", "mute"),
         ("What's up so missy?", ""),  # found synthesising the wake phrases and transcribing them
         ("Yo, so miss, what are my classes tomorrow?", "what are my classes tomorrow?"),
+        # talk to a friend merged into the same utterance, then the name set off by pauses (from the log)
+        ("Oh, oh my god, see? So, wait, so miss, what's my battery right now?", "what's my battery right now?"),
     ],
 )
 def test_wake_phrases_at_the_start_or_end_wake_it(heard, asked):

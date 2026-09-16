@@ -308,3 +308,23 @@ async def test_single_tool_model_turns_are_listed_as_fast_path_candidates(tmp_pa
 
         rows = brain.store.fast_path_candidates()
         assert [(tool, text, count) for tool, text, count, _ in rows] == [("peek", "anything happening?", 1)]
+
+
+async def test_voice_mode_answers_without_a_thinking_pause_and_talks_like_a_person(tmp_path):
+    node, _ = build_node()
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("test", Client(node))
+        model = FakeModel(text_reply("Yeah, Tony Stark's AI."))
+        brain = Brain(config(tmp_path, ask=False), hub, Store(tmp_path / "t.db"), client=model, voice=True)
+        await run(brain, "have you seen jarvis?", never_confirm)
+        request = model.requests[0]
+        assert request["thinking"] == {"type": "disabled"}
+        assert "Voice conversation" in request["system"][0]["text"]
+        assert brain.last_reply() == "Yeah, Tony Stark's AI."
+
+
+async def test_typed_mode_keeps_adaptive_thinking(tmp_path):
+    async with make_brain(tmp_path, text_reply("Paris.")) as (brain, model, _):
+        await run(brain, "capital of france?", never_confirm)
+        assert model.requests[0]["thinking"] == {"type": "adaptive"}
+        assert "Voice conversation" not in model.requests[0]["system"][0]["text"]

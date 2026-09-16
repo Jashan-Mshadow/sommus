@@ -507,6 +507,11 @@ def heard_wake(text: str, pattern: re.Pattern[str]) -> str | None:
     end = re.search(rf"[\s,.!?]*\b(?:{pattern.pattern})[\s,.!?]*$", stripped, re.I)
     if end:
         return stripped[: end.start()].strip()
+    # Mid-utterance, but set off like a name ("…see? So, wait, Sommus, what's my battery?"): the
+    # detector merged talk to someone else with the request, so keep what follows the name.
+    middle = list(re.finditer(rf"[,.!?]\s*(?:{pattern.pattern})\s*[,.!?]\s*", stripped, re.I))
+    if middle:
+        return stripped[middle[-1].end() :].strip()
     return None
 
 
