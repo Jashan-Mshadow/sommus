@@ -202,7 +202,7 @@ async def voice_chat() -> None:
     session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
     detector = voice.SpeechDetector(
-        silence_seconds=float(settings.get("silence_seconds", 0.9)),
+        silence_seconds=float(settings.get("silence_seconds", 0.7)),
         threshold=float(settings.get("vad_threshold", 0.5)),
     )
     wake = voice.wake_pattern(settings.get("wake_phrases", ["sommus", "hey sommus"]))
@@ -221,7 +221,8 @@ async def voice_chat() -> None:
     )
     loop = asyncio.get_running_loop()
     heard: asyncio.Queue[np.ndarray] = asyncio.Queue()
-    state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False}
+    state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False, "held": None}
+    hold_seconds = float(settings.get("hold_seconds", 2.0))
 
     def deaf() -> bool:  # runs on the listener thread; plain reads only
         now = time.monotonic()
@@ -287,20 +288,68 @@ async def voice_chat() -> None:
         listener.start()
         prompt: asyncio.Task | None = None
 
+        async def act_on(text: str, seconds: float, heard_in: float) -> None:
+            nonlocal prompt
+            awake = time.monotonic() < state["awake_until"]
+            request = voice.heard_wake(text, wake)
+            if not awake:
+                if request is None:
+                    return  # not said to Sommus: not shown, not kept
+                wake_up()
+            elif request is None:
+                # Awake and no wake phrase: a follow-up, or talk to someone else in the room? PINs go
+                # straight to the brain, never to the check.
+                given, _ = pin.split_pin(text)
+                if given is None and settings.get("room_filter", True):
+                    if not await addressee.said_to_sommus(brain.client, cfg.user, brain.last_reply(), text):
+                        console.print(f"[dim]  (not for me: “{escape(text)}”)[/]")
+                        return
+                request = text
+            if not request:  # just the name
+                wake_up()
+                console.print("[dim]  listening…[/]")
+                return
+            if voice.DISMISS.match(request):
+                fall_asleep()
+                return
+            console.print(
+                f"[bold]you ›[/] {escape(pin.redact(request))} "
+                f"[dim]({seconds:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+            )
+            if prompt is not None:  # hand Ctrl+C back to the turn: an open prompt would swallow it
+                prompt.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await prompt
+                prompt = None
+            await run_turn(request, heard_in)
+            state["awake_until"] = time.monotonic() + awake_seconds  # the follow-up window starts now
+
         while True:
             if prompt is None:
                 prompt = asyncio.create_task(_prompt_line(session))
             listening = asyncio.create_task(heard.get())
-            awake = time.monotonic() < state["awake_until"]
-            timeout = max(0.0, state["awake_until"] - time.monotonic()) if awake else None
+            now = time.monotonic()
+            deadlines = [state["awake_until"]] if now < state["awake_until"] else []
+            if state["held"]:
+                deadlines.append(state["held"][1])
+            timeout = max(0.0, min(deadlines) - now) if deadlines else None
             done, _ = await asyncio.wait({prompt, listening}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
             if listening not in done:
                 listening.cancel()
-            if not done:  # the conversation went quiet
-                if detector.buffer:  # ...unless someone just started talking
-                    state["awake_until"] = time.monotonic() + 1
-                else:
-                    fall_asleep()
+            if not done:
+                now = time.monotonic()
+                if state["held"] and now >= state["held"][1]:
+                    text, _, seconds = state["held"]
+                    if detector.buffer:  # still talking: that's the rest of the sentence arriving
+                        state["held"] = (text, now + 0.5, seconds)
+                    else:  # nothing followed: it was the whole sentence after all
+                        state["held"] = None
+                        await act_on(text, seconds, 0.0)
+                elif state["awake_until"] and now >= state["awake_until"]:  # the conversation went quiet
+                    if detector.buffer:  # ...unless someone just started talking
+                        state["awake_until"] = now + 1
+                    else:
+                        fall_asleep()
                 continue
 
             if prompt in done:
@@ -334,40 +383,18 @@ async def voice_chat() -> None:
                 if not pin.spoken_digits(text, least=1):
                     console.print(f"[dim]  (that wasn't a PIN — heard “{escape(text)}”)[/]")
             heard_in = time.monotonic() - stt_started
+            seconds = len(audio) / voice.SAMPLE_RATE
             if not text:
                 continue
-            request = voice.heard_wake(text, wake)
-            if not awake:
-                if request is None:
-                    continue  # not said to Sommus: not shown, not kept
-                wake_up()
-            elif request is None:
-                # Awake and no wake phrase: a follow-up, or talk to someone else in the room? PINs go
-                # straight to the brain, never to the check.
-                given, _ = pin.split_pin(text)
-                if given is None and settings.get("room_filter", True):
-                    if not await addressee.said_to_sommus(brain.client, cfg.user, brain.last_reply(), text):
-                        console.print(f"[dim]  (not for me: “{escape(text)}”)[/]")
-                        continue
-                request = text
-            if not request:  # just the name
-                wake_up()
-                console.print("[dim]  listening…[/]")
+            if state["held"]:  # the rest of a sentence that stopped mid-thought
+                earlier, _, earlier_seconds = state["held"]
+                text, seconds, state["held"] = f"{earlier} {text}", seconds + earlier_seconds, None
+            if voice.sounds_unfinished(text):
+                state["held"] = (text, time.monotonic() + hold_seconds, seconds)
+                if time.monotonic() < state["awake_until"]:  # don't fall asleep while waiting for the rest
+                    state["awake_until"] = max(state["awake_until"], state["held"][1] + 1)
                 continue
-            if voice.DISMISS.match(request):
-                fall_asleep()
-                continue
-            console.print(
-                f"[bold]you ›[/] {escape(pin.redact(request))} "
-                f"[dim]({len(audio) / voice.SAMPLE_RATE:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
-            )
-            if prompt is not None:  # hand Ctrl+C back to the turn: an open prompt would swallow it
-                prompt.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await prompt
-                prompt = None
-            await run_turn(request, heard_in)
-            state["awake_until"] = time.monotonic() + awake_seconds  # the follow-up window starts now
+            await act_on(text, seconds, heard_in)
     finally:
         listener.stop()
         if bot_task:

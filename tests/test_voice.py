@@ -347,3 +347,18 @@ def test_playback_waits_for_the_mic_to_close_before_restarting_audio(monkeypatch
     player.join(2)
     thread.join(2)
     assert events == ["mic closed", "restart"]
+
+
+@pytest.mark.parametrize(
+    "heard", ["Remind me to.", "Text mom and", "Set a timer for", "What's the weather in, um", "Open the..."]
+)
+def test_a_sentence_that_stops_mid_thought_waits_for_the_rest(heard):
+    assert voice.sounds_unfinished(heard)
+
+
+@pytest.mark.parametrize(
+    "heard",
+    ["Turn it on.", "What's the weather like?", "What are you up to?", "Mute.", "2684", "Open Spotify.", ""],
+)
+def test_complete_requests_run_straight_away(heard):
+    assert not voice.sounds_unfinished(heard)

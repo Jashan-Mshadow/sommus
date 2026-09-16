@@ -515,6 +515,25 @@ def heard_wake(text: str, pattern: re.Pattern[str]) -> str | None:
     return None
 
 
+# A sentence ending on one of these stopped mid-thought ("remind me to", "text mom and"): a pause, not
+# the end. Words that also end complete requests ("turn it on", "what's the weather like") aren't here.
+UNFINISHED = {
+    "and", "but", "or", "to", "the", "a", "an", "my", "your", "of", "with", "for", "because", "if", "um", "uh",
+    "than", "into",
+}  # fmt: skip
+
+
+def sounds_unfinished(text: str) -> bool:
+    """Whisper puts a full stop on almost everything, so judge by the last word instead."""
+    stripped = text.strip()
+    if not stripped or stripped.endswith("?"):
+        return False
+    if stripped.endswith(("...", "…", ",", "-", "—")):
+        return True
+    words = re.findall(r"[a-z']+", stripped.lower())
+    return bool(words) and words[-1] in UNFINISHED
+
+
 # Said to end the conversation rather than as a request.
 DISMISS = re.compile(
     r"^\W*(?:that'?s (?:all|it)|thanks?(?: you)?|never ?mind|go to sleep|stop listening|good ?bye|bye|"
