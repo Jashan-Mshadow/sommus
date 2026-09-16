@@ -191,7 +191,7 @@ async def chat() -> None:
 async def voice_chat() -> None:
     """Talk to Sommus hands-free: say "Hey Sommus", then just talk until the conversation ends.
     Typing works too, and Return wakes it without the wake phrase."""
-    from sommus.interfaces import addressee, voice
+    from sommus.interfaces import addressee, duplex, voice
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print("[red]No API key.[/] See [bold]sommus check[/].")
@@ -219,6 +219,17 @@ async def voice_chat() -> None:
         on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"),
         say_as=settings.get("say_as", {}),
     )
+    # Barge-in: talk over Sommus to stop it. Needs the echo-cancelling engine and a Kokoro voice
+    # (macOS `say` plays outside the engine, so its echo can't be removed).
+    engine_io = None
+    if settings.get("barge_in", False) and isinstance(engine, voice.KokoroVoice):
+        engine_io = duplex.DuplexAudio()
+        try:
+            await asyncio.to_thread(engine_io.start)
+            engine.output = engine_io
+        except Exception as e:
+            console.print(f"[yellow]! Barge-in unavailable ({escape(str(e))}) — Sommus can't be talked over.[/]")
+            engine_io = None
     loop = asyncio.get_running_loop()
     heard: asyncio.Queue[np.ndarray] = asyncio.Queue()
     state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False, "held": None}
@@ -226,6 +237,8 @@ async def voice_chat() -> None:
 
     def deaf() -> bool:  # runs on the listener thread; plain reads only
         now = time.monotonic()
+        if engine_io is not None:  # echo-cancelled: keep listening while Sommus talks
+            return now < state["deaf_until"]
         # Only just after the last word: he often answers the moment Sommus stops, and a closed
         # mic swallows the first syllables (a PIN came through as "day four").
         return state["busy"] or speaker.speaking or now < state["deaf_until"] or now < speaker.quiet_since + 0.2
@@ -244,8 +257,18 @@ async def voice_chat() -> None:
         chime(voice.CHIME_SLEEP)
         console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
 
+    def barge_in() -> None:  # someone started talking
+        turn = state.get("turn")
+        if speaker.speaking or (turn is not None and not turn.done()):
+            speaker.interrupt()
+            if turn is not None and not turn.done():
+                turn.cancel()
+            console.print("[dim]  (interrupted)[/]")
+
     listener = voice.Listener(
         detector,
+        source=(lambda: (duplex.DuplexStream(engine_io), voice.SAMPLE_RATE)) if engine_io else None,
+        on_speech=(lambda: loop.call_soon_threadsafe(barge_in)) if engine_io else None,
         deliver=lambda audio: loop.call_soon_threadsafe(heard.put_nowait, audio),
         deaf=deaf,
         device=settings.get("input_device"),
@@ -259,6 +282,7 @@ async def voice_chat() -> None:
         speaker.first_word_at = None
         asked_at = time.monotonic()
         turn = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
+        state["turn"] = turn
         loop.add_signal_handler(signal.SIGINT, turn.cancel)
         try:
             await turn
@@ -268,6 +292,7 @@ async def voice_chat() -> None:
         finally:
             loop.remove_signal_handler(signal.SIGINT)
         await speaker.finished()
+        state["turn"] = None
         state["busy"] = False
         if speaker.first_word_at and heard_in is not None:
             console.print(
@@ -397,6 +422,8 @@ async def voice_chat() -> None:
             await act_on(text, seconds, heard_in)
     finally:
         listener.stop()
+        if engine_io is not None:
+            engine_io.stop()
         if bot_task:
             bot_task.cancel()
         await speaker.close()

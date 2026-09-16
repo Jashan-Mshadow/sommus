@@ -23,6 +23,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -154,6 +155,7 @@ class KokoroVoice:
         self.model_id = model
         self.model = None
         self._stream = None
+        self.output = None  # a DuplexAudio in barge-in mode
 
     @property
     def label(self) -> str:
@@ -194,6 +196,9 @@ class KokoroVoice:
     def play(self, audio: np.ndarray, stop: threading.Event) -> None:
         import sounddevice as sd
 
+        if self.output is not None:  # barge-in mode: through the echo-cancelling engine
+            self.output.play(audio, stop)
+            return
         if self._stream is None:
             _refresh_audio_devices()
             self._stream = sd.OutputStream(samplerate=self.SAMPLE_RATE, channels=1, dtype="float32")
@@ -207,6 +212,8 @@ class KokoroVoice:
 
     def rest(self, stop: threading.Event) -> None:
         """The reply is over: let the last words play out (or drop them if interrupted) and free the output."""
+        if self.output is not None:
+            return  # the engine keeps running for the mic
         stream, self._stream = self._stream, None
         if stream is None:
             return
@@ -418,7 +425,11 @@ class Listener:
 
     Deaf while `deaf()` says so — Sommus talking, a chime playing, a turn being worked on — so it
     never hears itself. If the microphone disappears (AirPods leave), it keeps trying to reopen.
+    In barge-in mode the source is the echo-cancelled mic, it stays open while Sommus talks, and
+    `on_speech` fires once someone has been talking for a moment, to cut Sommus off.
     """
+
+    BARGE_IN_SECONDS = 0.3  # a cough or a clink shouldn't stop Sommus mid-sentence
 
     def __init__(
         self,
@@ -427,12 +438,17 @@ class Listener:
         deaf: Callable[[], bool],
         device: str | int | None = None,
         on_error: Callable[[Exception], None] | None = None,
+        source: Callable[[], tuple[Any, int]] | None = None,
+        on_speech: Callable[[], None] | None = None,
     ):
         self.detector = detector
         self.deliver = deliver
         self.deaf = deaf
         self.device = device
         self.on_error = on_error
+        self.source = source or (lambda: open_microphone(self.device))
+        self.on_speech = on_speech
+        self._speech_reported = False
         self._stopping = threading.Event()
         self._thread = threading.Thread(target=self._run, name="sommus-listener", daemon=True)
 
@@ -451,7 +467,7 @@ class Listener:
                 continue
             try:
                 with AUDIO_DEVICES:
-                    stream, rate = open_microphone(self.device)
+                    stream, rate = self.source()
                     with stream:
                         self._listen(stream, rate)
                 reported = False
@@ -473,6 +489,12 @@ class Listener:
             if rate != SAMPLE_RATE:
                 mono = np.interp(np.linspace(0, len(mono) - 1, CHUNK), np.arange(len(mono)), mono)
             utterance = self.detector.feed(np.ascontiguousarray(mono, dtype=np.float32))
+            talking = self.detector.speech * CHUNK_SECONDS >= self.BARGE_IN_SECONDS
+            if self.on_speech and talking and not self._speech_reported:
+                self._speech_reported = True
+                self.on_speech()
+            if utterance is not None or not self.detector.buffer:
+                self._speech_reported = False
             if utterance is not None:
                 self.deliver(utterance)
 

@@ -19,6 +19,7 @@ dependencies = [
     "numpy>=2.5.3",
     "prompt-toolkit>=3.0.53",
     "pymupdf>=1.28.2",
+    "pyobjc-framework-avfoundation>=12.2.2",
     "pyobjc-framework-cocoa>=12.2.2",
     "pyobjc-framework-quartz>=12.2.2",
     "pyobjc-framework-vision>=12.2.2",
