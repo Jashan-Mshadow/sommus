@@ -847,6 +847,7 @@ def main() -> None:
             "voices",
             "pin",
             "today",
+            "stats",
         ],
         default="chat",
     )
@@ -866,6 +867,15 @@ def main() -> None:
             set_pin()
         elif args.command == "today":
             show_today()
+        elif args.command == "stats":
+            from sommus import stats
+
+            out = stats.write(
+                config.ROOT / "data" / "sommus.db",
+                config.ROOT / "data" / "evals",
+                config.ROOT / "docs" / "MEASUREMENTS.md",
+            )
+            console.print(f"Wrote {out.relative_to(config.ROOT)}")
         elif args.command == "voices":
             asyncio.run(voices([n for n in [args.tool_name, *args.tool_args] if n]))
         elif args.command in ("start", "stop", "status"):

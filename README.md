@@ -1,5 +1,7 @@
 # Sommus
 
+[![CI](https://github.com/Jashan-Mshadow/sommus/actions/workflows/ci.yml/badge.svg)](https://github.com/Jashan-Mshadow/sommus/actions/workflows/ci.yml)
+
 A personal assistant that controls my devices. Named after Somnus, the Roman god of sleep.
 
 **Phase 1:** type a command in the terminal, and Sommus controls my MacBook.
@@ -19,9 +21,24 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
   4 steps · 9,812 in (7,904 cached) · 212 out · $0.0141
 ```
 
+## Measured, not guessed
+
+| | |
+|---|---|
+| Everyday commands (volume, apps, music, weather, "where's my next class") | **$0, ~0.1 s**, no model call |
+| Commands that need the model | **~0.5–1¢**, 3–5 s (Sonnet 5, low effort) |
+| Prompt tokens served from cache | **89%** |
+| Class and room questions | **20–27 s → under 1 ms** (schedule engine instead of two calendar lookups) |
+| Tool-call accuracy | **45/46** on the eval suite (Sonnet 5); Haiku 4.5 41/46 at 0.26¢ |
+
+Full numbers, regenerated from the log with `sommus stats`: [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md).
+Why it's built this way: [docs/decisions](docs/decisions/) — MCP nodes, permission tiers and the PIN,
+the model sweep, no local LLM, one model with a budget guard instead of per-request routing, and the
+fast path.
+
 ## What it can do
 
-**59 tools across three nodes**, plus live web search:
+**60+ tools across five nodes**, plus live web search:
 
 | Area | Tools |
 |---|---|
@@ -46,13 +63,26 @@ sommus › Study mode is on: Messages closed, Obsidian open, volume at 10.
 It answers questions as readily as it acts, and when there's no exact tool it tries the nearest route
 (a Shortcut, a keystroke, opening the right settings pane) before saying it can't.
 
+### Without a model
+
+- **Fast path** (`brain/fastpath.py`): an intent claims a request only when every word is in its vocabulary —
+  "brightness down 12", "screen's too dim", "quit Messages", "what's playing", weather and time anywhere,
+  holidays. A miss just goes to the model; a wrong match would do the wrong thing, so it leans towards missing.
+- **Campus engine** (`brain/campus.py`): next class, room, what's left today and what's due this week, from a
+  schedule file. `sommus today` prints the day and writes `data/today.json` for other tools.
+- **Long-term memory** (`brain/memory.py`): "remember my gym days are Monday, Wednesday and Friday" is saved to
+  a private note and loaded into the cached prompt. Anything that looks like a password or code is refused.
+- **Budget guard** (`brain/budget.py`): a heads-up at 80% of the monthly cap, a cheaper model past 90%.
+
 ## Nodes
 
 | Node | Tools | Setup |
 |---|---|---|
 | **laptop** | 46 — sound, display, apps, browser, screen, shell, PDFs, contacts, files, clipboard, reminders, shortcuts | macOS permissions (below) |
-| **vault** | 6 — search, read, list, append, add a to-do, commit the notes repo | none |
+| **vault** | 9 — search, read by section, list, append, add a to-do, commit, remember, forget | none |
 | **gmail** | 6 — search, read, send, reply, draft, mark read | app password in `.env` |
+| **web** | 1 — search through a cheap worker model, so results never bloat the main context | API key |
+| **claude** | 1 — hands a request to Claude Code for Google Calendar, Drive and Notion | Claude Code installed |
 
 A node that isn't set up reports as unreachable; everything else keeps working.
 
