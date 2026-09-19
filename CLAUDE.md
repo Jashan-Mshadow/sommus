@@ -28,7 +28,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/loop.py` | agent loop: streaming, caching, tool search, history trim, fast-path executor |
 | `src/sommus/brain/fastpath.py` | $0 intent matcher — an intent claims a request only if *every* word is in its vocabulary |
 | `src/sommus/brain/campus.py` | $0 schedule engine: next class, today, today.json |
-| `src/sommus/brain/budget.py` | monthly spend guard + model router |
+| `src/sommus/brain/budget.py` | monthly spend guard; cheap model past 90% of the cap (no per-request routing: see docs/decisions/0005) |
 | `src/sommus/brain/memory.py` | long-term facts (remember / forget) loaded into the prompt |
 | `src/sommus/brain/prompt.py` | system prompt |
 | `src/sommus/stats.py` | `sommus stats`: aggregates only, never request text (the page is public) |
