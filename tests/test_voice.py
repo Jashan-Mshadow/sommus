@@ -362,3 +362,24 @@ def test_a_sentence_that_stops_mid_thought_waits_for_the_rest(heard):
 )
 def test_complete_requests_run_straight_away(heard):
     assert not voice.sounds_unfinished(heard)
+
+
+def test_quiet_audio_is_brought_up_before_whisper():
+    """Speech from across the room arrives quiet; Whisper hears it as nothing."""
+    far = (np.sin(np.linspace(0, 200, 8000)) * 0.1).astype(np.float32)
+    loud = voice.normalize(far)
+    assert 0.6 < float(np.max(np.abs(loud))) <= 0.75
+    assert np.allclose(loud / float(np.max(np.abs(loud))), far / float(np.max(np.abs(far))), atol=1e-5)
+
+
+def test_very_faint_audio_is_amplified_but_only_so_far():
+    """A 20x ceiling: past that it's mostly room noise, and amplifying it just feeds Whisper hiss."""
+    faint = (np.sin(np.linspace(0, 200, 4000)) * 0.02).astype(np.float32)
+    assert float(np.max(np.abs(voice.normalize(faint)))) == pytest.approx(0.4, abs=0.01)
+
+
+def test_normalize_leaves_silence_and_loud_audio_alone():
+    hiss = (np.random.default_rng(0).normal(0, 0.0005, 4000)).astype(np.float32)
+    assert voice.normalize(hiss) is hiss  # nothing but noise: not amplified
+    close = (np.sin(np.linspace(0, 200, 4000)) * 0.9).astype(np.float32)
+    assert voice.normalize(close) is close

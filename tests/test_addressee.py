@@ -34,3 +34,23 @@ async def test_a_follow_up_goes_through():
 async def test_when_the_check_fails_the_request_still_runs():
     error = anthropic.APIConnectionError(request=httpx2.Request("POST", "https://api.anthropic.com"))
     assert await addressee.said_to_sommus(FakeClient(error=error), "Jashan", "", "what's the time")
+
+
+async def test_direct_requests_skip_the_check_entirely():
+    """Real misses from a voice session: these were sent to the model and came back "no"."""
+    client = FakeClient("no")
+    for heard in [
+        "Can you tell me what my to-do list is for a week?",
+        "what's my next class",
+        "tell me what my to-do list is for this week",
+        "open Obsidian",
+        "turn the volume down a bit",
+    ]:
+        assert await addressee.said_to_sommus(client, "Jashan", "Anything.", heard)
+    assert client.sent == []  # no model call, no cost, no wrong answer
+
+
+async def test_room_chatter_still_reaches_the_check():
+    client = FakeClient("no")
+    assert not await addressee.said_to_sommus(client, "Jashan", "Muted.", "yeah man I was up until 3 last night")
+    assert len(client.sent) == 1

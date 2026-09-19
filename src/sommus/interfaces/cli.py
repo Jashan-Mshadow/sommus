@@ -9,6 +9,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import time
 from datetime import datetime
 from typing import Any
@@ -188,6 +189,24 @@ async def chat() -> None:
         await hub.__aexit__(None, None, None)
 
 
+MIN_MIC_INPUT = 85  # macOS input volume; Jashan's Mac was at 27, which only heard him up close
+
+
+def raise_mic_input() -> int | None:
+    """Turn the microphone up if macOS has it low. Returns the old level when it changed one."""
+    try:
+        now = subprocess.run(
+            ["osascript", "-e", "input volume of (get volume settings)"], capture_output=True, text=True, timeout=5
+        )
+        level = int(now.stdout.strip())
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+    if level >= MIN_MIC_INPUT - 10 or level < 0:
+        return None
+    subprocess.run(["osascript", "-e", f"set volume input volume {MIN_MIC_INPUT}"], capture_output=True, timeout=5)
+    return level
+
+
 async def voice_chat() -> None:
     """Talk to Sommus hands-free: say "Hey Sommus", then just talk until the conversation ends.
     Typing works too, and Return wakes it without the wake phrase."""
@@ -307,6 +326,9 @@ async def voice_chat() -> None:
             "[dim]Always listening: say “Hey Sommus”, then just talk. It sleeps again when the conversation "
             "goes quiet. Return wakes it, typing works, /quit exits.[/]"
         )
+        if (raised := raise_mic_input()) is not None:
+            console.print(f"[dim]Mic input was at {raised}%, turned up to {MIN_MIC_INPUT}% so it hears you "
+                          "from across the room.[/]")  # fmt: skip
         speaker.feed(f"{cfg.name} is listening.")
         speaker.flush()
         await speaker.finished()
@@ -402,6 +424,8 @@ async def voice_chat() -> None:
             audio = listening.result()
             stt_started = time.monotonic()
             waiting_for_pin = bool(brain.gate.pending) and not brain.gate.unlocked
+            if waiting_for_pin:  # stay awake while it's waiting: a fumbled PIN shouldn't end the turn
+                state["awake_until"] = max(state["awake_until"], time.monotonic() + awake_seconds)
             text = await asyncio.to_thread(transcriber.transcribe, audio, "digits" if waiting_for_pin else None)
             if waiting_for_pin and not re.search(r"\d", text):
                 text = await asyncio.to_thread(transcriber.transcribe, audio)  # not a PIN after all

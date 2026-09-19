@@ -611,6 +611,19 @@ def to_16k(audio: np.ndarray, rate: int) -> np.ndarray:
 HALLUCINATIONS = {"", "you", "thank you", "thanks for watching", "bye", "thank you for watching"}
 
 
+def normalize(audio: np.ndarray, target_peak: float = 0.7) -> np.ndarray:
+    """Bring a quiet recording up before Whisper reads it.
+
+    Speech from across the room arrives at a fraction of full scale, and Whisper hears it as
+    mumbling or as nothing. Scaling the loudest sample to a fixed level costs nothing and doesn't
+    change what was said; the cap keeps a hiss-only clip from being amplified into noise.
+    """
+    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if peak < 0.005 or peak >= target_peak:  # silence, or already loud enough
+        return audio
+    return (audio * min(target_peak / peak, 20.0)).astype(np.float32)
+
+
 class Transcriber:
     def __init__(self, model: str):
         self.model = model
@@ -626,7 +639,7 @@ class Transcriber:
         import mlx_whisper
 
         hint = {"initial_prompt": "My PIN is 1234."} if expecting == "digits" else {}
-        result = mlx_whisper.transcribe(audio, path_or_hf_repo=self.model, language="en", fp16=True, **hint)
+        result = mlx_whisper.transcribe(normalize(audio), path_or_hf_repo=self.model, language="en", fp16=True, **hint)
         text = result["text"].strip()
         return "" if text.lower().strip(" .!?") in HALLUCINATIONS else NAME_HEARD.sub("Sommus", text)
 
