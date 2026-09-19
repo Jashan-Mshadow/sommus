@@ -22,6 +22,9 @@ from mcp.types import ToolAnnotations
 VAULT = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
 TODO = "TODO.md"
 MAX_NOTE_CHARS = 20_000
+# Longer notes return an outline first. read_note averaged 8.7k chars per call in the log — the
+# most expensive read Sommus makes — and most questions only need one section of the note.
+LONG_NOTE_CHARS = 6_000
 SKIP = {".git", "Sources", ".obsidian", "node_modules"}
 
 READ = ToolAnnotations(read_only_hint=True)
@@ -87,20 +90,78 @@ def search_vault(query: str, limit: int = 12) -> str:
             lines = note.read_text(errors="replace").splitlines()
         except OSError:
             continue
+        heads = None
         for number, line in enumerate(lines, 1):
             if pattern.search(line):
-                hits.append(f"{note.relative_to(VAULT)}:{number}: {line.strip()[:200]}")
+                heads = heads if heads is not None else _headings(lines)
+                under = next((title for i, _, title in reversed(heads) if i < number - 1), "")
+                where = f" [{under[:60]}]" if under else ""
+                hits.append(f"{note.relative_to(VAULT)}:{number}{where}: {line.strip()[:200]}")
                 if len(hits) >= limit:
                     return f"Matches for '{query}':\n" + "\n".join(hits) + "\n(more may exist)"
     return f"Matches for '{query}':\n" + "\n".join(hits) if hits else f"Nothing in the vault mentions '{query}'."
 
 
+HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+
+
+def _headings(lines: list[str]) -> list[tuple[int, int, str]]:
+    """(line index, level, title) for every Markdown heading outside code fences."""
+    found, fenced = [], False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and (m := HEADING.match(line)):
+            found.append((i, len(m.group(1)), m.group(2)))
+    return found
+
+
+def _outline(path: str, text: str) -> str:
+    """A long note's table of contents plus its opening, instead of the whole thing."""
+    lines = text.splitlines()
+    heads = _headings(lines)
+    ends = [start for start, _, _ in heads[1:]] + [len(lines)]
+    toc = [
+        f"{'  ' * (level - 1)}- {title}  ({sum(len(line) + 1 for line in lines[start:end]) / 1000:.1f}k chars)"
+        for (start, level, title), end in zip(heads, ends, strict=True)
+    ]
+    intro = "\n".join(lines[: heads[0][0]] if heads else lines).strip()[:1500]
+    return (
+        f"{path} is long ({len(text):,} chars), so here is its outline. Call read_note again with "
+        f'section="<heading words>" to read one part, or section="all" for everything.\n\n'
+        + (intro + "\n\n" if intro else "")
+        + "\n".join(toc)
+    )
+
+
+def _section(path: str, text: str, section: str) -> str:
+    """The first heading containing `section` (any case) and everything under it, down to the next
+    heading of the same or a higher level."""
+    lines = text.splitlines()
+    heads = _headings(lines)
+    wanted = section.casefold().strip()
+    matches = [h for h in heads if wanted in h[2].casefold()]
+    if not matches:
+        titles = ", ".join(title for _, _, title in heads[:40])
+        raise VaultError(f"No heading in {path} contains '{section}'. Headings: {titles}")
+    start, level, _ = matches[0]
+    end = next((i for i, lvl, _ in heads if i > start and lvl <= level), len(lines))
+    body = "\n".join(lines[start:end]).strip()
+    others = [title for _, _, title in matches[1:6]]
+    note = f"\n\n(Other headings matching '{section}': {', '.join(others)})" if others else ""
+    return body[:MAX_NOTE_CHARS] + ("\n[truncated]" if len(body) > MAX_NOTE_CHARS else "") + note
+
+
 @tool(READ)
-def read_note(path: str) -> str:
+def read_note(path: str, section: str = "") -> str:
     """Read a note. Paths are relative to the vault, e.g. "TODO.md", "Career/Goals.md".
+
+    Long notes come back as an outline first; then read just the part you need with `section`.
 
     Args:
         path: Relative path to the note, or a folder to list.
+        section: Words from a heading, e.g. "Weekend" or "MATH 115", to read only that part.
+            "all" returns the whole note. Leave empty for short notes or to get a long note's outline.
     """
     note = _resolve(path)
     if note.is_dir():
@@ -109,6 +170,10 @@ def read_note(path: str) -> str:
         close = [str(p.relative_to(VAULT)) for p in _notes() if path.casefold() in p.name.casefold()][:8]
         raise VaultError(f"No note at '{path}'." + (f" Did you mean: {', '.join(close)}?" if close else ""))
     text = note.read_text(errors="replace")
+    if section.strip() and section.strip().casefold() != "all":
+        return _section(path, text, section)
+    if not section.strip() and len(text) > LONG_NOTE_CHARS and _headings(text.splitlines()):
+        return _outline(path, text)
     return text[:MAX_NOTE_CHARS] + ("\n[truncated]" if len(text) > MAX_NOTE_CHARS else "")
 
 
