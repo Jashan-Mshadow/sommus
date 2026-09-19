@@ -225,7 +225,9 @@ async def voice_chat() -> None:
         threshold=float(settings.get("vad_threshold", 0.5)),
     )
     wake = voice.wake_pattern(settings.get("wake_phrases", ["sommus", "hey sommus"]))
-    awake_seconds = float(settings.get("awake_seconds", 10))
+    awake_seconds = float(settings.get("awake_seconds", 30))
+    # A reply that ends in a question is an invitation to answer: don't make him say the name again.
+    awake_after_question = float(settings.get("awake_after_question", 90))
 
     bot_task = None
     with console.status("[dim]Starting nodes and loading the voice and speech recognition…[/]"):
@@ -369,7 +371,9 @@ async def voice_chat() -> None:
                     await prompt
                 prompt = None
             await run_turn(request, heard_in)
-            state["awake_until"] = time.monotonic() + awake_seconds  # the follow-up window starts now
+            # The follow-up window starts now, and runs longer when Sommus asked him something.
+            asked = brain.last_reply().strip().endswith("?")
+            state["awake_until"] = time.monotonic() + (awake_after_question if asked else awake_seconds)
 
         while True:
             if prompt is None:

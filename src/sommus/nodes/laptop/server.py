@@ -12,6 +12,7 @@ Each tool's annotations declare its permission tier; the brain enforces it:
 from __future__ import annotations
 
 import functools
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -218,13 +219,32 @@ def set_wifi(on: bool) -> str:
     return f"Wi-Fi is now {'on' if on_now else 'off'}{f', on {ssid}' if ssid else ''}."
 
 
+def _focus_for_typing(app: str) -> None:
+    """Never type into the terminal Sommus runs in.
+
+    Measured 2026-09-19: asked to write a poem in Google Docs, it opened the doc but Terminal was
+    still in front, so the poem was typed into Sommus's own prompt and read back as new requests.
+    """
+    if app:
+        macos.open_app(app)
+        time.sleep(0.6)  # activation isn't instant; keystrokes sent too early go to the old app
+    front = macos.frontmost_app() or ""
+    if front.casefold() in macos.protected_apps():
+        raise macos.ActionError(
+            f"{front} is in front, and that's where Sommus itself runs — typing there would type into "
+            'Sommus. Pass app="<the app you mean>" (or focus a window first), then type.'
+        )
+
+
 @tool(REVERSIBLE)
-def press_keys(combo: str) -> str:
-    """Send a keyboard shortcut to whatever app is in front — for actions with no dedicated tool.
+def press_keys(combo: str, app: str = "") -> str:
+    """Send a keyboard shortcut to an app — for actions with no dedicated tool.
 
     Args:
         combo: Keys joined by "+", e.g. "cmd+s", "cmd+shift+t", "cmd+w", "escape", "left".
+        app: App to bring to the front first, e.g. "Google Chrome". Recommended.
     """
+    _focus_for_typing(app)
     return f"Pressed {macos.press_keys(combo)}."
 
 
@@ -460,15 +480,18 @@ def focus_browser_tab(tab: str) -> str:
 
 
 @tool(REVERSIBLE)
-def type_text(text: str, press_return: bool = False) -> str:
-    """Type text into whatever app has focus — for writing into any app.
+def type_text(text: str, press_return: bool = False, app: str = "") -> str:
+    """Type text into an app — for writing into a document, a form, a chat box.
 
-    Don't use this to run shell commands; use run_shell, which returns the actual output.
+    Keystrokes go to whatever is in front, so pass `app` (or focus it first) when the text is meant
+    for a particular one. Don't use this to run shell commands; use run_shell, which returns output.
 
     Args:
         text: The literal text to type.
         press_return: True to press Return afterwards (submits the line).
+        app: App to bring to the front first, e.g. "Google Chrome", "Notes". Strongly recommended.
     """
+    _focus_for_typing(app)
     typed = macos.type_text(text, press_return)
     return f"Typed {typed} characters{' and pressed Return' if press_return else ''}."
 

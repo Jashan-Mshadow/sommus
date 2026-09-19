@@ -383,3 +383,16 @@ def test_normalize_leaves_silence_and_loud_audio_alone():
     assert voice.normalize(hiss) is hiss  # nothing but noise: not amplified
     close = (np.sin(np.linspace(0, 200, 4000)) * 0.9).astype(np.float32)
     assert voice.normalize(close) is close
+
+
+@pytest.mark.parametrize(
+    "heard", ["Hey Solmas", "Hey Sommas", "Somis", "Sommis", "sowmiss", "Samus", "So, miss", "Sonus"]
+)
+def test_whispers_spellings_of_the_name_all_become_sommus(heard):
+    """Real transcripts: the wake phrase only works if these normalise first."""
+    assert "Sommus" in voice.NAME_HEARD.sub("Sommus", heard)
+
+
+@pytest.mark.parametrize("heard", ["summers in Waterloo", "the summers", "some of us"])
+def test_words_that_merely_sound_close_do_not_wake_it(heard):
+    assert voice.NAME_HEARD.sub("Sommus", heard) == heard

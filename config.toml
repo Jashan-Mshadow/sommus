@@ -116,7 +116,9 @@ stt_model = "mlx-community/whisper-small.en-mlx"  # runs on the M1, ~0.35s per c
 silence_seconds = 0.7                           # how long a pause ends what you're saying
 hold_seconds = 2.0                              # ...unless it stopped mid-thought ("remind me to"): wait this long for the rest
 wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus"]  # at the start or end of what's said
-awake_seconds = 10                              # after a reply, how long it keeps listening without the wake phrase
+awake_seconds = 30                              # after a reply, how long it keeps listening without the wake phrase
+                                                # (10 was too short mid-conversation: he had to say the name again)
+awake_after_question = 90                       # ...and this long when Sommus ended its reply with a question
 barge_in = true                                 # talk over Sommus to stop it (echo cancellation). Being tested 2026-09-16
 room_filter = true                              # awake, check with a fast model that speech was meant for Sommus
 vad_threshold = 0.35                            # speech detector; raise toward 0.6 if noise keeps waking Whisper,

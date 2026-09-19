@@ -1,3 +1,4 @@
+import pytest
 from mcp import Client
 
 from sommus.nodes.laptop import macos
@@ -120,3 +121,27 @@ async def test_run_shell_stops_a_hanging_command():
     async with Client(server) as client:
         result = await client.call_tool("run_shell", {"command": "sleep 5", "timeout": 0.5})
     assert result.is_error and "was stopped" in result.content[0].text
+
+
+def test_typing_refuses_when_sommus_own_terminal_is_in_front(monkeypatch):
+    """A poem meant for Google Docs was typed into Sommus's prompt and read back as requests."""
+    from sommus.nodes.laptop import macos, server
+
+    monkeypatch.setattr(macos, "frontmost_app", lambda: "Terminal")
+    monkeypatch.setattr(macos, "protected_apps", lambda: {"terminal", "claude"})
+    monkeypatch.setattr(macos, "type_text", lambda text, press_return: len(text))
+    with pytest.raises(macos.ActionError, match="that's where Sommus itself runs"):
+        server.type_text("a poem")
+
+
+def test_typing_focuses_the_app_it_was_given_first(monkeypatch):
+    from sommus.nodes.laptop import macos, server
+
+    opened = []
+    monkeypatch.setattr(macos, "open_app", opened.append)
+    monkeypatch.setattr(macos, "frontmost_app", lambda: "Google Chrome")
+    monkeypatch.setattr(macos, "protected_apps", lambda: {"terminal"})
+    monkeypatch.setattr(macos, "type_text", lambda text, press_return: len(text))
+    monkeypatch.setattr(server.time, "sleep", lambda _: None)
+    assert "Typed 6 characters" in server.type_text("a poem", app="Google Chrome")
+    assert opened == ["Google Chrome"]

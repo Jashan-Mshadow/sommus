@@ -82,7 +82,12 @@ def clean_for_speech(text: str, say_as: dict[str, str] | None = None) -> str:
 NAME = re.compile(r"\bsommus\b", re.I)
 NAME_PHONEMES = {"a": "sˈOmɪs", "b": "sˈQmɪs"}
 NAME_SAY = "Sowmiss"
-NAME_HEARD = re.compile(r"\b(?:somm?iss?|sowmiss?|somm?us|summus|samus)\b|^(?:hey,?\s+)?so,?\s+miss\b", re.I)
+# Whisper's spellings of the name, collected from real sessions: Somis, Sommis, So miss, Solmas, Sommas…
+NAME_HEARD = re.compile(
+    r"\b(?:somm?iss?|sowmiss?|somm?us|summus|samus|sol?mm?a?s|somm?as|sonus|salmus|sommers)\b"
+    r"|^(?:hey,?\s+)?so,?\s+miss\b",
+    re.I,
+)
 
 
 def _run_until_done(command: list[str], stop: threading.Event) -> None:
