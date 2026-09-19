@@ -60,7 +60,7 @@ def test_files_must_be_full_existing_paths(tmp_path):
         bridge.resolve_files([str(tmp_path / "missing.pdf")])
 
 
-def test_gemini_runs_read_only_in_an_empty_folder(monkeypatch, tmp_path):
+def test_gemini_runs_without_auto_approval_in_an_empty_folder(monkeypatch, tmp_path):
     seen = {}
 
     class Done:
@@ -76,7 +76,14 @@ def test_gemini_runs_read_only_in_an_empty_folder(monkeypatch, tmp_path):
     pdf.write_bytes(b"%PDF")
     assert bridge.ask_gemini("summarise", [str(pdf)]) == "ok"
     command = seen["command"]
-    assert command[command.index("--approval-mode") + 1] == "plan"
+    assert command[command.index("--approval-mode") + 1] == "default"  # "plan" stalls headless
+    assert "--yolo" not in command
     assert command[command.index("--include-directories") + 1] == str(tmp_path.resolve())
     assert str(pdf.resolve()) in command[command.index("-p") + 1]
     assert seen["cwd"] != str(tmp_path) and "bridge-" in seen["cwd"]
+
+
+def test_gemini_echoed_wrapper_tags_are_removed_and_empty_is_empty():
+    out = json.dumps({"response": "<untrusted_context>\n</untrusted_context>Topics: breadboards."})
+    assert bridge.parse_gemini(out, "", 0) == "Topics: breadboards."
+    assert bridge.parse_gemini(json.dumps({"response": ""}), "", 0) == ""

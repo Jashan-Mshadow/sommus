@@ -4,17 +4,19 @@ One MCP server, two clients: Sommus loads it as a node, and Claude Code loads it
 (`claude mcp add --scope user ai-bridge ...`), so both can hand work to another model.
 
 What each is for:
-- `gemini_search` — a web question answered with Google Search. $0 on a free AI Studio key
-  (~250 requests a day on Flash), instead of ~2.5¢ through the API.
-- `ask_gemini` — heavy reading: long PDFs (scanned ones too), several files, long research. It
-  reads everything and sends back a summary, so the caller's context gets a page, not the book.
+- `ask_gemini` — heavy reading: long PDFs (scanned ones too) and several files at once, on a free
+  AI Studio key. It reads everything and sends back what was asked for, so the caller's context
+  gets a page, not the book. (No web search: Google Search grounding has no free quota on the API,
+  measured 2026-09-19 — every model answered 429 on the first grounded request.)
 - `ask_gpt` — a second opinion or a different model on a hard problem, through Codex on the
   ChatGPT sign-in (the free plan's allowance is small; save it for things that need it).
 
-Both run read-only: Gemini in plan mode (reads and searches, never edits or runs commands),
-Codex in its read-only sandbox. Each call starts in an empty folder; a file is visible only when
-it's passed in `files`. Whatever is sent goes to Google or OpenAI, whose free plans may use it to
-improve their models — so callers send what the task needs, not the vault by default.
+Both run read-only. Gemini runs headless in its default mode, where tools that need approval
+(editing, shell) aren't offered at all; "plan" mode stalls after reading, waiting for a plan
+approval that never comes. Codex runs in its read-only sandbox. Each call starts in an empty
+folder; a file is visible only when it's passed in `files`. Whatever is sent goes to Google or
+OpenAI, whose free plans may use it to improve their models — so callers send what the task
+needs, not the vault by default.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ import functools
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -34,9 +37,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 READ = ToolAnnotations(read_only_hint=True, open_world_hint=True)
-GEMINI_MODEL = os.environ.get("SOMMUS_GEMINI_MODEL", "")  # empty: the CLI's default
+# Measured on a 32k-token lecture PDF (2026-09-19): 3.5-flash answered cleanly in 10 s; "auto" took 16 s and
+# sometimes returned nothing; 3.6-flash leaked its reasoning into the answer.
+GEMINI_MODEL = os.environ.get("SOMMUS_GEMINI_MODEL", "gemini-3.5-flash")
 CODEX_MODEL = os.environ.get("SOMMUS_CODEX_MODEL", "")  # empty: ~/.codex/config.toml (gpt-5.5 today)
-SEARCH_TIMEOUT, READ_TIMEOUT, GPT_TIMEOUT = 90, 600, 900
+READ_TIMEOUT, GPT_TIMEOUT = 300, 900
 MAX_REPLY_CHARS = 12_000
 # Keys that would move a CLI onto paid billing. Gemini is the exception: Google ended free Gemini CLI
 # sign-in for individuals on 2026-06-18, so Gemini runs on a free AI Studio key kept in ~/.gemini/.env
@@ -46,8 +51,8 @@ BILLING_VARS = ("GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "OPENAI_API
 server = MCPServer(
     "ai-bridge",
     instructions=(
-        "Other models on Jashan's free sign-ins. gemini_search: quick web answers. ask_gemini: long PDFs, many files "
-        "or long research, returned as a summary. ask_gpt: a second opinion from ChatGPT (small free allowance)."
+        "Other models on free accounts. ask_gemini: long or scanned PDFs and many files, returned as a summary. "
+        "ask_gpt: a second opinion from ChatGPT (small free allowance)."
     ),
     log_level="WARNING",
 )
@@ -111,20 +116,29 @@ def run_gemini(prompt: str, files: list[Path], timeout: int) -> str:
     dirs = sorted({str(p if p.is_dir() else p.parent) for p in files})
     if files:
         prompt += "\n\nFiles to read (use your file tools on these paths):\n" + "\n".join(f"- {p}" for p in files)
-    command = [binary, "--approval-mode", "plan", "--skip-trust", "-o", "json", "-p", prompt]
+    command = [binary, "--approval-mode", "default", "--skip-trust", "-o", "json", "-p", prompt]
     if dirs:
         command += ["--include-directories", ",".join(dirs)]
     if GEMINI_MODEL:
         command += ["-m", GEMINI_MODEL]
-    with tempfile.TemporaryDirectory(prefix="bridge-") as empty:
-        try:
-            done = subprocess.run(
-                command, cwd=empty, env=cli_env(binary), capture_output=True, text=True, timeout=timeout,
-                stdin=subprocess.DEVNULL,
-            )  # fmt: skip
-        except subprocess.TimeoutExpired as e:
-            raise ToolError(f"Gemini took longer than {timeout} s and was stopped.") from e
-    return parse_gemini(done.stdout, done.stderr, done.returncode)
+    for _ in range(2):  # an empty answer happens now and then; one retry fixes it
+        with tempfile.TemporaryDirectory(prefix="bridge-") as empty:
+            try:
+                done = subprocess.run(
+                    command, cwd=empty, env=cli_env(binary), capture_output=True, text=True, timeout=timeout,
+                    stdin=subprocess.DEVNULL,
+                )  # fmt: skip
+            except subprocess.TimeoutExpired as e:
+                raise ToolError(
+                    f"Gemini took longer than {timeout} s and was stopped (the free quota may be used up)."
+                ) from e
+        answer = parse_gemini(done.stdout, done.stderr, done.returncode)
+        if answer:
+            return answer
+    raise ToolError("Gemini returned an empty answer twice. Try again, or read the file another way.")
+
+
+LEAKED = re.compile(r"</?untrusted_context>")  # wrapper tags the model sometimes echoes back
 
 
 def parse_gemini(stdout: str, stderr: str, code: int) -> str:
@@ -144,8 +158,8 @@ def parse_gemini(stdout: str, stderr: str, code: int) -> str:
                 error = data["error"]
                 message = error.get("message", error) if isinstance(error, dict) else error
                 raise ToolError(f"Gemini error: {message}")
-            if data.get("response"):
-                return _clip(data["response"])
+            if "response" in data:
+                return _clip(LEAKED.sub("", data["response"] or ""))
     if code != 0:
         raise ToolError(f"Gemini failed (exit {code}): {(stderr or stdout).strip()[-500:]}")
     return _clip(stdout)
@@ -187,30 +201,15 @@ def parse_codex(answer: str, output: str, code: int) -> str:
 
 
 @tool(READ)
-def gemini_search(question: str) -> str:
-    """Answer a question from the web with Google Search, through Gemini. Free — prefer it over paid search.
-
-    Args:
-        question: What to find out, e.g. "UW Fall 2026 reading week dates" or "is the ION running on Sundays".
-    """
-    return run_gemini(
-        "Answer using Google Search. Be concise and factual; give the answer first, then at most three "
-        f"sources as plain URLs.\n\nQuestion: {question}",
-        [],
-        SEARCH_TIMEOUT,
-    )
-
-
-@tool(READ)
 def ask_gemini(task: str, files: list[str] | None = None) -> str:
-    """Hand heavy reading to Gemini (free, 1M-token context): long or scanned PDFs, many files, long research.
+    """Hand heavy reading to Gemini (free, 1M-token context): long or scanned PDFs, many files at once.
 
     It reads everything itself and returns what the task asks for, so only the summary comes back.
     Nothing is edited. Files are sent to Google: pass only what the task needs.
 
     Args:
         task: What to produce, e.g. "Explain every concept in this lecture, with the worked examples,
-            as study notes" or "Research X across the web and compare the options".
+            as study notes" or "Which of these five PDFs cover eigenvalues, and on which pages".
         files: Full paths of PDFs, images or text files to read, e.g. ["~/Documents/.../L3.pdf"].
     """
     return run_gemini(task, resolve_files(files or []), READ_TIMEOUT)
