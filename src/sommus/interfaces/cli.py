@@ -557,6 +557,20 @@ def show_candidates(store: Store) -> None:
     console.print("[dim]Add their phrasings to src/sommus/brain/fastpath.py to make them $0.[/]")
 
 
+def show_today() -> None:
+    """Today's classes, what's next and what's due — no model, $0. Also writes data/today.json,
+    which the morning brief reads instead of re-deriving the day from two calendars."""
+    from sommus.brain import campus
+
+    schedule = campus.Schedule.load(campus.schedule_path())
+    now = datetime.now(schedule.zone)
+    out = config.ROOT / "data" / "today.json"
+    campus.write_today(schedule, now, out, campus.todo_path())
+    console.print(campus.day_summary(schedule, now.date(), now))
+    console.print(campus.due_summary(schedule, now))
+    console.print(f"[dim]Wrote {out}[/]")
+
+
 def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     """Returns False to exit."""
     command = text.split()[0].lower()
@@ -833,6 +847,7 @@ def main() -> None:
             "voice",
             "voices",
             "pin",
+            "today",
         ],
         default="chat",
     )
@@ -850,6 +865,8 @@ def main() -> None:
             asyncio.run(run_eval(args.live, args.only))
         elif args.command == "pin":
             set_pin()
+        elif args.command == "today":
+            show_today()
         elif args.command == "voices":
             asyncio.run(voices([n for n in [args.tool_name, *args.tool_args] if n]))
         elif args.command in ("start", "stop", "status"):

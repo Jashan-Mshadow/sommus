@@ -61,6 +61,14 @@ VOCAB = {
                  "morning", "afternoon", "evening", "when", "where", "rooms", "room", "with", "anything", "any",
                  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "first", "last",
                  "left", "else", "going", "got", "does", "start", "end", "in"},
+    # Class questions answered from the schedule file by brain/campus.py, no model and no calendar call.
+    "campus": {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials", "next", "today",
+               "tomorrow", "todays", "tomorrows", "where", "when", "do", "i", "have", "are", "am", "any", "anything",
+               "more", "left", "rest", "else", "first", "start", "starts", "room", "in", "on", "this", "day", "got",
+               "does", "going", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"},
+    "due": {"due", "deadline", "deadlines", "assignment", "assignments", "homework", "anything", "any", "coming",
+            "soon", "next", "this", "week", "today", "tomorrow", "do", "i", "have", "got", "are", "monday", "tuesday",
+            "wednesday", "thursday", "friday", "saturday", "sunday", "days", "seven", "7", "on"},
     "holiday": {"holiday", "holidays", "next", "upcoming", "coming", "stat", "statutory", "long", "weekend", "day",
                 "off", "when", "does", "fall", "on", "this", "year", "are", "there", "any"},
 }  # fmt: skip
@@ -83,7 +91,8 @@ class Match:
 
 
 def words(text: str) -> list[str]:
-    text = text.lower().replace("what's", "whats").replace("it's", "its").replace("don't", "dont")
+    text = text.lower().replace("’", "'").replace("where's", "where is").replace("when's", "when is")
+    text = text.replace("what's", "whats").replace("it's", "its").replace("don't", "dont")
     return re.findall(r"[a-z]+|\d{1,4}", text)
 
 
@@ -150,6 +159,7 @@ def match(
     text: str,
     weather: Callable[[list[str]], str] | None = None,
     places: Callable[[str], Any] | None = None,
+    campus: Callable[[str, list[str]], str] | None = None,
 ) -> Match | None:
     raw = " ".join(text.strip().lower().split())
     tokens = words(raw)
@@ -183,6 +193,11 @@ def match(
             return Match("time_in", local=lambda: time_in(places(place)))
         if weather and _claims("weather", rest) and set(rest) & WEATHER_TRIGGERS:
             return Match("weather_in", local=lambda: weather(rest, places(place)))
+    classy = present & {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials"}
+    if campus and classy and _claims("campus", tokens):
+        return Match("campus", local=lambda: campus("classes", tokens))
+    if campus and present & {"due", "deadline", "deadlines"} and _claims("due", tokens):
+        return Match("due", local=lambda: campus("due", tokens))
     if (
         _claims("calendar", tokens)
         and present & {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials", "calendar",

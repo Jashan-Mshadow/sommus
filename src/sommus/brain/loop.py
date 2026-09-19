@@ -11,11 +11,12 @@ import asyncio
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import anthropic
 
-from sommus.brain import fastpath
+from sommus.brain import campus, fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
 from sommus.brain.pin import Gate, split_pin
@@ -161,7 +162,9 @@ class Brain:
                     yield event
                 return
         self._asked = text
-        quick = fastpath.match(text, self._weather, self._place) if self.cfg.fast_path else None
+        # Without a schedule file, class questions keep going to Claude Code's calendar lookup.
+        classes = self._campus if campus.schedule_path().exists() else None
+        quick = fastpath.match(text, self._weather, self._place, classes) if self.cfg.fast_path else None
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):
@@ -291,6 +294,13 @@ class Brain:
     def _weather(self, tokens: list[str], place: fastpath.Place | None) -> str:
         place = place or self._home()
         return fastpath.weather_answer(tokens, place.name, place.latitude, place.longitude)
+
+    def _campus(self, kind: str, tokens: list[str]) -> str:
+        """Class and deadline questions from the schedule file. Raises if it's missing, so the
+        request falls through to the model (which can still ask Claude for the calendar)."""
+        schedule = campus.cached(campus.schedule_path())
+        now = datetime.now(schedule.zone)
+        return campus.answer(schedule, tokens, now) if kind == "classes" else campus.due_answer(schedule, tokens, now)
 
     def _fast_ready(self, quick: fastpath.Match) -> bool:
         needed = [t for t in (quick.tool, quick.read_tool) if t]
