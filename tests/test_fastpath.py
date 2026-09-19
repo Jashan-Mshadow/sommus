@@ -272,3 +272,55 @@ def test_calendar_questions_go_straight_to_claude_code(text):
 def test_calendar_changes_and_other_questions_do_not(text):
     found = fastpath.match(text, WEATHER, PLACES)
     assert found is None or found.intent != "calendar"
+
+
+APPS = lambda: {"messages": "Messages", "calculator": "Calculator", "chrome": "Google Chrome", "notes": "Notes"}  # noqa: E731
+
+
+@pytest.mark.parametrize(
+    ("text", "intent", "tool", "args", "delta"),
+    [
+        ("quit messages", "quit_app", "quit_app", {"name": "Messages"}, 0),
+        ("close chrome", "quit_app", "quit_app", {"name": "Google Chrome"}, 0),
+        ("can you launch the calculator app", "open_app", "open_app", {"name": "Calculator"}, 0),
+        ("open up my notes", "open_app", "open_app", {"name": "Notes"}, 0),
+        ("what apps do I have open", "list_apps", "list_apps", {}, 0),
+        ("which apps are running", "list_apps", "list_apps", {}, 0),
+        ("what's on my clipboard", "clipboard", "get_clipboard", {}, 0),
+        ("what wifi am I on", "wifi", "get_wifi", {}, 0),
+        ("which network am I connected to", "wifi", "get_wifi", {}, 0),
+        ("what's playing right now", "now_playing", "get_now_playing", {}, 0),
+        ("what song is this", "now_playing", "get_now_playing", {}, 0),
+        ("what shortcuts do I have", "shortcuts", "list_shortcuts", {}, 0),
+        ("screen's too dim", "brightness", "set_brightness", {}, 10),
+        ("the screen is too bright", "brightness", "set_brightness", {}, -10),
+        ("it's too loud", "volume", "set_volume", {}, -10),
+        ("it's too quiet", "volume", "set_volume", {}, 10),
+    ],
+)
+def test_apps_and_simple_reads(text, intent, tool, args, delta):
+    found = fastpath.match(text, apps=APPS)
+    assert found is not None and (found.intent, found.tool, found.args, found.delta) == (intent, tool, args, delta)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "open spotify",  # not installed: the model can open the web player
+        "open my ECE 150 LEARN page",
+        "open youtube",
+        "open notes and make a list",
+        "close everything except chrome and obsidian",
+        "copy this to my clipboard",
+        "turn off wifi",
+        "run my focus shortcut",
+        "which apps should I delete",
+        "play some music on spotify",
+        "is the screen too bright or too dim",
+    ],
+)
+def test_apps_and_reads_leave_the_rest(text):
+    found = fastpath.match(text, apps=APPS)
+    assert found is None or found.intent not in {
+        "open_app", "quit_app", "list_apps", "clipboard", "wifi", "shortcuts", "now_playing", "brightness",
+    }  # fmt: skip

@@ -181,7 +181,11 @@ class Brain:
         self._asked = text
         # Without a schedule file, class questions keep going to Claude Code's calendar lookup.
         classes = self._campus if campus.schedule_path().exists() else None
-        quick = fastpath.match(text, self._weather, self._place, classes) if self.cfg.fast_path else None
+        quick = (
+            fastpath.match(text, self._weather, self._place, classes, fastpath.installed_apps)
+            if self.cfg.fast_path
+            else None
+        )
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):

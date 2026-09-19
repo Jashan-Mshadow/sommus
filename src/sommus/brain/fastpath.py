@@ -39,12 +39,22 @@ VOCAB = {
     "battery": {"battery", "charge", "charged", "charging", "percentage", "left", "life", "remaining", "low"},
     "time": {"time", "clock"},
     "date": {"date", "day", "today", "todays"},
-    "brightness": {"brightness", "bright", "brighter", "dim", "dimmer", "darker", "screen", "display"}
+    "brightness": {"brightness", "bright", "brighter", "dim", "dimmer", "darker", "screen", "display", "too", "dark"}
     | UP
     | DOWN
     | MAX
     | MIN,
-    "volume": {"volume", "sound", "audio", "louder", "quieter", "softer", "loud", "quiet"} | UP | DOWN | MAX | MIN,
+    "volume": {"volume", "sound", "audio", "louder", "quieter", "softer", "loud", "quiet", "too"}
+    | UP
+    | DOWN
+    | MAX
+    | MIN,
+    "list_apps": {"apps", "app", "applications", "programs", "open", "running", "do", "i", "have", "are", "which"},
+    "clipboard": {"clipboard", "on", "in", "do", "i", "have", "whats"},
+    "now_playing": {"playing", "song", "track", "this", "music", "listening", "called", "name", "which", "am", "i",
+                    "spotify", "on"},
+    "wifi": {"wifi", "wi", "fi", "network", "internet", "connected", "on", "am", "i", "which", "whats", "using"},
+    "shortcuts": {"shortcuts", "do", "i", "have", "list", "show", "which", "available", "are", "there", "any"},
     "mute": {"mute", "sound", "audio", "volume"},
     "unmute": {"unmute", "sound", "audio", "volume"},
     "play_pause": {"pause", "play", "resume", "stop", "music", "song", "spotify", "playback"},
@@ -93,6 +103,7 @@ class Match:
 def words(text: str) -> list[str]:
     text = text.lower().replace("’", "'").replace("where's", "where is").replace("when's", "when is")
     text = text.replace("what's", "whats").replace("it's", "its").replace("don't", "dont")
+    text = re.sub(r"(\w)'s\b", r"\1", text)  # "screen's too dim", "didi's number"
     return re.findall(r"[a-z]+|\d{1,4}", text)
 
 
@@ -117,6 +128,12 @@ def _level_change(intent: str, tokens: list[str], raw: str) -> Match | None:
         return None
     going_up = any(t in UP for t in tokens)
     going_down = any(t in DOWN for t in tokens)
+    if "too" in tokens:  # "too dim" wants it brighter, "too loud" wants it quieter
+        too = set(tokens)
+        going_up = bool(too & {"dim", "dark", "darker", "quiet", "quieter", "soft", "softer", "low"})
+        going_down = bool(too & {"bright", "brighter", "loud", "louder", "high"})
+        if going_up == going_down:
+            return None
     if going_up and going_down:
         return None
     if any(t in MAX for t in tokens):
@@ -160,6 +177,7 @@ def match(
     weather: Callable[[list[str]], str] | None = None,
     places: Callable[[str], Any] | None = None,
     campus: Callable[[str, list[str]], str] | None = None,
+    apps: Callable[[], dict[str, str]] | None = None,
 ) -> Match | None:
     raw = " ".join(text.strip().lower().split())
     tokens = words(raw)
@@ -169,6 +187,20 @@ def match(
     if not tokens or len(tokens) > 12 or stopped:
         return None
 
+    if apps and (found := _app_command(tokens, apps)):
+        return found
+    if (
+        _claims("list_apps", tokens)
+        and present & {"apps", "app", "applications", "programs"}
+        and (present & {"open", "running"})
+    ):
+        return Match("list_apps", "list_apps")
+    if _claims("clipboard", tokens) and "clipboard" in present:
+        return Match("clipboard", "get_clipboard")
+    if _claims("wifi", tokens) and present & {"wifi", "wi", "network", "internet"}:
+        return Match("wifi", "get_wifi")
+    if _claims("shortcuts", tokens) and "shortcuts" in present:
+        return Match("shortcuts", "list_shortcuts")
     if _claims("screen_off", tokens) and present & {"off", "sleep"} and present & {"screen", "display", "monitor"}:
         return Match("screen_off", "sleep_display", phrase=lambda _: "Screen's off.")
     if _claims("lock", tokens) and "lock" in present:
@@ -183,6 +215,10 @@ def match(
         return Match("previous", "media_control", {"action": "previous"}, phrase=lambda _: "Going back.")
     if _claims("play_pause", tokens) and present & {"pause", "play", "resume", "stop"}:
         return Match("play_pause", "media_control", {"action": "play_pause"}, phrase=lambda _: "Done.")
+    if _claims("now_playing", tokens) and (
+        "playing" in present or ("song" in present and present & {"this", "name", "called"})
+    ):
+        return Match("now_playing", "get_now_playing")
     if _claims("battery", tokens) and "battery" in present:
         return Match("battery", "get_battery", phrase=say_battery)
     if _claims("time", tokens) and "time" in present:
@@ -221,6 +257,62 @@ def match(
     if weather and _claims("weather", tokens) and present & WEATHER_TRIGGERS:
         return Match("weather", local=lambda: weather(tokens, None))
     return None
+
+
+OPEN_VERBS = {"open", "launch", "start"}
+QUIT_VERBS = {"quit", "close", "kill"}
+APP_FILLER = {"app", "the", "my", "up", "application"}
+
+
+def _app_command(tokens: list[str], apps: Callable[[], dict[str, str]]) -> Match | None:
+    """'open spotify' / 'quit messages' / 'can you launch the calculator app' — only when what's
+    left after the verb is exactly an installed app's name. 'open my LEARN page' goes to the model."""
+    lead = 0
+    while lead < len(tokens) and tokens[lead] in FILLER and tokens[lead] not in OPEN_VERBS | QUIT_VERBS:
+        lead += 1
+    if lead >= len(tokens) or tokens[lead] not in OPEN_VERBS | QUIT_VERBS:
+        return None
+    rest = [t for t in tokens[lead + 1 :] if t not in APP_FILLER and t not in {"please", "pls", "for", "me"}]
+    if not rest:
+        return None
+    name = apps().get(" ".join(rest))
+    if not name:
+        return None
+    if tokens[lead] in OPEN_VERBS:
+        return Match("open_app", "open_app", {"name": name}, phrase=lambda _: f"Opening {name}.")
+    return Match("quit_app", "quit_app", {"name": name})
+
+
+def app_key(name: str) -> str:
+    return " ".join(words(name))
+
+
+APP_DIRS = ("/Applications", "/System/Applications", "/System/Applications/Utilities", "~/Applications")
+
+
+@functools.lru_cache(maxsize=1)
+def _scan_apps(bucket: int) -> dict[str, str]:
+    from pathlib import Path
+
+    found: dict[str, str] = {}
+    for folder in APP_DIRS:
+        root = Path(folder).expanduser()
+        if not root.is_dir():
+            continue
+        for app in root.glob("*.app"):
+            name = app.stem
+            found.setdefault(app_key(name), name)
+            parts = app_key(name).split()
+            if len(parts) > 1 and parts[0] in {"google", "microsoft", "adobe", "visual"}:
+                found.setdefault(" ".join(parts[1:]), name)  # "chrome" -> Google Chrome, "word" -> Microsoft Word
+    return found
+
+
+def installed_apps() -> dict[str, str]:
+    """Spoken name -> real app name, from the Applications folders. Rescanned every 10 minutes."""
+    import time
+
+    return _scan_apps(int(time.time() // 600))
 
 
 # ---------------------------------------------------------------- replies that sound like a person
