@@ -22,5 +22,7 @@ jobs:
           uv run ruff check src tests
           uv run ruff format --check src tests
       - name: Test
+        env:
+          TZ: America/Toronto  # the laptop's zone; tests with explicit zones must pass either way
         # No API key is set: the suite uses fakes and never calls the model or plays audio.
         run: uv run pytest -q

@@ -380,7 +380,9 @@ def _gap(zone: str, now: datetime) -> str:
 
 
 def time_in(place: Place, now: datetime | None = None) -> str:
-    now = (now or datetime.now()).astimezone()
+    # An aware `now` keeps its own zone: .astimezone() would convert it to the machine's zone, which
+    # is UTC on a server and made "how far ahead" wrong everywhere but this laptop.
+    now = now if now and now.tzinfo else (now or datetime.now()).astimezone()
     if place.is_country and place.country_code in SPREAD_OUT:
         (a, zone_a), (b, zone_b) = SPREAD_OUT[place.country_code]
         return f"It's {_clock(zone_a, now)} in {a} and {_clock(zone_b, now)} in {b}."
