@@ -37,6 +37,7 @@ class Config:
     fast_path: bool = True
     pin_tools: tuple[str, ...] = ()  # personal tools that wait for the PIN
     unlock_minutes: float = 10
+    memory_path: Path | None = None  # long-term facts Sommus writes itself (brain/memory.py)
 
 
 def section(name: str, path: Path | None = None) -> dict:
@@ -69,4 +70,5 @@ def load(path: Path | None = None) -> Config:
         ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),
         pin_tools=tuple(raw.get("security", {}).get("pin_tools", [])),
         unlock_minutes=float(raw.get("security", {}).get("unlock_minutes", 10)),
+        memory_path=Path(raw["memory"]["path"]).expanduser() if raw.get("memory", {}).get("path") else None,
     )

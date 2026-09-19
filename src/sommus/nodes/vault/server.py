@@ -19,8 +19,11 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from sommus.brain import memory
+
 VAULT = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
 TODO = "TODO.md"
+MEMORY = Path(os.environ.get("SOMMUS_MEMORY_PATH", str(VAULT / "Sommus Memory.md"))).expanduser()
 MAX_NOTE_CHARS = 20_000
 # Longer notes return an outline first. read_note averaged 8.7k chars per call in the log — the
 # most expensive read Sommus makes — and most questions only need one section of the note.
@@ -239,6 +242,39 @@ def commit_vault(message: str) -> str:
         if result.returncode != 0:
             raise VaultError(f"git {args[0]} failed: {result.stderr.strip()}")
     return f"Committed: {message}"
+
+
+@tool(REVERSIBLE)
+def remember(fact: str) -> str:
+    """Save a lasting fact about Jashan so it's known in every future conversation.
+
+    Args:
+        fact: One short sentence, e.g. "Gym days are Monday, Wednesday and Friday at 7 AM".
+    """
+    try:
+        return memory.remember(MEMORY, fact)
+    except memory.MemoryError as e:
+        raise VaultError(str(e)) from e
+
+
+@tool(REVERSIBLE)
+def forget(words: str) -> str:
+    """Remove a remembered fact that's wrong or out of date.
+
+    Args:
+        words: Words from the fact, e.g. "gym days".
+    """
+    try:
+        return memory.forget(MEMORY, words)
+    except memory.MemoryError as e:
+        raise VaultError(str(e)) from e
+
+
+@tool(READ)
+def list_memories() -> str:
+    """Everything Jashan has asked to be remembered."""
+    known = memory.facts(MEMORY)
+    return "\n".join(f"- {f}" for f in known) if known else "Nothing remembered yet."
 
 
 def main() -> None:

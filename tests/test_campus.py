@@ -1,7 +1,7 @@
 """Campus engine: class and deadline answers from a schedule file, with no model."""
 
 import tomllib
-from datetime import date, datetime
+from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -9,8 +9,7 @@ import pytest
 from sommus.brain import campus, fastpath
 
 ZONE = ZoneInfo("America/Toronto")
-SCHEDULE = campus.Schedule(
-    tomllib.loads("""
+RAW = tomllib.loads("""
 term_start = 2026-09-08
 term_end = 2026-12-08
 breaks = [{ from = 2026-10-12, to = 2026-10-16 }]
@@ -18,7 +17,6 @@ weekly = [
   { course = "ECE 150", kind = "LEC", day = "Mon", start = 08:30:00, end = 09:20:00, room = "E7 5353" },
   { course = "MATH 117", kind = "LEC", day = "Mon", start = 11:30:00, end = 12:20:00, room = "E7 5353" },
   { course = "MATH 117", kind = "TUT", day = "Mon", start = 14:30:00, end = 16:20:00, room = "DWE 3517" },
-  { course = "MATH 115", kind = "TUT", day = "Tue", start = 14:30:00, end = 16:20:00, room = "DWE 3516", first = 2026-09-22, skip = [{ from = 2026-10-21, to = 2026-10-27 }] },
 ]
 once = [
   { course = "ECE 198", kind = "LAB", date = 2026-09-23, start = 08:30:00, end = 10:20:00, room = "E2 1792" },
@@ -29,7 +27,12 @@ deadlines = [
   { what = "ECE 105 Assignment 1", due = 2026-09-20T23:59:00 },
 ]
 """)
-)
+# Starts late and pauses around the midterm (one TOML inline table can't wrap, so it's added here).
+RAW["weekly"].append(
+    {"course": "MATH 115", "kind": "TUT", "day": "Tue", "start": time(14, 30), "end": time(16, 20),
+     "room": "DWE 3516", "first": date(2026, 9, 22), "skip": [{"from": date(2026, 10, 21), "to": date(2026, 10, 27)}]}
+)  # fmt: skip
+SCHEDULE = campus.Schedule(RAW)
 
 
 def at(text: str) -> datetime:

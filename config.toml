@@ -20,6 +20,8 @@ core_tools = [
     "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search", "ask_claude",
     # quick spoken requests: deferred, each first cost a tool search (~2 s before the tool ran)
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",
+    # long-term memory: offered on every turn so a fact gets saved without a tool search first
+    "remember",
 ]
 # Conversation memory: older turns beyond this are dropped so every request doesn't
 # keep re-sending the whole day. /new clears it entirely.
@@ -63,7 +65,11 @@ env = { SOMMUS_CLAUDE_MODEL = "sonnet", SOMMUS_CLAUDE_CWD = "~/Documents" }
 [[nodes]]
 name = "vault"
 module = "sommus.nodes.vault.server"
-env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain" }
+env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain", SOMMUS_MEMORY_PATH = "~/Documents/Jashans_Brain/Sommus Memory.md" }
+
+[memory]
+# Facts Sommus saves itself ("remember my gym days are..."), loaded into every prompt. Private: in the vault.
+path = "~/Documents/Jashans_Brain/Sommus Memory.md"
 
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]

@@ -114,8 +114,10 @@ class Brain:
         self.hub = hub
         self.store = store
         self.client = client or anthropic.AsyncAnthropic()
-        deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
-        self.system = system_prompt(cfg, deferred, voice=voice)
+        self._deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
+        self._voice = voice
+        self._memory_seen = self._memory_mtime()
+        self.system = system_prompt(cfg, self._deferred, voice=voice)
         # Spoken, a pause before the first word feels broken. Measured on Sonnet 5 (2026-09-16): the
         # first word of a plain answer came at ~1.5 s with adaptive thinking, ~0.7 s without.
         self.thinking = {"type": "disabled"} if voice else {"type": "adaptive"}
@@ -127,6 +129,18 @@ class Brain:
         self.lock = asyncio.Lock()
         self.gate = Gate(cfg.data_dir, set(cfg.pin_tools), cfg.unlock_minutes)
         self._asked = ""  # the request being handled, kept in case it hits the PIN lock
+
+    def _memory_mtime(self) -> float:
+        path = self.cfg.memory_path
+        return path.stat().st_mtime if path and path.exists() else 0.0
+
+    def _refresh_prompt(self) -> None:
+        """Rebuild the system prompt when the memory file changed. That rewrites the prompt cache once
+        (~2.4¢), which is why memory lives in the prompt only after it actually changes."""
+        seen = self._memory_mtime()
+        if seen != self._memory_seen:
+            self._memory_seen = seen
+            self.system = system_prompt(self.cfg, self._deferred, voice=self._voice)
 
     def reset(self) -> None:
         self.messages = []
@@ -173,6 +187,7 @@ class Brain:
             if handled:
                 return
         turn_id = self.store.start_turn(text)
+        self._refresh_prompt()
         self._trim_history()
         self._compact_finished_turns()
         history_len = len(self.messages)
