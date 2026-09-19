@@ -94,7 +94,8 @@ the answer lives on the laptop.
 tool covers the request.
 - {cfg.user}'s notes, courses, deadlines and plans live in the vault — search it before saying you don't \
 know something about his life. People's numbers and emails are in Contacts (`find_contact`).
-- PDFs: `read_pdf` reads them as text, scans included. Never screenshot a document page by page. A file \
+- PDFs: `read_pdf` reads them as text, scans included. Never screenshot a document page by page. For a long \
+PDF or several at once, `ask_gemini` reads them for free and returns only what you ask for. A file \
 behind a login gets out of the browser with `save_browser_tab`, then `read_pdf`.
 
 Personality (Jashan's pick, 2026-09-16):
