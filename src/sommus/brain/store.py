@@ -142,6 +142,26 @@ class Store:
         ).fetchone()
         return row[0]
 
+    def cache_hit_rate(self, since: str) -> float | None:
+        """Share of prompt tokens read from cache (billed at 0.1×) since an ISO date. The main
+        cost lever: a drop means something in the cached prefix started changing between requests."""
+        read, written, fresh = self._db.execute(
+            "SELECT COALESCE(SUM(cache_read_tokens), 0), COALESCE(SUM(cache_write_tokens), 0),"
+            " COALESCE(SUM(input_tokens), 0) FROM turns WHERE started_at >= ?",
+            (since,),
+        ).fetchone()
+        total = read + written + fresh
+        return read / total if total else None
+
+    def cost_summary(self, monthly_limit: float) -> str:
+        """The /cost line, same on every interface."""
+        count, spent = self.cost_today()
+        hits = self.cache_hit_rate(datetime.now().strftime("%Y-%m-01"))
+        cached = f" · {hits:.0%} of prompt tokens from cache" if hits is not None else ""
+        return (
+            f"Today: {count} commands, ${spent:.4f} · Month: ${self.cost_month():.2f} of ${monthly_limit:.0f}{cached}"
+        )
+
     def cost_today(self) -> tuple[int, float]:
         row = self._db.execute(
             "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM turns WHERE started_at >= ?",

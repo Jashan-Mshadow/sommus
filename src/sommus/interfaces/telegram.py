@@ -94,8 +94,7 @@ class Bot:
             await self.say(chat, "Fresh conversation.")
             return
         if text == "/cost":
-            count, spent = self.store.cost_today()
-            await self.say(chat, f"Today: {count} commands, ${spent:.4f}")
+            await self.say(chat, self.store.cost_summary(self.brain.budget.monthly_usd))
             return
 
         await self.call("sendChatAction", chat_id=chat, action="typing")

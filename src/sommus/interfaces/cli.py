@@ -588,8 +588,7 @@ def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     elif command == "/candidates":
         show_candidates(store)
     elif command == "/cost":
-        count, spent = store.cost_today()
-        console.print(f"[dim]Today: {count} commands, ${spent:.4f}[/]")
+        console.print(f"[dim]{store.cost_summary(brain.budget.monthly_usd)}[/]")
     else:
         console.print(HELP)
     return True

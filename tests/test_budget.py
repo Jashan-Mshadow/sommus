@@ -72,3 +72,32 @@ async def test_near_the_cap_switches_model_and_says_so_once_a_day(tmp_path):
     assert all(r["model"] == "claude-haiku-4-5" for r in model.requests)
     assert "output_config" not in model.requests[0] and "thinking" not in model.requests[0]
     assert "fallbacks" not in model.requests[0]
+
+
+def test_cost_summary_reports_month_and_cache_share(tmp_path):
+    store = Store(tmp_path / "t.db")
+    store._db.execute(
+        "INSERT INTO turns (started_at, user_text, status, model, cost_usd, input_tokens, cache_read_tokens,"
+        " cache_write_tokens) VALUES (?, 'x', 'ok', 'm', 1.5, 100, 900, 0)",
+        (datetime.now().isoformat(timespec="seconds"),),
+    )
+    store._db.commit()
+    assert store.cache_hit_rate("2000-01-01") == 0.9
+    assert (
+        store.cost_summary(10) == "Today: 1 commands, $1.5000 · Month: $1.50 of $10 · 90% of prompt tokens from cache"
+    )
+
+
+async def test_cached_prefix_is_identical_between_requests(tmp_path):
+    """Tools render before the system prompt; both must be byte-identical turn to turn or the
+    cache rewrites (~2.4¢ each). A clock, a shuffled tool list or a per-turn value would break it."""
+    import json
+
+    brain, model, hub = await _brain(tmp_path, 0.0, 2)
+    [e async for e in brain.handle("hello", None)]
+    [e async for e in brain.handle("and again", None)]
+    await hub.__aexit__(None, None, None)
+    first, second = model.requests
+    assert json.dumps(first["tools"], sort_keys=False) == json.dumps(second["tools"], sort_keys=False)
+    assert first["system"] == second["system"]
+    assert first["model"] == second["model"]
