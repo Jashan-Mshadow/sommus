@@ -16,6 +16,7 @@ from typing import Any
 
 import anthropic
 
+from sommus.brain import budget as spending
 from sommus.brain import campus, fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
@@ -125,6 +126,9 @@ class Brain:
         from sommus import config as config_module
 
         self.fast_settings = config_module.section("fastpath")
+        self.budget = spending.Budget.from_section(config_module.section("budget"))
+        self.model = cfg.model  # this turn's model: cfg.model unless the month's budget is nearly spent
+        self._budget_noted: tuple[str, str] = ("", "")  # (day, model) last told about
         # The terminal and Telegram can share one brain; a turn from one waits for the other.
         self.lock = asyncio.Lock()
         self.gate = Gate(cfg.data_dir, set(cfg.pin_tools), cfg.unlock_minutes)
@@ -147,7 +151,7 @@ class Brain:
 
     def _request(self) -> dict[str, Any]:
         request: dict[str, Any] = dict(
-            model=self.cfg.model,
+            model=self.model,
             max_tokens=16000,
             # The breakpoint sits on the system prompt, the last *stable* thing in the
             # request (tools render before system). Auto top-level caching instead caches
@@ -156,10 +160,9 @@ class Brain:
             system=[{"type": "text", "text": self.system, "cache_control": CACHE}],
             tools=self._tools(),
             messages=self.messages,
-            thinking=self.thinking,
-            output_config={"effort": self.cfg.effort},
+            **spending.request_options(self.model, self.cfg.effort, self.thinking),
         )
-        if self.cfg.model in FALLBACK_MODELS:
+        if self.model in FALLBACK_MODELS:
             request |= dict(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
         return request
 
@@ -188,6 +191,12 @@ class Brain:
                 return
         turn_id = self.store.start_turn(text)
         self._refresh_prompt()
+        decision = spending.choose(self.budget, self.cfg.model, self.store.cost_month())
+        self.model = decision.model
+        noted = (datetime.now().strftime("%Y-%m-%d"), decision.model)
+        if decision.notice and noted != self._budget_noted:
+            self._budget_noted = noted
+            yield Notice(decision.notice)
         self._trim_history()
         self._compact_finished_turns()
         history_len = len(self.messages)
@@ -289,9 +298,9 @@ class Brain:
             status = "interrupted"
             raise
         finally:
-            self.store.finish_turn(turn_id, "".join(reply), status, self.cfg.model, usage)
+            self.store.finish_turn(turn_id, "".join(reply), status, self.model, usage)
 
-        yield TurnDone(usage, usage.cost_usd(self.cfg.model), steps)
+        yield TurnDone(usage, usage.cost_usd(self.model), steps)
 
     def _home(self) -> fastpath.Place:
         home = self.fast_settings

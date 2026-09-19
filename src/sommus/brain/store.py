@@ -134,6 +134,14 @@ class Store:
         ).fetchall()
         return [(tool, text, count, spent or 0.0) for tool, text, count, spent in rows]
 
+    def cost_month(self) -> float:
+        """Spend since the 1st, the window Anthropic's monthly limit counts."""
+        row = self._db.execute(
+            "SELECT COALESCE(SUM(cost_usd), 0) FROM turns WHERE started_at >= ?",
+            (datetime.now().strftime("%Y-%m-01"),),
+        ).fetchone()
+        return row[0]
+
     def cost_today(self) -> tuple[int, float]:
         row = self._db.execute(
             "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM turns WHERE started_at >= ?",

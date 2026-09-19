@@ -122,7 +122,7 @@ expect = ["press_keys"]
 
 [[command]]
 text = "what's the weather in Waterloo right now"
-expect = ["web_search"]
+expect = ["weather_in"]  # the fast path answers from Open-Meteo, $0 (was web_search, ~2.5¢)
 
 [[command]]
 text = "explain what a semaphore is in one sentence"
