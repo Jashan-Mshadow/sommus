@@ -91,8 +91,9 @@ pin_tools = [
     # accounts and people
     "ask_claude", "ask_gemini", "ask_gpt", "search_email", "read_email", "send_email", "reply_to_email", "draft_email", "mark_email_read",
     "send_message", "compose_email", "find_contact", "list_contacts",
-    # notes
-    "search_vault", "read_note", "list_notes", "append_to_note", "add_todo", "commit_vault",
+    # notes: reading his own notes is unlocked (Jashan, 2026-09-19) — the PIN prompt interrupted
+    # "what's on my to-do list" mid-conversation. Writing them still waits for the PIN.
+    "append_to_note", "add_todo", "commit_vault",
     # files, clipboard, browser contents
     "read_file", "find_files", "append_to_file", "open_file", "read_pdf", "download_url", "get_clipboard",
     "list_browser_tabs", "read_browser_tab", "list_page_links", "click_page_link", "list_embedded_files",
