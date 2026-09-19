@@ -62,6 +62,11 @@ name = "claude"
 module = "sommus.nodes.claude.server"
 env = { SOMMUS_CLAUDE_MODEL = "sonnet", SOMMUS_CLAUDE_CWD = "~/Documents" }
 
+# Gemini and ChatGPT on Jashan's free sign-ins (Gemini CLI, Codex CLI). Also registered with Claude Code.
+[[nodes]]
+name = "bridge"
+module = "sommus.nodes.bridge.server"
+
 [[nodes]]
 name = "vault"
 module = "sommus.nodes.vault.server"
@@ -84,7 +89,7 @@ path = "~/Documents/Jashans_Brain/Sommus Memory.md"
 unlock_minutes = 10
 pin_tools = [
     # accounts and people
-    "ask_claude", "search_email", "read_email", "send_email", "reply_to_email", "draft_email", "mark_email_read",
+    "ask_claude", "ask_gemini", "ask_gpt", "search_email", "read_email", "send_email", "reply_to_email", "draft_email", "mark_email_read",
     "send_message", "compose_email", "find_contact", "list_contacts",
     # notes
     "search_vault", "read_note", "list_notes", "append_to_note", "add_todo", "commit_vault",
