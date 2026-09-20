@@ -244,7 +244,7 @@ async def voice_chat() -> None:
     # (macOS `say` plays outside the engine, so its echo can't be removed).
     engine_io = None
     if settings.get("barge_in", False) and isinstance(engine, voice.KokoroVoice):
-        engine_io = duplex.DuplexAudio()
+        engine_io = duplex.DuplexAudio(gain=float(settings.get("barge_in_mic_gain", 2.0)))
         try:
             await asyncio.to_thread(engine_io.start)
             engine.output = engine_io

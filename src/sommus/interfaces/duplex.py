@@ -54,7 +54,12 @@ class MicResampler:
 
 
 class DuplexAudio:
-    def __init__(self):
+    """Echo cancellation also suppresses quiet sound: measured on this M1 (2026-09-19) the mic came
+    through at about half the level of the plain microphone, which makes speech from across the room
+    harder to detect. The captured signal is scaled back up before anyone sees it."""
+
+    def __init__(self, gain: float = 2.0):
+        self.gain = gain
         self.mic: queue.Queue[np.ndarray] = queue.Queue(maxsize=400)  # ~13 s of chunks
         self.engine = None
         self.player = None
@@ -106,6 +111,8 @@ class DuplexAudio:
         if not frames:
             return
         samples = np.frombuffer(buffer.floatChannelData()[0].as_buffer(frames), dtype=np.float32)
+        if self.gain != 1.0:
+            samples = np.clip(samples * self.gain, -1.0, 1.0)
         for chunk in self._resampler.feed(samples):
             if self.mic.full():
                 self.mic.get_nowait()  # nobody is reading: drop the oldest

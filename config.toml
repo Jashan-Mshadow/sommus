@@ -123,6 +123,7 @@ barge_in = true                                 # talk over Sommus to stop it (m
 # Interrupt only when it hears its name ("Sommus, stop"), not on any voice. Sommus keeps listening while it
 # talks, so a roommate — or its own voice coming back — can't cut it off (Jashan's call, 2026-09-19).
 barge_in_needs_name = true
+barge_in_mic_gain = 2.0                         # echo cancellation halves the mic level; put it back
 room_filter = true                              # awake, check with a fast model that speech was meant for Sommus
 vad_threshold = 0.35                            # speech detector; raise toward 0.6 if noise keeps waking Whisper,
                                                 # lower toward 0.25 if it misses you from across the room
