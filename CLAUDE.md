@@ -12,7 +12,7 @@ Roadmap: `Sommus — Build Plan.md` in the same folder.
 ```bash
 uv run pytest -q                      # all tests; no API calls, no audio
 uv run ruff check src tests && uv run ruff format src tests
-sommus                                # terminal + Telegram (zsh function; works from any folder)
+sommus                                # terminal + Telegram (zsh function; --no-sync, so it starts offline)
 sommus tool [name k=v]                # run a tool directly, no model, $0
 sommus eval --only "<text>"           # one eval case (~1¢). The full eval is ~40–50¢: don't run it casually
 sommus today                          # today's classes + deadlines, writes data/today.json ($0)

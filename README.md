@@ -223,10 +223,12 @@ uv run sommus check         # verifies the key, nodes, and macOS permissions
 uv run sommus
 ```
 
-To run it from any folder, add a shell function (this is what `sommus` means elsewhere in this README):
+To run it from any folder, add a shell function (this is what `sommus` means elsewhere in this README).
+`--no-sync` matters: without it `uv` re-checks dependencies over the network on every launch, and a
+dropped connection stops Sommus from starting. Run `uv sync` yourself after changing dependencies.
 
 ```bash
-echo 'sommus() { uv run --quiet --project "'"$PWD"'" sommus "$@"; }' >> ~/.zshrc
+echo 'sommus() { uv run --no-sync --quiet --project "'"$PWD"'" sommus "$@"; }' >> ~/.zshrc
 ```
 
 **macOS Accessibility permission** (for `media_control`, `press_keys` and `lock_screen`): System Settings →
