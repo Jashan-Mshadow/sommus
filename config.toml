@@ -119,7 +119,10 @@ wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus"]  # at t
 awake_seconds = 30                              # after a reply, how long it keeps listening without the wake phrase
                                                 # (10 was too short mid-conversation: he had to say the name again)
 awake_after_question = 90                       # ...and this long when Sommus ended its reply with a question
-barge_in = true                                 # talk over Sommus to stop it (echo cancellation). Being tested 2026-09-16
+barge_in = true                                 # talk over Sommus to stop it (macOS echo cancellation)
+# Interrupt only when it hears its name ("Sommus, stop"), not on any voice. Sommus keeps listening while it
+# talks, so a roommate — or its own voice coming back — can't cut it off (Jashan's call, 2026-09-19).
+barge_in_needs_name = true
 room_filter = true                              # awake, check with a fast model that speech was meant for Sommus
 vad_threshold = 0.35                            # speech detector; raise toward 0.6 if noise keeps waking Whisper,
                                                 # lower toward 0.25 if it misses you from across the room

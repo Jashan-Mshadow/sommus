@@ -251,6 +251,9 @@ async def voice_chat() -> None:
         except Exception as e:
             console.print(f"[yellow]! Barge-in unavailable ({escape(str(e))}) — Sommus can't be talked over.[/]")
             engine_io = None
+    # With barge_in_needs_name, Sommus listens while it talks but only stops for its own name, so
+    # a roommate's voice — or its own, coming back through the echo canceller — can't cut it off.
+    needs_name = bool(settings.get("barge_in_needs_name", True))
     loop = asyncio.get_running_loop()
     heard: asyncio.Queue[np.ndarray] = asyncio.Queue()
     state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False, "held": None}
@@ -278,7 +281,7 @@ async def voice_chat() -> None:
         chime(voice.CHIME_SLEEP)
         console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
 
-    def barge_in() -> None:  # someone started talking
+    def barge_in() -> None:  # cut off whatever Sommus is saying or doing
         turn = state.get("turn")
         if speaker.speaking or (turn is not None and not turn.done()):
             speaker.interrupt()
@@ -289,7 +292,7 @@ async def voice_chat() -> None:
     listener = voice.Listener(
         detector,
         source=(lambda: (duplex.DuplexStream(engine_io), voice.SAMPLE_RATE)) if engine_io else None,
-        on_speech=(lambda: loop.call_soon_threadsafe(barge_in)) if engine_io else None,
+        on_speech=(lambda: loop.call_soon_threadsafe(barge_in)) if engine_io and not needs_name else None,
         deliver=lambda audio: loop.call_soon_threadsafe(heard.put_nowait, audio),
         deaf=deaf,
         device=settings.get("input_device"),
@@ -341,6 +344,13 @@ async def voice_chat() -> None:
             nonlocal prompt
             awake = time.monotonic() < state["awake_until"]
             request = voice.heard_wake(text, wake)
+            turn = state.get("turn")
+            mid_reply = speaker.speaking or (turn is not None and not turn.done())
+            if mid_reply and engine_io is not None and needs_name:
+                # It's hearing itself as well as the room right now, so only its name counts.
+                if request is None:
+                    return
+                barge_in()
             if not awake:
                 if request is None:
                     return  # not said to Sommus: not shown, not kept

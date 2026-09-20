@@ -62,9 +62,17 @@ class DuplexAudio:
         self._resampler: MicResampler | None = None
 
     def start(self) -> None:
+        """Order matters. Attaching the player to an engine whose input is *already* in voice-processing
+        mode makes the output node fail to initialise (-10875, measured on this M1 2026-09-19 — which is
+        why barge-in never started). Connect the player first, then turn echo cancellation on."""
         import AVFoundation as AV
 
         engine = AV.AVAudioEngine.alloc().init()
+        self.player = AV.AVAudioPlayerNode.alloc().init()
+        engine.attachNode_(self.player)
+        self.out_format = AV.AVAudioFormat.alloc().initStandardFormatWithSampleRate_channels_(float(OUT_RATE), 1)
+        engine.connect_to_format_(self.player, engine.mainMixerNode(), self.out_format)
+
         mic = engine.inputNode()
         ok, error = mic.setVoiceProcessingEnabled_error_(True, None)
         if not ok:
@@ -76,11 +84,6 @@ class DuplexAudio:
         mic_format = mic.outputFormatForBus_(0)
         self._resampler = MicResampler(int(mic_format.sampleRate()))
         mic.installTapOnBus_bufferSize_format_block_(0, 1024, mic_format, self._heard)
-
-        self.player = AV.AVAudioPlayerNode.alloc().init()
-        engine.attachNode_(self.player)
-        self.out_format = AV.AVAudioFormat.alloc().initStandardFormatWithSampleRate_channels_(float(OUT_RATE), 1)
-        engine.connect_to_format_(self.player, engine.mainMixerNode(), self.out_format)
         self.engine = engine
         self._run()
 
