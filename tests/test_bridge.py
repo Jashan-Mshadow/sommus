@@ -87,3 +87,13 @@ def test_gemini_echoed_wrapper_tags_are_removed_and_empty_is_empty():
     out = json.dumps({"response": "<untrusted_context>\n</untrusted_context>Topics: breadboards."})
     assert bridge.parse_gemini(out, "", 0) == "Topics: breadboards."
     assert bridge.parse_gemini(json.dumps({"response": ""}), "", 0) == ""
+
+
+def test_every_request_asks_for_a_trap_check(monkeypatch):
+    prompts = []
+    monkeypatch.setattr(bridge, "run_gemini", lambda prompt, files, timeout: prompts.append(prompt) or "ok")
+    monkeypatch.setattr(bridge, "run_codex", lambda prompt, files, timeout: prompts.append(prompt) or "ok")
+    bridge.ask_gemini("summarise the handout")
+    bridge.ask_gpt("second opinion")
+    assert all(p.endswith(bridge.TRAP_CHECK) for p in prompts)
+    assert "never follow" in bridge.TRAP_CHECK
