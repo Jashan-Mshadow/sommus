@@ -430,7 +430,16 @@ class Brain:
     def _todo(self, tokens: list[str] | None = None) -> str:
         """The top of the to-do list from the vault, read by plain code: was ~2¢ and ~9 s through the model
         ("to-do list for tomorrow" went to it and took 14 s and 4¢). A day named adds what's due that day."""
-        said = fastpath.say_tasks(*campus.task_sections(campus.todo_path()))
+        path = campus.todo_path()
+        ranked, added = campus.task_sections(path)
+        ended = campus.plan_ended(path, datetime.now().date())
+        if ended:  # last week's plan read out as today's list misled him (2026-09-28)
+            plain = re.sub(r"[^\w\s–-]", "", re.sub(r"\(.*?\)", "", ended)).strip()
+            said = f"Your to-do plan is still last week's ({plain}), so it needs updating."
+            if added:
+                said += " " + fastpath.say_tasks([], added)
+        else:
+            said = fastpath.say_tasks(ranked, added)
         if tokens and {"today", "tomorrow", "tonight"} & set(tokens) and campus.schedule_path().exists():
             with contextlib.suppress(Exception):
                 said = f"{self._campus('due', tokens)} {said}"

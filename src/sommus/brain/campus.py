@@ -241,6 +241,32 @@ TASK = re.compile(r"^\s*- \[ \] (?:\d+\.\s*)?(.+)$")
 INBOX = "## 📥 Inbox"  # where add_todo puts new items, above "## Done"
 
 
+MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}  # fmt: skip
+DATED = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b", re.I)
+
+
+def plan_ended(todo: Path, today: date) -> str | None:
+    """The first section's heading when it's a dated plan that is over ("Week of Mon Sept 21 – Sun Sept 27"
+    read on the 28th). Its tasks are last week's, and reading them out as today's list misleads."""
+    if not todo.exists():
+        return None
+    heading = next(
+        (line[3:].strip() for line in todo.read_text(errors="replace").splitlines() if line.startswith("## ")), ""
+    )
+    found = DATED.findall(heading)
+    if not found:
+        return None
+    month, day = found[-1]
+    try:
+        last = date(today.year, MONTHS[month[:3].lower()], int(day))
+    except ValueError:
+        return None
+    if (last - today).days > 180:  # "Dec 28" read in January is last year's
+        last = last.replace(year=today.year - 1)
+    return heading if last < today else None
+
+
 def task_sections(todo: Path) -> tuple[list[str], list[str]]:
     """Unchecked items from the first section of the TODO note (the ranked list for right now), and from
     the inbox of items added by voice or chat, which would otherwise never be read back."""

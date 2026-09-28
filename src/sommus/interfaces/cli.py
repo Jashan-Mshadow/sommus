@@ -648,6 +648,7 @@ async def live_chat() -> None:
             state["mode"] = "asleep"
             voice.chime(voice.CHIME_SLEEP)
             return
+        detector.reset()  # its speech score carries state: start the live session's clean
         conversation = live.LiveConversation(live_session, brain, engine_io, show, log, listen_for_pin)
         conversation.handle = handle
         state.update(mode="awake", conversation=conversation, context=context)
@@ -731,6 +732,10 @@ async def live_chat() -> None:
                     except Exception:
                         pass  # the receiver notices the dropped connection and reports it
                     batch = []
+                # His own voice keeps it awake. Gemini sends nothing back while he talks at length, and a long
+                # explanation was taken for 30 s of quiet: it went to sleep mid-sentence (2026-09-28).
+                if detector.probability(chunk) >= detector.threshold:
+                    conversation.last_activity = now
                 quiet_for = now - conversation.last_activity
                 if (
                     not engine_io.speaking

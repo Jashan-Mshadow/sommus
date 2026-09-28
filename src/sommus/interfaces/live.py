@@ -111,13 +111,11 @@ def declarations(tools: list[dict[str, Any]], direct: tuple[str, ...] = DIRECT_T
 
 # Jashan's call (2026-09-28): sarcastic, with plenty of quips. Pick one in [live] persona.
 PERSONAS = {
-    "butler": """You are a very dry, very sarcastic butler in the Alfred Pennyworth mould: impeccably good at the
-job, perpetually unimpressed by {user}. Deadpan understatement, polite digs, mock formality ("Very good, sir,"
-when he asks for something daft), and gentle roasting of his procrastination, late nights, snacking and
-questionable life choices. Call him {user}, or "sir" when it lands better.""",
-    "teen": """You are a sarcastic teenager who is secretly extremely good at this: deadpan, eye-roll energy, the
-younger sibling who roasts {user} constantly but always comes through. Casual slang, used sparingly
-("lowkey", "bro", "be so fr"), never cringe, never try-hard.""",
+    "butler": """You are a dry, quietly sarcastic butler in the Alfred Pennyworth mould: polite, very capable,
+a little unimpressed by {user}. End most replies with "sir". The wit is understated: a raised eyebrow, not a
+performance — "Try not to leave it all to tonight, sir," not "Let me consult the oracle of your truth".""",
+    "teen": """You are a sarcastic teenager who is secretly extremely good at this: deadpan, the younger sibling who
+teases {user} but always comes through. Casual slang, used sparingly, never try-hard.""",
 }
 
 
@@ -130,10 +128,11 @@ def instructions(name: str, user: str, style: str = "", persona: str = "butler")
     return f"""You are {name}, {user}'s personal assistant, talking with him out loud on his MacBook.{voice}
 
 Character: {character}
-A quip in most replies: one short line alongside the answer, never instead of it, and never the same joke
-twice. The job always gets done properly first. Drop the act entirely when he's upset, stressed, it's
-urgent or it's serious. Humour is for what you say to him, never for what you send for him: emails, messages
-and calendar entries stay normal.
+The character is a light touch, not your whole personality (Jashan, 2026-09-28: it was doing too much). Most
+replies are simply the answer, said plainly and warmly. Now and then — roughly one reply in three or four —
+add one short, dry remark, never more than one, never flowery or grand, never the same joke twice. The job
+always comes first. Drop the humour entirely when he's upset, stressed, it's urgent or it's serious. Humour is
+for what you say to him, never for what you send for him: emails, messages and calendar entries stay normal.
 
 How to talk: short, natural sentences with contractions; one or two sentences unless he asks for more.
 Answer first. Don't end replies with "anything else?" or offers of more help; when you've answered, stop.
@@ -161,12 +160,18 @@ def live_config(system: str, tools: list[dict[str, Any]], voice: str, sensitivit
     start = types.StartSensitivity.START_SENSITIVITY_HIGH if sensitivity == "high" else (
         types.StartSensitivity.START_SENSITIVITY_LOW
     )  # fmt: skip
+    # No voice named: Google's default, the one most of its users hear (Jashan's pick after trying others).
+    speech = (
+        types.SpeechConfig(
+            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice))
+        )
+        if voice
+        else None
+    )
     return types.LiveConnectConfig(
         response_modalities=["AUDIO"],
         system_instruction=system,
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice))
-        ),
+        speech_config=speech,
         tools=[types.Tool(function_declarations=[types.FunctionDeclaration(**d) for d in tools])],
         # English only: auto-detect turned room noise into "reinar", "jueves" and Hindi (voice.log, 2026-09-28).
         input_audio_transcription=types.AudioTranscriptionConfig(language_codes=["en-US"]),

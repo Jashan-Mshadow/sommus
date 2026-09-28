@@ -219,7 +219,7 @@ async def test_tools_are_checked_against_his_words_never_sommus_own(tmp_path):
 def test_the_instructions_keep_the_sarcasm_and_cut_the_filler():
     """He likes the quips (2026-09-28); what grated was filler and Claude's jokes relayed second-hand."""
     butler = live.instructions("Sommus", "Jashan")
-    assert "Alfred" in butler and "quip in most replies" in butler
+    assert "Alfred" in butler and '"sir"' in butler and "light touch" in butler and "never more than one" in butler
     assert "Answer those directly" in butler and "anything else?" in butler and "don't reply at all" in butler
     assert "One sec" not in butler
     assert "teenager" in live.instructions("Sommus", "Jashan", persona="teen")
@@ -235,3 +235,22 @@ def test_the_pin_unlock_is_written_into_claudes_conversation(tmp_path):
     brain.messages = []
     brain.note_unlocked()
     assert "unlocked" in str(brain.messages)
+
+
+def test_no_voice_named_means_googles_default():
+    assert live.live_config("x", [live.ASK_SOMMUS], "", "low", None).speech_config is None
+    named = live.live_config("x", [live.ASK_SOMMUS], "Kore", "low", None)
+    assert named.speech_config.voice_config.prebuilt_voice_config.voice_name == "Kore"
+
+
+def test_an_ended_weekly_plan_is_not_read_out_as_todays(tmp_path):
+    from datetime import date
+
+    from sommus.brain import campus
+
+    todo = tmp_path / "TODO.md"
+    todo.write_text("# TODO\n\n## Week of Mon Sept 21 – Sun Sept 27 (plan)\n- [ ] gym\n\n## Done\n")
+    assert campus.plan_ended(todo, date(2026, 9, 28)).startswith("Week of Mon Sept 21")
+    assert campus.plan_ended(todo, date(2026, 9, 27)) is None  # still this week
+    todo.write_text("# TODO\n\n## This week\n- [ ] gym\n")
+    assert campus.plan_ended(todo, date(2026, 9, 28)) is None  # no dates: can't tell, read it
