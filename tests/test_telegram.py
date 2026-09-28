@@ -1,5 +1,7 @@
 """Telegram interface: who is allowed to talk to it, and message splitting."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from sommus.interfaces import telegram
@@ -48,12 +50,13 @@ async def test_strangers_are_ignored_and_reported(tmp_path):
             self.allowed = {42}
             self.offset = None
             self.seen_strangers = set()
+            self.brain = SimpleNamespace(gate=SimpleNamespace(active=False))
             self.updates = [
                 {"update_id": 1, "message": {"chat": {"id": 99}, "from": {"username": "stranger"}, "text": "hi"}},
                 {"update_id": 2, "message": {"chat": {"id": 42}, "from": {"username": "jashan"}, "text": "hi"}},
             ]
 
-        async def poll(self):
+        async def poll(self, log=None):
             found, self.updates = self.updates, []
             if not found:
                 raise StopAsyncIteration
@@ -68,3 +71,58 @@ async def test_strangers_are_ignored_and_reported(tmp_path):
 
     assert replies == [(42, "hi")]  # the stranger never reached the brain
     assert any("99" in line and "TELEGRAM_ALLOWED_IDS" in line for line in logged)
+
+
+async def test_a_bad_answer_from_telegram_never_ends_the_bot(monkeypatch):
+    """Any error but a timeout used to escape run() and stop the bot with nothing printed."""
+    logged, slept = [], []
+
+    async def no_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(telegram.asyncio, "sleep", no_sleep)
+
+    class Flaky(telegram.Bot):
+        def __init__(self):
+            self.offset, self.failures = None, 0
+
+        async def call(self, method, **params):
+            raise telegram.TelegramError("Telegram rejected getUpdates: Conflict: terminated by other getUpdates")
+
+    bot = Flaky()
+    assert await bot.poll(logged.append) == []
+    assert await bot.poll(logged.append) == []
+    assert bot.failures == 2 and slept == [2, 4]
+    assert "another sommus is polling" in logged[0]
+
+
+async def test_a_pin_typed_in_telegram_is_deleted_from_the_chat(tmp_path):
+    from sommus.brain import pin
+
+    pin.set_pin(tmp_path, "5173")
+    calls = []
+
+    class PinBot(telegram.Bot):
+        def __init__(self):
+            self.allowed, self.offset, self.seen_strangers, self.failures = {42}, None, set(), 0
+            self.brain = SimpleNamespace(gate=pin.Gate(tmp_path, {"read_email"}))
+            self.updates = [
+                {"update_id": 1, "message": {"message_id": 7, "chat": {"id": 42}, "from": {}, "text": "pin 5173"}},
+                {"update_id": 2, "message": {"message_id": 8, "chat": {"id": 42}, "from": {}, "text": "hello"}},
+            ]
+
+        async def poll(self, log=None):
+            found, self.updates = self.updates, []
+            if not found:
+                raise StopAsyncIteration
+            return found
+
+        async def handle(self, chat, text, log):
+            pass
+
+        async def call(self, method, **params):
+            calls.append((method, params))
+
+    with pytest.raises(StopAsyncIteration):
+        await PinBot().run(lambda line: None)
+    assert calls == [("deleteMessage", {"chat_id": 42, "message_id": 7})]

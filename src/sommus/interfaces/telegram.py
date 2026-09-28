@@ -11,6 +11,7 @@ TELEGRAM_ALLOWED_IDS so nobody else can drive your laptop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from typing import Any
 
@@ -19,13 +20,14 @@ import httpx2
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolStarted, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
-from sommus.brain.pin import redact
+from sommus.brain.pin import redact, split_pin
 from sommus.brain.store import Store
 from sommus.config import Config
 
 API = "https://api.telegram.org"
 MESSAGE_LIMIT = 4000  # Telegram's cap is 4096; leave room for the footer
 POLL_SECONDS = 25
+MAX_BACKOFF_SECONDS = 60
 
 
 class TelegramError(Exception):
@@ -64,13 +66,17 @@ class Bot:
         self.cfg = cfg
         self.offset: int | None = None
         self.seen_strangers: set[int] = set()
+        self.failures = 0  # polls failed in a row, for the backoff
 
     async def close(self) -> None:
         await self.http.aclose()
 
     async def call(self, method: str, **params: Any) -> Any:
         response = await self.http.post(f"/{method}", json=params)
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:  # a 502 page from a proxy, not Telegram's JSON
+            raise TelegramError(f"Telegram answered {method} with HTTP {response.status_code}, not JSON") from None
         if not payload.get("ok"):
             raise TelegramError(f"Telegram rejected {method}: {payload.get('description')}")
         return payload["result"]
@@ -82,11 +88,37 @@ class Bot:
         for chunk in split(text):
             await self.call("sendMessage", chat_id=chat, text=chunk)
 
-    async def poll(self) -> list[dict]:
+    async def poll(self, log=None) -> list[dict]:
+        """New messages, or [] after a failure. Nothing here may end the bot: any error used to escape
+        run(), and the bot stopped with nothing printed (a 502 page, a dropped connection, a conflict)."""
         try:
-            return await self.call("getUpdates", timeout=POLL_SECONDS, offset=self.offset)
+            updates = await self.call("getUpdates", timeout=POLL_SECONDS, offset=self.offset)
         except (httpx2.TimeoutException, httpx2.TransportError):
             return []  # phone signal, wifi drop, Telegram hiccup — just poll again
+        except Exception as e:
+            self.failures += 1
+            if log and self.failures in (1, 5, 20):
+                hint = (
+                    " (another sommus is polling this bot — only one can)"
+                    if "409" in str(e) or "onflict" in str(e)
+                    else ""
+                )
+                log(f"Telegram poll failed {self.failures}×, retrying: {type(e).__name__}: {e}{hint}")
+            await asyncio.sleep(min(MAX_BACKOFF_SECONDS, 2**self.failures))
+            return []
+        self.failures = 0
+        return updates
+
+    def is_pin(self, text: str) -> bool:
+        given, rest = split_pin(text)
+        return bool(given) and (bool(rest) or self.brain.gate.claims(text))
+
+    async def forget_message(self, chat: int, message_id: int, log) -> None:
+        """A PIN typed here would sit in the chat history on Telegram's servers; remove it once used."""
+        try:
+            await self.call("deleteMessage", chat_id=chat, message_id=message_id)
+        except Exception as e:
+            log(f"Couldn't delete the PIN message ({e}) — delete it in Telegram yourself.")
 
     async def handle(self, chat: int, text: str, log) -> None:
         if text == "/new":
@@ -129,7 +161,7 @@ class Bot:
 
     async def run(self, log) -> None:
         while True:
-            for update in await self.poll():
+            for update in await self.poll(log):
                 self.offset = update["update_id"] + 1
                 message = update.get("message") or update.get("edited_message")
                 if not message or "text" not in message:
@@ -144,11 +176,16 @@ class Bot:
                             f"If that's you, add TELEGRAM_ALLOWED_IDS={chat} to .env and restart."
                         )
                     continue
+                text = message["text"].strip()
+                pin_given = self.brain.gate.active and self.is_pin(text)
                 try:
-                    await self.handle(chat, message["text"].strip(), log)
+                    await self.handle(chat, text, log)
                 except Exception as e:  # one bad turn must not kill the bot
-                    log(f"Error on '{redact(message['text'])[:40]}': {type(e).__name__}: {e}")
-                    await self.say(chat, f"That went wrong: {type(e).__name__}: {e}")
+                    log(f"Error on '{redact(text)[:40]}': {type(e).__name__}: {e}")
+                    with contextlib.suppress(Exception):
+                        await self.say(chat, f"That went wrong: {type(e).__name__}: {e}")
+                if pin_given:
+                    await self.forget_message(chat, message["message_id"], log)
 
 
 async def serve(cfg: Config, log) -> None:

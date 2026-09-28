@@ -577,6 +577,8 @@ async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
             await bot.run(log)
         except asyncio.CancelledError:
             pass
+        except Exception as e:  # a background task's error is otherwise never shown
+            console.print(f"[red]! Telegram stopped: {escape(f'{type(e).__name__}: {e}')} — restart sommus.[/]")
         finally:
             await bot.close()
 
