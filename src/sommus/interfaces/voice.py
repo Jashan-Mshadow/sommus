@@ -745,7 +745,7 @@ def normalize(audio: np.ndarray, target_peak: float = 0.7) -> np.ndarray:
 # Whisper writes what it expects. Told the name up front, it spells it right: measured 2026-09-28 on quiet,
 # echoey speech (-42 dB), small.en woke on 8/8 phrases instead of 6/8 and got 88% of words instead of 71%,
 # at the same speed, with no extra false wakes on noise, silence or room talk. large-v3-turbo was 3.4x slower
-# for no gain. (scratch benchmark in the vault handoff)
+# for no gain. Numbers: docs/decisions/0009.
 NAME_PROMPT = "Hey Sommus."
 
 
