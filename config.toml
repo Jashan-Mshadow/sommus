@@ -161,8 +161,8 @@ longitude = -80.5204
 # Google to improve its products). Sommus keeps the wake word, the tools, the PIN and the rules. `sommus voice`
 # is the fully local mode and still works.
 model = "gemini-3.8-live"
-voice = "Schedar"                    # one of Gemini's ~30 voices — hear them: sommus voices --gemini
+voice = "Algenib"                    # one of Gemini's ~30 voices — hear them: sommus voices --gemini
 persona = "butler"                   # "butler": dry, sarcastic, Alfred-style · "teen": sarcastic teenager · or write your own
-style = "a dry, understated British accent"   # how it speaks; "" for the voice's natural style
+style = ""                                    # how it speaks; "" for the voice's natural style
 awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
 interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech
