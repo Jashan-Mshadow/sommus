@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -99,6 +100,13 @@ def split_cost(text: str) -> tuple[str, float]:
 
 
 LOCKS_SOMMUS = {"lock_screen", "sleep_computer", "sleep_display"}
+LEVEL_TOOLS = {
+    "set_volume": "volume",
+    "get_volume": "volume",
+    "set_brightness": "brightness",
+    "get_brightness": "brightness",
+}
+FOLLOW_SECONDS = 180  # "a bit more" continues the level changed within this long
 IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a browser task
 
 
@@ -133,6 +141,7 @@ class Brain:
         self.lock = asyncio.Lock()
         self.gate = Gate(cfg.data_dir, set(cfg.pin_tools), cfg.unlock_minutes)
         self._asked = ""  # the request being handled, kept in case it hits the PIN lock
+        self._level: tuple[str, float] | None = None  # the level last read or changed, and when
 
     def _memory_mtime(self) -> float:
         path = self.cfg.memory_path
@@ -184,7 +193,15 @@ class Brain:
         # Without a schedule file, class questions keep going to Claude Code's calendar lookup.
         classes = self._campus if campus.schedule_path().exists() else None
         quick = (
-            fastpath.match(text, self._weather, self._place, classes, fastpath.installed_apps)
+            fastpath.match(
+                text,
+                self._weather,
+                self._place,
+                classes,
+                fastpath.installed_apps,
+                follow=self._recent_level(),
+                todo=self._todo,
+            )
             if self.cfg.fast_path
             else None
         )
@@ -331,6 +348,15 @@ class Brain:
         schedule = campus.cached(campus.schedule_path())
         now = datetime.now(schedule.zone)
         return campus.answer(schedule, tokens, now) if kind == "classes" else campus.due_answer(schedule, tokens, now)
+
+    def _recent_level(self) -> str | None:
+        if self._level and time.monotonic() - self._level[1] <= FOLLOW_SECONDS:
+            return self._level[0]
+        return None
+
+    def _todo(self) -> str:
+        """The top of the to-do list from the vault, read by plain code: was ~2¢ and ~9 s through the model."""
+        return fastpath.say_tasks(*campus.task_sections(campus.todo_path()))
 
     def _fast_ready(self, quick: fastpath.Match) -> bool:
         needed = [t for t in (quick.tool, quick.read_tool) if t]
@@ -518,6 +544,8 @@ class Brain:
         else:
             result = await self.hub.call(name, input)
             blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
+            if name in LEVEL_TOOLS and not is_error:
+                self._level = (LEVEL_TOOLS[name], time.monotonic())
             if name in LOCKS_SOMMUS and not is_error:
                 self.gate.lock()  # walking away from the Mac locks the personal actions too
         output, extra = split_cost(output)

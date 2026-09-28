@@ -27,8 +27,14 @@ FILLER = {
     "currently", "now", "right", "laptop", "mac", "macbook", "computer", "for", "be", "how", "much",
     "bit", "little", "slightly", "lot", "some", "abit", "thanks", "thank", "up", "down",
 }  # fmt: skip
-UP = {"up", "increase", "raise", "higher", "louder", "brighter", "boost", "more", "loud"}
-DOWN = {"down", "decrease", "lower", "reduce", "quieter", "softer", "dim", "dimmer", "darker", "less", "quiet"}
+# Direction words that fit either level. The ones below them belong to one level only: "brighter" is
+# never about sound, and "louder" never about the screen. (Shared lists sent "make it brighter" to the volume.)
+UP = {"up", "increase", "raise", "higher", "boost", "more"}
+DOWN = {"down", "decrease", "lower", "reduce", "less"}
+LOUD_UP, LOUD_DOWN = {"louder", "loud"}, {"quieter", "softer", "quiet"}
+BRIGHT_UP, BRIGHT_DOWN = {"brighter", "bright"}, {"dim", "dimmer", "darker", "dark"}
+SOUND_WORDS = {"volume", "sound", "audio"} | LOUD_UP | LOUD_DOWN
+SCREEN_WORDS = {"brightness"} | BRIGHT_UP | BRIGHT_DOWN
 MAX = {"max", "maximum", "full"}
 MIN = {"min", "minimum", "zero"}
 STEP_SMALL, STEP_DEFAULT, STEP_BIG = 5, 10, 25
@@ -39,16 +45,8 @@ VOCAB = {
     "battery": {"battery", "charge", "charged", "charging", "percentage", "left", "life", "remaining", "low"},
     "time": {"time", "clock"},
     "date": {"date", "day", "today", "todays"},
-    "brightness": {"brightness", "bright", "brighter", "dim", "dimmer", "darker", "screen", "display", "too", "dark"}
-    | UP
-    | DOWN
-    | MAX
-    | MIN,
-    "volume": {"volume", "sound", "audio", "louder", "quieter", "softer", "loud", "quiet", "too"}
-    | UP
-    | DOWN
-    | MAX
-    | MIN,
+    "brightness": SCREEN_WORDS | {"screen", "display", "too"} | UP | DOWN | MAX | MIN,
+    "volume": SOUND_WORDS | {"too"} | UP | DOWN | MAX | MIN,
     "list_apps": {"apps", "app", "applications", "programs", "open", "running", "do", "i", "have", "are", "which"},
     "clipboard": {"clipboard", "on", "in", "do", "i", "have", "whats"},
     "now_playing": {"playing", "song", "track", "this", "music", "listening", "called", "name", "which", "am", "i",
@@ -57,7 +55,7 @@ VOCAB = {
     "shortcuts": {"shortcuts", "do", "i", "have", "list", "show", "which", "available", "are", "there", "any"},
     "mute": {"mute", "sound", "audio", "volume"},
     "unmute": {"unmute", "sound", "audio", "volume"},
-    "play_pause": {"pause", "play", "resume", "stop", "music", "song", "spotify", "playback"},
+    "play_pause": {"pause", "play", "resume", "stop", "music", "song", "spotify", "playback", "playing"},
     "next": {"skip", "next", "song", "track", "this"},
     "previous": {"previous", "back", "go", "last", "song", "track"},
     "lock": {"lock", "screen"},
@@ -126,8 +124,8 @@ def _level_change(intent: str, tokens: list[str], raw: str) -> Match | None:
     number = _number(tokens)
     if number is not None and number > 100:
         return None
-    going_up = any(t in UP for t in tokens)
-    going_down = any(t in DOWN for t in tokens)
+    going_up = any(t in UP | LOUD_UP | BRIGHT_UP for t in tokens)
+    going_down = any(t in DOWN | LOUD_DOWN | BRIGHT_DOWN for t in tokens)
     if "too" in tokens:  # "too dim" wants it brighter, "too loud" wants it quieter
         too = set(tokens)
         going_up = bool(too & {"dim", "dark", "darker", "quiet", "quieter", "soft", "softer", "low"})
@@ -140,8 +138,6 @@ def _level_change(intent: str, tokens: list[str], raw: str) -> Match | None:
         return Match(intent, set_tool, {"level": 100})
     if any(t in MIN for t in tokens):
         return Match(intent, set_tool, {"level": 0})
-    if intent == "brightness" and not ({"brightness", "bright", "brighter", "dim", "dimmer", "darker"} & set(tokens)):
-        return None  # "screen" alone isn't about brightness
     relative = re.search(r"\bby\s+\d", raw) or ((going_up or going_down) and not re.search(r"\b(to|at)\s+\d", raw))
     if relative:
         if not (going_up or going_down):
@@ -178,7 +174,10 @@ def match(
     places: Callable[[str], Any] | None = None,
     campus: Callable[[str, list[str]], str] | None = None,
     apps: Callable[[], dict[str, str]] | None = None,
+    follow: str | None = None,
+    todo: Callable[[], str] | None = None,
 ) -> Match | None:
+    """`follow` is "volume" or "brightness" when one was just changed, so "a bit more" continues it."""
     raw = " ".join(text.strip().lower().split())
     tokens = words(raw)
     present = set(tokens)
@@ -214,7 +213,13 @@ def match(
     if _claims("previous", tokens) and present & {"previous", "back", "last"}:
         return Match("previous", "media_control", {"action": "previous"}, phrase=lambda _: "Going back.")
     if _claims("play_pause", tokens) and present & {"pause", "play", "resume", "stop"}:
-        return Match("play_pause", "media_control", {"action": "play_pause"}, phrase=lambda _: "Done.")
+        # Said, "pause" means pause: a toggle started the music when it was already paused.
+        wants = "pause" if present & {"pause", "stop"} else "play"
+        if present & {"pause", "stop"} and present & {"play", "resume"}:
+            wants = "play_pause"
+        return Match("play_pause", "media_control", {"action": wants})
+    if todo and _asks_for_todo(tokens):
+        return Match("todo", local=todo)
     if _claims("now_playing", tokens) and (
         "playing" in present or ("song" in present and present & {"this", "name", "called"})
     ):
@@ -249,14 +254,57 @@ def match(
             return Match("holiday", local=lambda: when_is(name))
     if _claims("date", tokens) and present & {"date", "day"}:
         return Match("date", local=lambda: f"It's {datetime.now():%A, %B %-d}.")
-    for intent in ("volume", "brightness"):
-        if _claims(intent, tokens):
-            found = _level_change(intent, tokens, raw)
-            if found:
-                return found
+    level = _level_intent(tokens, follow)
+    if level and _claims(level, tokens) or level and not [t for t in tokens if t not in FILLER]:
+        found = _level_change(level, tokens, raw)
+        if found:
+            return found
     if weather and _claims("weather", tokens) and present & WEATHER_TRIGGERS:
         return Match("weather", local=lambda: weather(tokens, None))
     return None
+
+
+def _level_intent(tokens: list[str], follow: str | None) -> str | None:
+    """Which level a request is about: its own words decide ("louder", "dim"); words that fit both
+    ("a bit more", "turn it up") follow whichever was changed a moment ago, and go to the model otherwise."""
+    present = set(tokens)
+    sound, screen = bool(present & SOUND_WORDS), bool(present & SCREEN_WORDS)
+    if sound and screen:
+        return None
+    if sound:
+        return "volume"
+    if screen or ("too" in present and present & {"screen", "display"}):
+        return "brightness"
+    if follow in ("volume", "brightness") and present & (UP | DOWN | MAX | MIN):
+        return follow
+    if "turn" in present and present & {"up", "down"}:
+        return "volume"  # "turn it up" with nothing changed lately: on a Mac that means the sound
+    return None
+
+
+TODO_WORDS = {"todo", "todos", "to", "do", "list", "tasks", "task", "whats", "what", "on", "my", "have", "i",
+              "left", "next", "need", "read", "out", "the", "is", "are", "top", "of", "remaining"}  # fmt: skip
+
+
+def _asks_for_todo(tokens: list[str]) -> bool:
+    """'what's on my to-do list', 'what do I have to do', 'read my todos' — not 'add X to my to-do list'."""
+    named = {"todo", "todos", "tasks"} & set(tokens) or "to do" in " ".join(tokens)
+    return bool(named) and all(t in TODO_WORDS or t in FILLER for t in tokens)
+
+
+def say_tasks(tasks: list[str], added: list[str] | None = None, shown: int = 5) -> str:
+    def plain(items: list[str]) -> str:
+        return "; ".join(re.sub(r"[*_~`]", "", t).strip() for t in items)
+
+    added = added or []
+    if not tasks and not added:
+        return "Your to-do list is clear."
+    more = len(tasks) - shown
+    said = f"Top of your list: {plain(tasks[:shown])}." if tasks else ""
+    said += f" And {more} more after that." if more > 0 else ""
+    if added:
+        said += f" You also added: {plain(added[:shown])}."
+    return said.strip()
 
 
 OPEN_VERBS = {"open", "launch", "start"}

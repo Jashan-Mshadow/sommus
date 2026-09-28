@@ -43,6 +43,37 @@ def now_playing() -> str:
     return "No music app is running."
 
 
+def media(action: str) -> str:
+    """Pause or play for real, rather than toggling: 'pause' said while paused used to start the music.
+
+    Spotify and Music report their state, so they're told exactly what to do. Anything else (a video in
+    the browser) only answers to the media key, which is pressed when no music app is open.
+    """
+    from sommus.nodes.laptop.macos import media_key
+
+    if action not in ("play", "pause"):
+        media_key(action)
+        return f"Pressed {action.replace('_', '/')}."
+    players = [p for p in PLAYERS if _is_running(p)]
+    for app in players:
+        state = _osascript(f'tell application "{app}" to player state as text')
+        if action == "pause" and state == "playing":
+            _osascript(f'tell application "{app}" to pause')
+            return f"Paused {app}."
+        if action == "play" and state == "playing":
+            return f"{app} is already playing."
+    if action == "pause":
+        if players:
+            return "Nothing's playing."
+        media_key("play_pause")  # maybe a video in the browser: the key is the only way to reach it
+        return "Pressed pause."
+    if players:
+        _osascript(f'tell application "{players[0]}" to play')
+        return f"Playing {players[0]}."
+    media_key("play_pause")
+    return "Pressed play."
+
+
 # ---------------------------------------------------------------- Contacts
 # Names come from the Contacts app rather than a list in a config file, so new
 # people work the moment they're saved on the phone.

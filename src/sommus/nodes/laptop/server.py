@@ -137,14 +137,14 @@ def open_url(url: str) -> str:
 
 
 @tool(REVERSIBLE)
-def media_control(action: Literal["play_pause", "next", "previous"]) -> str:
-    """Press a media key: toggles or skips whatever is currently playing (Spotify, Music, YouTube in a browser...).
+def media_control(action: Literal["play", "pause", "play_pause", "next", "previous"]) -> str:
+    """Play, pause or skip whatever is playing (Spotify, Music, YouTube in a browser...).
 
     Args:
-        action: "play_pause" toggles playback; "next" and "previous" skip tracks.
+        action: "pause" and "play" do exactly that (use these when asked to pause, stop, play or resume);
+            "play_pause" toggles; "next" and "previous" skip tracks.
     """
-    macos.media_key(action)
-    return f"Pressed {action.replace('_', '/')}."
+    return apps.media(action)
 
 
 @tool(REVERSIBLE)

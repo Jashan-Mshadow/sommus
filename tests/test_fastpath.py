@@ -39,7 +39,7 @@ PLACES = lambda name: fastpath.Place(name.title(), 0.0, 0.0, "Asia/Kolkata")  # 
         ("what's the volume", "volume", "get_volume", {}, 0),
         ("mute", "mute", "set_mute", {"muted": True}, 0),
         ("unmute the sound", "unmute", "set_mute", {"muted": False}, 0),
-        ("pause the music", "play_pause", "media_control", {"action": "play_pause"}, 0),
+        ("pause the music", "play_pause", "media_control", {"action": "pause"}, 0),
         ("skip this song", "next", "media_control", {"action": "next"}, 0),
         ("lock my laptop", "lock", "lock_screen", {}, 0),
         ("turn off the screen", "screen_off", "sleep_display", {}, 0),
@@ -324,3 +324,92 @@ def test_apps_and_reads_leave_the_rest(text):
     assert found is None or found.intent not in {
         "open_app", "quit_app", "list_apps", "clipboard", "wifi", "shortcuts", "now_playing", "brightness",
     }  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "text, follow, intent, delta",
+    [
+        ("make it brighter", None, "brightness", 10),  # was the volume: the up/down words were shared
+        ("dim it", None, "brightness", -10),
+        ("brighter please", None, "brightness", 10),
+        ("make it louder", None, "volume", 10),
+        ("a bit more", "brightness", "brightness", 10),  # follows what was just changed
+        ("a bit more", "volume", "volume", 10),
+        ("lower", "brightness", "brightness", -10),
+        ("turn it up", None, "volume", 10),
+        ("turn it down", "brightness", "brightness", -10),
+    ],
+)
+def test_levels_go_to_the_level_that_was_meant(text, follow, intent, delta):
+    found = fastpath.match(text, follow=follow)
+    assert found and (found.intent, found.delta) == (intent, delta)
+
+
+@pytest.mark.parametrize("text", ["a bit more", "lower", "higher", "more"])
+def test_bare_directions_with_nothing_to_follow_go_to_the_model(text):
+    assert fastpath.match(text) is None
+
+
+@pytest.mark.parametrize(
+    "text, action",
+    [("pause", "pause"), ("stop", "pause"), ("stop the music", "pause"), ("play", "play"), ("resume", "play")],
+)
+def test_pause_and_play_are_not_toggles(text, action):
+    """A toggle turned 'pause' into play when the music was already paused."""
+    found = fastpath.match(text)
+    assert found and found.args == {"action": action}
+
+
+@pytest.mark.parametrize(
+    "text", ["what's on my to-do list", "what do I have to do", "read my todos", "what's next on my to do list"]
+)
+def test_the_todo_list_is_read_without_the_model(text):
+    found = fastpath.match(text, todo=lambda: "Top of your list: gym.")
+    assert found and found.intent == "todo" and found.local() == "Top of your list: gym."
+
+
+@pytest.mark.parametrize("text", ["add milk to my to-do list", "what's on my list", "what do I have to do tomorrow"])
+def test_todo_changes_and_other_lists_go_to_the_model(text):
+    assert fastpath.match(text, todo=lambda: "unused") is None
+
+
+def test_tasks_are_read_aloud_briefly():
+    assert fastpath.say_tasks([]) == "Your to-do list is clear."
+    spoken = fastpath.say_tasks([f"**task {i}**" for i in range(8)])
+    assert spoken.startswith("Top of your list: task 0; task 1") and "3 more" in spoken and "*" not in spoken
+
+
+async def test_a_bit_more_follows_the_level_the_brain_just_changed(tmp_path):
+    from sommus.brain.loop import Brain
+
+    node = MCPServer("levels", log_level="WARNING")
+    levels = {"brightness": 50, "volume": 50}
+
+    @node.tool(structured_output=False)
+    def set_brightness(level: int) -> str:
+        """Set brightness."""
+        levels["brightness"] = level
+        return f"Brightness {level}%."
+
+    @node.tool(structured_output=False)
+    def get_brightness() -> str:
+        """Read brightness."""
+        return f"Brightness {levels['brightness']}%."
+
+    @node.tool(structured_output=False)
+    def set_volume(level: int) -> str:
+        """Set volume."""
+        levels["volume"] = level
+        return f"Volume {level}%."
+
+    @node.tool(structured_output=False)
+    def get_volume() -> str:
+        """Read volume."""
+        return f"Volume {levels['volume']}%."
+
+    async with NodeHub((), Policy()) as hub:
+        await hub.add("levels", Client(node))
+        brain = Brain(config(tmp_path, ask=False), hub, Store(tmp_path / "t.db"), client=FakeModel())
+        [e async for e in brain.handle("brightness 40", lambda *_: True)]
+        [e async for e in brain.handle("a bit more", lambda *_: True)]
+    assert levels == {"brightness": 50, "volume": 50}
