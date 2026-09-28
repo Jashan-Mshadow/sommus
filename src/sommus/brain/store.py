@@ -124,7 +124,7 @@ class Store:
             """
             SELECT c.tool, lower(t.user_text), COUNT(*) AS n, SUM(t.cost_usd)
             FROM turns t JOIN tool_calls c ON c.turn_id = t.id
-            WHERE t.model != 'fastpath' AND t.status = 'ok'
+            WHERE t.model NOT IN ('fastpath', 'gemini-live') AND t.status = 'ok'
               AND (SELECT COUNT(*) FROM tool_calls x WHERE x.turn_id = t.id) = 1
             GROUP BY c.tool, lower(t.user_text)
             ORDER BY n DESC, SUM(t.cost_usd) DESC

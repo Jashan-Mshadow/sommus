@@ -65,6 +65,9 @@ class DuplexAudio:
         self.player = None
         self.out_format = None
         self._resampler: MicResampler | None = None
+        self._queued = 0  # buffers scheduled and not yet played (streaming playback)
+        self._generation = 0  # bumped by flush(): completions from dropped buffers don't count
+        self._count_lock = threading.Lock()
 
     def start(self) -> None:
         """Order matters. Attaching the player to an engine whose input is *already* in voice-processing
@@ -134,6 +137,43 @@ class DuplexAudio:
                 self.player.stop()  # drops what's queued
                 self.player.play()  # ready for the next reply
                 return
+
+    def _buffer(self, audio: np.ndarray):
+        import AVFoundation as AV
+
+        buffer = AV.AVAudioPCMBuffer.alloc().initWithPCMFormat_frameCapacity_(self.out_format, len(audio))
+        buffer.setFrameLength_(len(audio))
+        np.frombuffer(buffer.floatChannelData()[0].as_buffer(len(audio)), dtype=np.float32)[:] = audio
+        return buffer
+
+    def enqueue(self, audio: np.ndarray) -> None:
+        """Queue 24 kHz mono audio behind whatever is playing and return at once — for speech that arrives in
+        pieces over a network (Gemini Live), where waiting for each piece to play would leave gaps."""
+        if not len(audio) or not self.running():
+            return
+        with self._count_lock:
+            self._queued += 1
+            generation = self._generation
+
+        def played() -> None:  # an audio thread
+            with self._count_lock:
+                if generation == self._generation:
+                    self._queued = max(0, self._queued - 1)
+
+        self.player.scheduleBuffer_completionHandler_(self._buffer(audio), played)
+
+    @property
+    def speaking(self) -> bool:
+        return self._queued > 0
+
+    def flush(self) -> None:
+        """Drop everything queued, now: he started talking over it."""
+        with self._count_lock:
+            self._generation += 1
+            self._queued = 0
+        if self.player is not None:
+            self.player.stop()
+            self.player.play()
 
     def stop(self) -> None:
         if self.engine is not None:

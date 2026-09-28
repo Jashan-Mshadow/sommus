@@ -155,3 +155,13 @@ todo = "~/Documents/Jashans_Brain/TODO.md"
 place = "Waterloo"
 latitude = 43.4643
 longitude = -80.5204
+
+[live]
+# `sommus live`: Gemini Live hears and speaks (free AI Studio key in ~/.gemini/.env; the free tier may be used by
+# Google to improve its products). Sommus keeps the wake word, the tools, the PIN and the rules. `sommus voice`
+# is the fully local mode and still works.
+model = "gemini-3.8-live"
+voice = "Leda"                       # one of Gemini's ~30 voices — hear them: sommus voices --gemini
+style = "a light British accent, warm and quick"   # how it speaks; "" for the voice's natural style
+awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
+interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech

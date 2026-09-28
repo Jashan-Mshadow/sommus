@@ -568,6 +568,285 @@ async def voice_chat() -> None:
         await hub.__aexit__(None, None, None)
 
 
+async def live_chat() -> None:
+    """Talk to Sommus through Gemini Live: say "Hey Sommus", then talk like you would to a person — interrupt
+    it, change your mind mid-sentence. Sommus keeps the wake word, the tools, the PIN and the rules."""
+    from google import genai
+
+    from sommus.interfaces import duplex, live, voice
+
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print("[red]No API key.[/] ask_sommus needs Claude — see [bold]sommus check[/].")
+        return
+    try:
+        client = genai.Client(api_key=live.gemini_key())
+    except RuntimeError as e:
+        console.print(f"[red]{escape(str(e))}[/]")
+        return
+    cfg = config.load()
+    settings, voice_settings = config.section("live"), config.section("voice")
+    store = Store(cfg.data_dir / "sommus.db")
+    session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
+    transcriber = voice.Transcriber(voice_settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
+    detector = voice.SpeechDetector(silence_seconds=0.6, threshold=float(voice_settings.get("vad_threshold", 0.5)))
+    wake = voice.wake_pattern(voice_settings.get("wake_phrases", ["sommus", "hey sommus"]))
+    heard_log = voice.VoiceLog(cfg.data_dir / "voice.log")
+    model = settings.get("model", live.MODEL)
+    voice_name = settings.get("voice", "Leda")
+    awake_seconds = float(settings.get("awake_seconds", 30))
+    sensitivity = settings.get("interrupt_sensitivity", "low")
+
+    bot_task = None
+    engine_io = duplex.DuplexAudio(gain=float(voice_settings.get("barge_in_mic_gain", 2.0)))
+    with console.status("[dim]Starting nodes, the microphone and the wake word…[/]"):
+        hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
+        await asyncio.to_thread(transcriber.warm_up)
+        await asyncio.to_thread(detector.probability, np.zeros(voice.CHUNK, dtype=np.float32))
+        try:
+            await asyncio.to_thread(engine_io.start)
+        except Exception as e:
+            console.print(f"[red]Live mode needs macOS echo cancellation, which didn't start ({escape(str(e))}).[/]")
+            await hub.__aexit__(None, None, None)
+            return
+    brain = Brain(cfg, hub, store, voice=True)
+    tools = live.declarations(hub.api_tools())
+    system = live.instructions(cfg.name, cfg.user, settings.get("style", ""))
+    loop = asyncio.get_running_loop()
+    mic: asyncio.Queue[np.ndarray] = asyncio.Queue()
+    reader = live.MicReader(engine_io, lambda chunk: loop.call_soon_threadsafe(mic.put_nowait, chunk))
+    state: dict[str, Any] = {
+        "mode": "asleep",
+        "conversation": None,
+        "context": None,
+        "receiver": None,
+        "pin_until": 0.0,
+    }
+
+    def show(line: str) -> None:
+        console.print(line)
+
+    def log(**fields: Any) -> None:
+        heard_log.write(mode="live", **fields)
+
+    def listen_for_pin() -> None:
+        state["mode"], state["pin_until"] = "pin", time.monotonic() + live.PIN_SECONDS
+        detector.reset()
+        console.print("[dim]  (listening for your PIN here on the Mac — it isn't sent to Google)[/]")
+
+    async def open_conversation(first: str | None = None, handle: str | None = None) -> None:
+        voice.chime(voice.CHIME_WAKE)
+        try:
+            context = client.aio.live.connect(
+                model=model, config=live.live_config(system, tools, voice_name, sensitivity, handle)
+            )
+            live_session = await context.__aenter__()
+        except Exception as e:  # offline, quota used up, Google down
+            console.print(
+                f"[red]! Gemini Live didn't connect ({escape(f'{type(e).__name__}: {e}'[:200])}). "
+                "`sommus voice` works without it.[/]"
+            )
+            state["mode"] = "asleep"
+            voice.chime(voice.CHIME_SLEEP)
+            return
+        conversation = live.LiveConversation(live_session, brain, engine_io, show, log, listen_for_pin)
+        conversation.handle = handle
+        state.update(mode="awake", conversation=conversation, context=context)
+        state["receiver"] = asyncio.create_task(receive(conversation, context))
+        if first:
+            await conversation.send_text(first)
+        console.print("[dim]  live — talk normally; it stops when you talk over it[/]")
+
+    async def receive(conversation, context) -> None:
+        try:
+            await conversation.receive()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            if state["conversation"] is conversation:
+                console.print(f"[yellow]! Live connection dropped ({escape(type(e).__name__)}).[/]")
+        if state["conversation"] is not conversation:
+            return
+        handle = conversation.handle if conversation.going_away else None
+        await close_conversation(quiet=bool(handle))
+        if handle:  # Google closes connections every ~10 minutes: carry on where it left off
+            await open_conversation(handle=handle)
+
+    async def close_conversation(quiet: bool = False) -> None:
+        conversation, context = state["conversation"], state["context"]
+        state.update(mode="asleep", conversation=None, context=None)
+        receiver = state.pop("receiver", None)
+        if receiver is not None and receiver is not asyncio.current_task():
+            receiver.cancel()
+        if conversation is not None:
+            await conversation.close()
+        if context is not None:
+            with contextlib.suppress(Exception):
+                await context.__aexit__(None, None, None)
+        detector.reset()
+        if not quiet:
+            voice.chime(voice.CHIME_SLEEP)
+            console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
+
+    async def heard_asleep(audio: np.ndarray) -> None:
+        text = await asyncio.to_thread(transcriber.transcribe, audio)
+        if not text:
+            return
+        request = voice.heard_wake(text, wake)
+        log(text=text, outcome="ignored: asleep, no wake phrase" if request is None else "wake")
+        if request is not None:
+            await open_conversation(first=request or None)
+
+    async def heard_pin(audio: np.ndarray) -> None:
+        conversation = state["conversation"]
+        text = await asyncio.to_thread(transcriber.transcribe, audio, "digits")
+        answer = brain.gate.attempt(text) if text else None
+        if answer is None or answer == "":
+            return  # not digits, or the first part of a PIN said in pieces
+        pending, brain.gate.pending = brain.gate.pending, None
+        state["mode"] = "awake"
+        log(text="[PIN]", outcome="pin: " + ("unlocked" if brain.gate.unlocked else "refused"))
+        if conversation is None:
+            return
+        if brain.gate.unlocked:
+            await conversation.send_text(
+                f"[Sommus: his PIN was accepted on the Mac; personal actions are unlocked for "
+                f"{cfg.unlock_minutes:g} minutes. Now do what he asked: {pending or 'his last request'}]"
+            )
+        else:
+            await conversation.send_text(f"[Sommus: {answer} Tell him in a few words.]")
+
+    async def pump() -> None:
+        """Every mic chunk goes one place: the wake-word check (asleep), Google (live), or the PIN check."""
+        batch: list[np.ndarray] = []
+        while True:
+            chunk = await mic.get()
+            mode, conversation = state["mode"], state["conversation"]
+            now = time.monotonic()
+            if mode == "awake" and conversation is not None:
+                batch.append(chunk)
+                if len(batch) >= live.SEND_CHUNKS:
+                    try:
+                        await conversation.send_audio(batch)
+                    except Exception:
+                        pass  # the receiver notices the dropped connection and reports it
+                    batch = []
+                quiet_for = now - conversation.last_activity
+                if (
+                    not engine_io.speaking
+                    and not conversation.tasks
+                    and (conversation.dismissed or quiet_for > awake_seconds)
+                ):
+                    await close_conversation()
+                continue
+            batch = []
+            utterance = detector.feed(chunk)
+            if mode == "pin":
+                if now > state["pin_until"]:
+                    state["mode"], brain.gate.pending = "awake", None
+                    if conversation is not None:
+                        await conversation.send_text("[Sommus: no PIN was given, so it's still locked. Tell him.]")
+                elif utterance is not None:
+                    await heard_pin(utterance)
+            elif utterance is not None:
+                await heard_asleep(utterance)
+
+    pumping = None
+    try:
+        bot_task, telegram_note = await _start_telegram(cfg, brain, store)
+        console.print(
+            f"[bold magenta]{cfg.name}[/] [dim]· live · Gemini {escape(model)} · voice {escape(voice_name)}"
+            f"{telegram_note}[/]\n[dim]Say “Hey Sommus”, then talk normally — interrupt it any time. Nothing goes "
+            "to Google before the wake phrase, and PINs never do. Return wakes it, typing works, /quit exits.[/]"
+        )
+        if (raised := raise_mic_input()) is not None:
+            console.print(f"[dim]Mic input was at {raised}%, turned up to {MIN_MIC_INPUT}%.[/]")
+        reader.start()
+        pumping = asyncio.create_task(pump())
+        while True:
+            typed = await _prompt_line(session)
+            if typed == CTRL_C:
+                engine_io.flush()
+                continue
+            typed = typed.strip()
+            if typed.startswith("/"):
+                if not handle_command(typed, brain, hub, store):
+                    break
+                continue
+            given, _ = pin.split_pin(typed)
+            if typed and given and brain.gate.claims(typed):
+                answer = brain.gate.attempt(typed) or ""
+                console.print(f"[dim]  {escape(answer)}[/]")
+                if brain.gate.unlocked and state["conversation"] is not None:
+                    pending, brain.gate.pending = brain.gate.pending, None
+                    state["mode"] = "awake"
+                    await state["conversation"].send_text(
+                        f"[Sommus: PIN accepted; personal actions unlocked. Now do: {pending or 'his last request'}]"
+                    )
+                continue
+            if state["conversation"] is None:
+                await open_conversation(first=typed or None)
+            elif typed:
+                await state["conversation"].send_text(typed)
+    except EOFError:
+        pass
+    finally:
+        if pumping is not None:
+            pumping.cancel()
+        reader.stop()
+        if state["conversation"] is not None:
+            await close_conversation(quiet=True)
+        engine_io.stop()
+        if bot_task:
+            bot_task.cancel()
+        await hub.__aexit__(None, None, None)
+
+
+async def live_voices(names: list[str]) -> None:
+    """Hear Gemini Live's voices, one after another, saying the same line in the configured style."""
+    import sounddevice as sd
+    from google import genai
+    from google.genai import types
+
+    from sommus.interfaces import live
+
+    cfg = config.load()
+    settings = config.section("live")
+    client = genai.Client(api_key=live.gemini_key())
+    line = VOICE_SAMPLE.format(user=cfg.user, name=cfg.name)
+    style = settings.get("style", "")
+    console.print(
+        f"[dim]Current: {escape(settings.get('voice', 'Leda'))} · style: {escape(style or 'none')} · Ctrl+C stops[/]"
+    )
+    for name in names or live.VOICES:
+        config_ = types.LiveConnectConfig(
+            response_modalities=["AUDIO"],
+            system_instruction="Read aloud exactly what you're given, nothing else."
+            + (f" Speak with {style}." if style else ""),
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=name))
+            ),
+        )
+        audio: list[np.ndarray] = []
+        try:
+            async with client.aio.live.connect(model=settings.get("model", live.MODEL), config=config_) as s:
+                await s.send_realtime_input(text=line)
+                async for message in s.receive():
+                    content = message.server_content
+                    if content and content.model_turn:
+                        for part in content.model_turn.parts or []:
+                            if part.inline_data and part.inline_data.data:
+                                audio.append(live.from_pcm16(part.inline_data.data))
+                    if content and content.turn_complete:
+                        break
+        except Exception as e:
+            console.print(f"[red]  {escape(name)}: {escape(str(e)[:120])}[/]")
+            continue
+        console.print(f"[bold]{escape(name)}[/]")
+        if audio:
+            await asyncio.to_thread(sd.play, np.concatenate(audio), live.OUT_RATE, blocking=True)
+    console.print('[dim]Pick one: config.toml → \\[live] voice = "…"; change the accent with style = "…"[/]')
+
+
 CTRL_C = "\x03"
 FOLLOW_ON_SECONDS = 6.0  # said this soon after a request, without the name, it's the rest of that request
 HEADS_UP_WORDS = 5  # "On it." / "Checking that now." — more than this and Sommus is already answering
@@ -990,6 +1269,7 @@ def main() -> None:
             "pin",
             "today",
             "stats",
+            "live",
         ],
         default="chat",
     )
@@ -997,9 +1277,17 @@ def main() -> None:
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments · with `voices`: more voices")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
+    parser.add_argument("--gemini", action="store_true", help="with `voices`: hear Gemini Live's voices instead")
     args = parser.parse_args()
     load_dotenv(config.ROOT / ".env")
-    commands = {"chat": chat, "check": check, "telegram": telegram, "permissions": permissions, "voice": voice_chat}
+    commands = {
+        "chat": chat,
+        "check": check,
+        "telegram": telegram,
+        "permissions": permissions,
+        "voice": voice_chat,
+        "live": live_chat,
+    }
     try:
         if args.command == "tool":
             asyncio.run(run_tool(args.tool_name, args.tool_args))
@@ -1019,7 +1307,8 @@ def main() -> None:
             )
             console.print(f"Wrote {out.relative_to(config.ROOT)}")
         elif args.command == "voices":
-            asyncio.run(voices([n for n in [args.tool_name, *args.tool_args] if n]))
+            names = [n for n in [args.tool_name, *args.tool_args] if n]
+            asyncio.run(live_voices(names) if args.gemini else voices(names))
         elif args.command in ("start", "stop", "status"):
             asyncio.run(service(args.command))
         else:
