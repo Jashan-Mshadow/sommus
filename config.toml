@@ -162,6 +162,7 @@ longitude = -80.5204
 # is the fully local mode and still works.
 model = "gemini-3.8-live"
 voice = "Leda"                       # one of Gemini's ~30 voices — hear them: sommus voices --gemini
-style = "a light British accent, warm and quick"   # how it speaks; "" for the voice's natural style
+persona = "butler"                   # "butler": dry, sarcastic, Alfred-style · "teen": sarcastic teenager · or write your own
+style = "a dry, understated British accent"   # how it speaks; "" for the voice's natural style
 awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
 interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech

@@ -610,7 +610,7 @@ async def live_chat() -> None:
             return
     brain = Brain(cfg, hub, store, relay=True)  # Gemini does the talking: Claude hands back plain results
     tools = live.declarations(hub.api_tools())
-    system = live.instructions(cfg.name, cfg.user, settings.get("style", ""))
+    system = live.instructions(cfg.name, cfg.user, settings.get("style", ""), settings.get("persona", "butler"))
     loop = asyncio.get_running_loop()
     mic: asyncio.Queue[np.ndarray] = asyncio.Queue()
     reader = live.MicReader(engine_io, lambda chunk: loop.call_soon_threadsafe(mic.put_nowait, chunk))

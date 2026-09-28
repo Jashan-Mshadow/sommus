@@ -216,10 +216,14 @@ async def test_tools_are_checked_against_his_words_never_sommus_own(tmp_path):
     await hub.__aexit__(None, None, None)
 
 
-def test_the_instructions_keep_it_natural():
-    said = live.instructions("Sommus", "Jashan")
-    assert "Answer those directly" in said and "anything else?" in said and "don't reply at all" in said
-    assert "One sec" not in said
+def test_the_instructions_keep_the_sarcasm_and_cut_the_filler():
+    """He likes the quips (2026-09-28); what grated was filler and Claude's jokes relayed second-hand."""
+    butler = live.instructions("Sommus", "Jashan")
+    assert "Alfred" in butler and "quip in most replies" in butler
+    assert "Answer those directly" in butler and "anything else?" in butler and "don't reply at all" in butler
+    assert "One sec" not in butler
+    assert "teenager" in live.instructions("Sommus", "Jashan", persona="teen")
+    assert "a pirate" in live.instructions("Sommus", "Jashan", persona="You are a pirate.")
 
 
 def test_every_voice_has_a_description():
