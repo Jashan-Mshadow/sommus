@@ -35,7 +35,8 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/store.py` | SQLite log of turns, tool calls, cost |
 | `src/sommus/brain/pin.py` · `permissions.py` | PIN gate for personal tools · permission tiers |
 | `src/sommus/nodes/<node>/server.py` | MCP servers: laptop, vault, gmail, web, claude |
-| `src/sommus/interfaces/` | cli, telegram, voice, duplex (barge-in) |
+| `src/sommus/interfaces/` | cli (incl. the voice loop), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), duplex (barge-in) |
+| `data/voice.log` | one JSON line per utterance: loudness, scores, transcript, outcome — read this first when voice misbehaves |
 | `src/sommus/evals/runner.py` + `evals/commands.toml` | scored eval |
 | `config.toml` | all settings · `profile.md` (gitignored) facts about Jashan · `.env` secrets |
 | `tests/fakes.py` | FakeModel, fake node, test config |

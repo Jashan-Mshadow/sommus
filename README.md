@@ -4,8 +4,8 @@
 
 A personal assistant that controls my devices. Named after Somnus, the Roman god of sleep.
 
-**Phase 1:** type a command in the terminal, and Sommus controls my MacBook.
-Next up: Bluetooth speakers, then voice, then phone and custom hardware.
+Type, text it on Telegram, or just talk to it: Sommus controls my MacBook, answers questions, and reaches my
+mail, notes and calendar. Next up: an always-on brain in the cloud, then speakers and custom hardware.
 
 What a session looks like (illustrative):
 
@@ -42,7 +42,7 @@ fast path.
 
 | Area | Tools |
 |---|---|
-| Sound | volume, mute, play/pause/skip, what's playing |
+| Sound | volume, mute, play, pause, skip, what's playing |
 | Display | brightness, screen off, lock |
 | Apps | list open apps, open, quit, focus, any keyboard shortcut |
 | Web & files | open a URL, Spotlight search, read a file or folder, append a line, open a file |
@@ -56,7 +56,7 @@ fast path.
 | Documents | read a PDF as text — scanned pages go through macOS Vision OCR |
 | Contacts | look up anyone's number or email from the Contacts app |
 | Downloads | fetch a file straight to disk, or save a logged-in page with Cmd+S |
-| Messaging | send an iMessage, write or send a Gmail |
+| Messaging | send an iMessage, send or draft a Gmail |
 | Escape hatch | run any of the user's macOS **Shortcuts** — Focus modes, Home devices, anything macOS won't script |
 | Knowledge | **web search** for weather, news, prices, anything after the model's cutoff |
 
@@ -67,12 +67,21 @@ It answers questions as readily as it acts, and when there's no exact tool it tr
 
 - **Fast path** (`brain/fastpath.py`): an intent claims a request only when every word is in its vocabulary —
   "brightness down 12", "screen's too dim", "quit Messages", "what's playing", weather and time anywhere,
-  holidays. A miss just goes to the model; a wrong match would do the wrong thing, so it leans towards missing.
+  holidays, the to-do list. "A bit more" continues whichever level was just changed. A miss just goes to the
+  model; a wrong match would do the wrong thing, so it leans towards missing.
 - **Campus engine** (`brain/campus.py`): next class, room, what's left today and what's due this week, from a
   schedule file. `sommus today` prints the day and writes `data/today.json` for other tools.
 - **Long-term memory** (`brain/memory.py`): "remember my gym days are Monday, Wednesday and Friday" is saved to
   a private note and loaded into the cached prompt. Anything that looks like a password or code is refused.
 - **Budget guard** (`brain/budget.py`): a heads-up at 80% of the monthly cap, a cheaper model past 90%.
+
+### Safety, in code
+
+- **PIN gate** (`brain/pin.py`): email, messages, files, the shell and Claude Code wait for a PIN said or typed;
+  it never reaches the model or the log, and a PIN typed in Telegram is deleted from the chat.
+- **Outside content can't act on its own** (`brain/loop.py`): once a request has read mail, a web page, a PDF or
+  the screen, sending, replying, the shell and Claude Code run only if the request itself asked for that —
+  so text planted for an AI can't make it send anything ([decision 7](docs/decisions/0007-outside-content-cannot-trigger-outward-actions.md)).
 
 ## Nodes
 
@@ -144,9 +153,15 @@ Everything audio stays on the Mac, and none of it costs anything:
 | Step | How |
 |---|---|
 | Waking | Silero VAD cuts the mic into utterances (~1% of a CPU core); Whisper reads each one, and only one that starts or ends with "Sommus", "Hey Sommus", "What's up Sommus" or "Yo Sommus" wakes it. Nothing is kept or sent before that |
-| Conversation | Awake, everything said is a request — no wake phrase — until 10 s pass after a reply with nobody talking, or "that's all". The mic is deaf while Sommus speaks, so it never answers itself |
-| Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.35 s per command, offline |
-| Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives; Ctrl+C cuts it off |
+| End of turn | **Smart Turn v3** (Pipecat, open source, ~55 ms on the CPU) judges from the tone of voice whether a sentence is finished: yes at a 0.4 s pause, and a pause to think gets up to 1.6 s |
+| Conversation | Awake, everything said is a request — no wake phrase — until 30 s pass after a reply (90 s after a question), or "that's all". A small model checks that speech without the name was meant for Sommus, not someone else in the room |
+| Interrupting | macOS echo cancellation keeps the mic open while Sommus talks; its name cuts it off ("Sommus, stop", or "Sommus, what about tomorrow?"), anything else — its own echo, the room — is ignored |
+| Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.4 s per command, offline, told the name up front so it spells it right from across a room |
+| Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives |
+
+Every utterance is logged to `data/voice.log` (loudness, detector score, transcript, and what was done with it),
+so when it misses something the log says which layer dropped it. Measurements behind these choices:
+[decision 9](docs/decisions/0009-hearing-from-across-the-room.md).
 
 Only the transcribed text reaches the model, so voice works unchanged wherever the brain runs.
 Replies play through the Mac's current output — AirPods included, even if they connect after Sommus starts.
