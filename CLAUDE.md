@@ -17,6 +17,7 @@ sommus tool [name k=v]                # run a tool directly, no model, $0
 sommus eval --only "<text>"           # one eval case (~1¢). The full eval is ~40–50¢: don't run it casually
 sommus today                          # today's classes + deadlines, writes data/today.json ($0)
 sommus stats                          # regenerate docs/MEASUREMENTS.md from the log ($0)
+sommus live                           # voice on Gemini Live (free AI Studio key in ~/.gemini/.env)
 ```
 
 Decisions and their reasons: `docs/decisions/`. Add one when a choice is measured or hard to reverse.
@@ -35,7 +36,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/store.py` | SQLite log of turns, tool calls, cost |
 | `src/sommus/brain/pin.py` · `permissions.py` | PIN gate for personal tools · permission tiers |
 | `src/sommus/nodes/<node>/server.py` | MCP servers: laptop, vault, gmail, web, claude |
-| `src/sommus/interfaces/` | cli (incl. the voice loop), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), duplex (barge-in) |
+| `src/sommus/interfaces/` | cli (incl. the voice and live loops), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), duplex (echo-cancelled audio), live (Gemini Live session, tools, PIN handoff) |
 | `data/voice.log` | one JSON line per utterance: loudness, scores, transcript, outcome — read this first when voice misbehaves |
 | `src/sommus/evals/runner.py` + `evals/commands.toml` | scored eval |
 | `config.toml` | all settings · `profile.md` (gitignored) facts about Jashan · `.env` secrets |

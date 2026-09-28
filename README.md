@@ -159,6 +159,19 @@ Everything audio stays on the Mac, and none of it costs anything:
 | Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.4 s per command, offline, told the name up front so it spells it right from across a room |
 | Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives |
 
+### Live mode (Gemini Live)
+
+```bash
+sommus live              # say "Hey Sommus", then talk like on a call: interrupt it, change your mind mid-sentence
+sommus voices --gemini   # hear Gemini's voices; pick one in [live] voice, steer the accent with [live] style
+```
+
+Gemini Live hears and speaks in one model, so replies start in under a second (0.75 s measured) and it stops the
+moment you talk over it. It's free on an AI Studio key. Sommus still hears the wake word locally, runs every
+tool under its own rules (quick ones directly, the rest through the Claude brain as `ask_sommus`), and takes
+the PIN locally — the microphone stops going to Google until the digits are heard
+([decision 10](docs/decisions/0010-live-voice-on-gemini.md)).
+
 Every utterance is logged to `data/voice.log` (loudness, detector score, transcript, and what was done with it),
 so when it misses something the log says which layer dropped it. Measurements behind these choices:
 [decision 9](docs/decisions/0009-hearing-from-across-the-room.md).
