@@ -75,6 +75,9 @@ class TurnView:
         self.speaker = speaker  # voice mode: replies are also spoken as they stream
         self.status = console.status(f"[dim]{cfg.name} is thinking…[/]", spinner="dots")
         self.mid_line = False
+        self.said: list[str] = []  # the reply so far, to tell its echo from something new
+        self.acted = False  # a tool that changes something has run: redoing the turn would do it twice
+        self._tier: Tier | None = None
 
     def _break_line(self) -> None:
         self.status.stop()
@@ -100,6 +103,7 @@ class TurnView:
             async for event in brain.handle(text, self.confirm):
                 match event:
                     case TextDelta(text=delta):
+                        self.said.append(delta)
                         self.status.stop()
                         if not self.mid_line:
                             console.print(f"[bold magenta]{self.cfg.name.lower()} ›[/] ", end="")
@@ -108,6 +112,7 @@ class TurnView:
                         if self.speaker:
                             self.speaker.feed(delta)
                     case ToolStarted(name=name, input=args, tier=tier):
+                        self._tier = tier
                         self._break_line()
                         if self.speaker and name in SLOW_TOOLS and not said_wait and not brain.gate.needs_pin(name):
                             self.speaker.feed("One moment. ")  # these take 10–30 s; silence feels broken
@@ -115,6 +120,8 @@ class TurnView:
                         style = TIER_STYLE.get(tier, "red")
                         console.print(f"  [dim]→[/] [{style}]{name}[/][dim]({escape(_format_args(args))})[/]")
                     case ToolFinished(output=output, is_error=is_error, decision=decision):
+                        if decision == "ran" and self._tier not in (Tier.READ, None):
+                            self.acted = True
                         mark = (
                             "[green]✓[/]" if not is_error else "[yellow]✗[/]" if decision == "declined" else "[red]✗[/]"
                         )
@@ -327,7 +334,10 @@ async def voice_chat() -> None:
         speaker.first_word_at = None
         asked_at = time.monotonic()
         was_awake = time.monotonic() < state["awake_until"]
-        work = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
+        view = TurnView(cfg, session, speaker)
+        state["view"] = view
+        state["asked"] = (text, time.monotonic()) if heard_in is not None else None
+        work = asyncio.create_task(view.run(brain, text))
         state["work"] = work
         loop.add_signal_handler(signal.SIGINT, work.cancel)
         try:
@@ -364,9 +374,43 @@ async def voice_chat() -> None:
             prompt = None
         state["turn"] = asyncio.create_task(run_turn(text, heard_in))
 
+    def follows_on(text: str) -> str | None:
+        """The request this was said to finish, if it's the rest of it: "What's my schedule looking like?" …
+        "For tomorrow." Said within a few seconds of the request, without the name, and not Sommus's own
+        words coming back. These were dropped as room talk, and the first half got a confused answer."""
+        asked, view = state.get("asked"), state.get("view")
+        if not asked or voice.heard_wake(text, wake) is not None:
+            return None
+        request, at = asked
+        if time.monotonic() - at > FOLLOW_ON_SECONDS:
+            return None
+        said = "".join(view.said) if view is not None else ""
+        # Only while it's still working it out: once it's answering, talk without the name is the room or
+        # its own echo, and the name is how to cut in (Jashan's rule).
+        if len(said.split()) > HEADS_UP_WORDS or voice.echo_of(text, said):
+            return None
+        return request
+
     async def act_on(text: str, seconds: float, heard_in: float, logged: dict[str, Any]) -> None:
         awake = time.monotonic() < state["awake_until"]
         mid_reply = speaker.speaking or working()
+        earlier = follows_on(text) if mid_reply else None
+        if earlier and settings.get("room_filter", True) and not pin.split_pin(text)[0]:
+            context = f"(nothing yet: {cfg.user} just asked “{earlier}”)"
+            if not await addressee.said_to_sommus(brain.client, cfg.user, context, text):
+                earlier = None
+        if earlier:
+            view = state.get("view")
+            if view is not None and view.acted:  # already did something: run this next, as its own request
+                state["next"] = text
+                heard_log.write(**logged, outcome="queued: follows the request, runs after it")
+                console.print(f"[dim]  (next: “{escape(text)}”)[/]")
+                return
+            merged = f"{earlier} {text}"
+            heard_log.write(**logged, outcome="run: the rest of the request just made")
+            console.print(f"[bold]you ›[/] {escape(pin.redact(merged))} [dim](joined)[/]")
+            await start_turn(merged, heard_in)
+            return
         kind, request = voice.route(text, wake, awake, mid_reply, names_only)
         outcome = kind
         if kind == voice.Route.IGNORE:
@@ -438,6 +482,9 @@ async def voice_chat() -> None:
             done, _ = await asyncio.wait(waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
             if listening not in done:
                 listening.cancel()
+            if busy and state["turn"] in done and (following := state.pop("next", None)):
+                console.print(f"[bold]you ›[/] {escape(pin.redact(following))} [dim](said while it worked)[/]")
+                await start_turn(following, 0.0)
             if not done:
                 now = time.monotonic()
                 if state["held"] and now >= state["held"][1]:
@@ -522,6 +569,8 @@ async def voice_chat() -> None:
 
 
 CTRL_C = "\x03"
+FOLLOW_ON_SECONDS = 6.0  # said this soon after a request, without the name, it's the rest of that request
+HEADS_UP_WORDS = 5  # "On it." / "Checking that now." — more than this and Sommus is already answering
 
 
 async def _prompt_line(session: PromptSession) -> str:

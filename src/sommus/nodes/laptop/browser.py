@@ -277,6 +277,20 @@ def save_tab(query: str, folder: str = "~/Downloads", wait_seconds: float = 20) 
     )
 
 
+def close_tabs(queries: list[str]) -> list[Tab]:
+    """Close several tabs at once. Every query is matched first, then tabs close from the highest index
+    down, so closing one doesn't renumber the ones still to go."""
+    chosen: dict[tuple[int, int], Tab] = {}
+    for query in queries:
+        found = find_tab(query)
+        chosen[(found.window, found.index)] = found
+    if not chosen:
+        raise ActionError("No tabs named to close.")
+    for window, index in sorted(chosen, reverse=True):
+        _script(f"close tab {index} of window {window}")
+    return [chosen[key] for key in sorted(chosen)]
+
+
 def focus_tab(query: str) -> Tab:
     tab = find_tab(query)
     _script(f"set active tab index of window {tab.window} to {tab.index}\nset index of window {tab.window} to 1")

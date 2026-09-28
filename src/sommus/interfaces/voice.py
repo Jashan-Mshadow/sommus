@@ -639,6 +639,15 @@ def route(text: str, wake: re.Pattern[str], awake: bool, mid_reply: bool, names_
     return Route.RUN, request
 
 
+def echo_of(heard: str, said: str) -> bool:
+    """Whether what the mic heard is mostly Sommus's own reply coming back through the speakers."""
+    heard_words = re.findall(r"[a-z']+", heard.lower())
+    said_words = set(re.findall(r"[a-z']+", said.lower()))
+    if not heard_words or not said_words:
+        return False
+    return sum(w in said_words for w in heard_words) / len(heard_words) >= 0.6
+
+
 class VoiceLog:
     """One JSON line per thing heard, in data/voice.log: how loud and how sure the detector was, what Whisper
     wrote, how long it took, and what Sommus did with it. "It didn't hear me" becomes a line that says which
@@ -749,6 +758,17 @@ def normalize(audio: np.ndarray, target_peak: float = 0.7) -> np.ndarray:
 NAME_PROMPT = "Hey Sommus."
 
 
+MAX_TOKENS = 120  # a 20 s utterance is ~60 words; more than this is Whisper looping on noise
+
+
+def repetitive(text: str) -> bool:
+    """'ouch, ouch, ouch, ouch…': one word making up most of a long transcript is a Whisper loop, not speech."""
+    words = re.findall(r"[a-z']+", text.lower())
+    if len(words) < 6:
+        return False
+    return max(words.count(w) for w in set(words)) / len(words) > 0.5
+
+
 class Transcriber:
     def __init__(self, model: str):
         self.model = model
@@ -764,9 +784,22 @@ class Transcriber:
         import mlx_whisper
 
         hint = {"initial_prompt": "My PIN is 1234." if expecting == "digits" else NAME_PROMPT}
-        result = mlx_whisper.transcribe(normalize(audio), path_or_hf_repo=self.model, language="en", fp16=True, **hint)
+        result = mlx_whisper.transcribe(
+            normalize(audio),
+            path_or_hf_repo=self.model,
+            language="en",
+            fp16=True,
+            # One pass, capped. Whisper's default retries at five rising temperatures when its output repeats,
+            # which on quiet noise produced "Ouch, ouch, ouch…" and took 5.7 s (voice.log, 2026-09-28).
+            temperature=0.0,
+            condition_on_previous_text=False,
+            sample_len=MAX_TOKENS,
+            **hint,
+        )
         text = result["text"].strip()
-        return "" if text.lower().strip(" .!?") in HALLUCINATIONS else NAME_HEARD.sub("Sommus", text)
+        if text.lower().strip(" .!?") in HALLUCINATIONS or repetitive(text):
+            return ""
+        return NAME_HEARD.sub("Sommus", text)
 
 
 def chime(path: str) -> None:

@@ -68,7 +68,7 @@ VOCAB = {
                  "am", "today", "tomorrow", "todays", "tomorrows", "tonight", "next", "this", "week", "weekend",
                  "morning", "afternoon", "evening", "when", "where", "rooms", "room", "with", "anything", "any",
                  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "first", "last",
-                 "left", "else", "going", "got", "does", "start", "end", "in"},
+                 "left", "else", "going", "got", "does", "start", "end", "in", "looking", "look", "like"},
     # Class questions answered from the schedule file by brain/campus.py, no model and no calendar call.
     "campus": {"class", "classes", "lecture", "lectures", "lab", "labs", "tutorial", "tutorials", "next", "today",
                "tomorrow", "todays", "tomorrows", "where", "when", "do", "i", "have", "are", "am", "any", "anything",

@@ -20,6 +20,7 @@ EXPECTED_TIERS = {
     "list_browser_tabs": "read",
     "read_browser_tab": "read",
     "focus_browser_tab": "reversible",
+    "close_browser_tabs": "reversible",
     "type_text": "reversible",
     "screenshot": "read",
     "download_url": "reversible",
@@ -180,3 +181,17 @@ def test_a_download_name_can_never_leave_its_folder(tmp_path, monkeypatch):
     monkeypatch.setattr(files, "_run", fake_run)
     saved = files.download_url("https://example.com/x.pdf", str(tmp_path), "../../.zshrc")
     assert saved.parent == tmp_path and saved.name == "zshrc"
+
+
+def test_tabs_close_from_the_highest_index_down(monkeypatch):
+    """Closing 1.2 first would renumber 1.5 to 1.4 and close the wrong tab."""
+    from sommus.nodes.laptop import browser
+
+    tabs = [browser.Tab(1, i, f"tab {i}", f"https://x/{i}") for i in range(1, 7)] + [browser.Tab(2, 1, "Netflix", "n")]
+    scripts = []
+    monkeypatch.setattr(browser, "list_tabs", lambda: tabs)
+    monkeypatch.setattr(browser, "_script", lambda body, timeout=20: scripts.append(body) or "")
+    closed = browser.close_tabs(["1.2", "1.5", "Netflix", "1.2"])
+
+    assert scripts == ["close tab 1 of window 2", "close tab 5 of window 1", "close tab 2 of window 1"]
+    assert [t.title for t in closed] == ["tab 2", "tab 5", "Netflix"]

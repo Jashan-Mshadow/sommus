@@ -466,6 +466,17 @@ def compose_email(to: str, subject: str, body: str) -> str:
 
 
 @tool(REVERSIBLE)
+def close_browser_tabs(tabs: list[str]) -> str:
+    """Close Chrome tabs. List them first, then pass the ones to close. Closed tabs come back with Cmd+Shift+T.
+
+    Args:
+        tabs: Each a window.tab number ("1.4") or text from a title or URL ("Netflix"). Prefer numbers.
+    """
+    closed = browser.close_tabs(tabs)
+    return f"Closed {len(closed)} tab{'s' if len(closed) != 1 else ''}: " + "; ".join(t.title for t in closed)
+
+
+@tool(REVERSIBLE)
 def focus_browser_tab(tab: str) -> str:
     """Bring a Chrome tab to the front.
 

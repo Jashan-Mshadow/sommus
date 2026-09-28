@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 
 import numpy as np
-from fakes import FakeModel, config, text_reply
+from fakes import FakeModel, FakeStream, config, text_reply
 
 from sommus.brain import loop as brain_loop
 from sommus.interfaces import addressee, cli, voice
@@ -85,9 +85,32 @@ class ScriptedWhisper:
         return SAID[float(audio[0])]
 
 
-async def run_voice(monkeypatch, tmp_path, script, *replies):
+class SlowStream(FakeStream):
+    def __init__(self, message, delay):
+        super().__init__(message)
+        self.delay = delay
+
+    async def __aenter__(self):
+        await asyncio.sleep(self.delay)
+        return await super().__aenter__()
+
+
+class SlowModel(FakeModel):
+    """The first answer takes a moment, like a real one: time for him to finish his sentence."""
+
+    def __init__(self, *responses, delay=0.0):
+        super().__init__(*responses)
+        self.delay = delay
+
+    def _stream(self, **request):
+        self.requests.append(request | {"messages": list(request["messages"])})
+        delay, self.delay = self.delay, 0.0
+        return SlowStream(self.responses.pop(0), delay)
+
+
+async def run_voice(monkeypatch, tmp_path, script, *replies, delay=0.0):
     finished = threading.Event()
-    model = FakeModel(*replies)
+    model = SlowModel(*replies, delay=delay)
     engine = SilentVoice()
     cfg = config(tmp_path, ask=False)
     settings = {"smart_turn": False, "barge_in": False, "room_filter": True, "awake_seconds": 30}
@@ -148,3 +171,31 @@ async def test_a_new_request_over_a_reply_replaces_it(monkeypatch, tmp_path):
     assert engine.played < 20
     assert [entry["outcome"] for entry in log] == ["run", "run"]
     assert len(model.requests) == 1  # "what's the date" took the free path, no second model call
+
+
+async def test_the_rest_of_a_request_said_while_it_works_is_joined_to_it(monkeypatch, tmp_path):
+    """voice.log, 2026-09-28: 'What's the schedule looking like?' then 'For tomorrow.' a second later. The
+    second half was dropped as room talk, and the first got 'Australia's schedule, or yours?'."""
+    script = [(0.1, "Hey Sommus, what's the schedule looking like?"), (0.6, "For tomorrow.")]
+    model, _, log = await run_voice(monkeypatch, tmp_path, script, text_reply(STORY), text_reply("Packed."), delay=1.5)
+
+    assert [entry["outcome"] for entry in log] == ["run", "run: the rest of the request just made"]
+    last = str(model.requests[-1]["messages"][-1])
+    assert "schedule looking like? For tomorrow." in last
+
+
+async def test_its_own_voice_coming_back_is_not_taken_as_the_rest(monkeypatch, tmp_path):
+    script = [(0.1, "Hey Sommus, tell me a long story."), (0.6, "Sentence number 3 of a long story.")]
+    model, _, log = await run_voice(monkeypatch, tmp_path, script, text_reply(STORY))
+
+    assert [entry["outcome"] for entry in log] == ["run", "ignored: Sommus talking, no name"]
+    assert len(model.requests) == 1
+
+
+def test_echo_is_told_apart_from_new_words():
+    from sommus.interfaces import voice as v
+
+    said = "Tomorrow's packed: calculus at 9:30, then physics."
+    assert v.echo_of("calculus at 9 30 then physics", said)
+    assert not v.echo_of("For tomorrow.", "Checking.")
+    assert not v.echo_of("the Netflix tab and the YouTube tab", said)

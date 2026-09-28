@@ -20,6 +20,7 @@ core_tools = [
     "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search", "ask_claude",
     # quick spoken requests: deferred, each first cost a tool search (~2 s before the tool ran)
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",
+    "close_browser_tabs",
     # long-term memory: offered on every turn so a fact gets saved without a tool search first
     "remember",
 ]

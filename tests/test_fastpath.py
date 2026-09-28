@@ -252,6 +252,7 @@ def test_next_holiday():
         "am i free friday afternoon",
         "what's my schedule for monday",
         "do i have any labs this week",
+        "what's my schedule looking like tomorrow",  # voice.log, 2026-09-28
     ],
 )
 def test_calendar_questions_go_straight_to_claude_code(text):
