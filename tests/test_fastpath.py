@@ -362,16 +362,29 @@ def test_pause_and_play_are_not_toggles(text, action):
 
 
 @pytest.mark.parametrize(
-    "text", ["what's on my to-do list", "what do I have to do", "read my todos", "what's next on my to do list"]
+    "text",
+    [
+        "what's on my to-do list",
+        "what do I have to do",
+        "read my todos",
+        "what's next on my to do list",
+        "what do I have to do tomorrow",
+    ],
 )
 def test_the_todo_list_is_read_without_the_model(text):
-    found = fastpath.match(text, todo=lambda: "Top of your list: gym.")
+    found = fastpath.match(text, todo=lambda tokens: "Top of your list: gym.")
     assert found and found.intent == "todo" and found.local() == "Top of your list: gym."
 
 
-@pytest.mark.parametrize("text", ["add milk to my to-do list", "what's on my list", "what do I have to do tomorrow"])
+@pytest.mark.parametrize("text", ["add milk to my to-do list", "what's on my list", "what do I have to buy"])
 def test_todo_changes_and_other_lists_go_to_the_model(text):
-    assert fastpath.match(text, todo=lambda: "unused") is None
+    assert fastpath.match(text, todo=lambda tokens: "unused") is None
+
+
+def test_a_todo_list_for_a_day_passes_the_day_along():
+    """voice.log 2026-09-28: 'What is my to-do list for tomorrow?' went to the model: 14 s and 4 cents."""
+    found = fastpath.match("What is my to-do list for tomorrow?", todo=lambda tokens: " ".join(tokens))
+    assert found and found.intent == "todo" and "tomorrow" in found.local()
 
 
 def test_tasks_are_read_aloud_briefly():

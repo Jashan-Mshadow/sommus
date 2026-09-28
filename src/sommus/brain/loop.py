@@ -8,6 +8,7 @@ talked to.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -163,18 +164,21 @@ class Brain:
         store: Store,
         client: anthropic.AsyncAnthropic | None = None,
         voice: bool = False,
+        relay: bool = False,
     ):
+        """`relay`: another model does the talking (Gemini Live) and says this brain's results in its own words."""
         self.cfg = cfg
         self.hub = hub
         self.store = store
         self.client = client or anthropic.AsyncAnthropic()
         self._deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
-        self._voice = voice
+        self._voice = voice or relay
+        self._relay = relay
         self._memory_seen = self._memory_mtime()
-        self.system = system_prompt(cfg, self._deferred, voice=voice)
+        self.system = system_prompt(cfg, self._deferred, voice=voice, relay=relay)
         # Spoken, a pause before the first word feels broken. Measured on Sonnet 5 (2026-09-16): the
         # first word of a plain answer came at ~1.5 s with adaptive thinking, ~0.7 s without.
-        self.thinking = {"type": "disabled"} if voice else {"type": "adaptive"}
+        self.thinking = {"type": "disabled"} if voice or relay else {"type": "adaptive"}
         self.messages: list[dict[str, Any]] = []
         from sommus import config as config_module
 
@@ -201,7 +205,7 @@ class Brain:
         seen = self._memory_mtime()
         if seen != self._memory_seen:
             self._memory_seen = seen
-            self.system = system_prompt(self.cfg, self._deferred, voice=self._voice)
+            self.system = system_prompt(self.cfg, self._deferred, voice=self._voice, relay=self._relay)
 
     def reset(self) -> None:
         self.messages = []
@@ -423,9 +427,14 @@ class Brain:
             return self._level[0]
         return None
 
-    def _todo(self) -> str:
-        """The top of the to-do list from the vault, read by plain code: was ~2¢ and ~9 s through the model."""
-        return fastpath.say_tasks(*campus.task_sections(campus.todo_path()))
+    def _todo(self, tokens: list[str] | None = None) -> str:
+        """The top of the to-do list from the vault, read by plain code: was ~2¢ and ~9 s through the model
+        ("to-do list for tomorrow" went to it and took 14 s and 4¢). A day named adds what's due that day."""
+        said = fastpath.say_tasks(*campus.task_sections(campus.todo_path()))
+        if tokens and {"today", "tomorrow", "tonight"} & set(tokens) and campus.schedule_path().exists():
+            with contextlib.suppress(Exception):
+                said = f"{self._campus('due', tokens)} {said}"
+        return said
 
     def _fast_ready(self, quick: fastpath.Match) -> bool:
         needed = [t for t in (quick.tool, quick.read_tool) if t]
@@ -490,14 +499,18 @@ class Brain:
         if not self.gate.unlocked:
             yield TurnDone(Usage(), 0.0, 0)
             return
-        # Without this the model still believes it's locked and asks for the PIN again.
-        self._remember("[I gave my PIN: personal actions are unlocked now]", answer)
+        self.note_unlocked(answer)
         if not request:
             yield TurnDone(Usage(), 0.0, 0)
             return
         yield TextDelta(" ")
         async for event in self.handle(request, confirm):
             yield event
+
+    def note_unlocked(self, answer: str = "Unlocked.") -> None:
+        """Tell the conversation the PIN was given. Without it the model still believes it's locked and asks
+        for the PIN again (found twice: typed PINs, and PINs heard locally in live mode)."""
+        self._remember("[I gave my PIN: personal actions are unlocked now]", answer)
 
     def last_reply(self) -> str:
         """What Sommus said last, as plain text — context for telling follow-ups from room chatter."""

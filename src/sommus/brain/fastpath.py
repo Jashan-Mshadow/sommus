@@ -175,7 +175,7 @@ def match(
     campus: Callable[[str, list[str]], str] | None = None,
     apps: Callable[[], dict[str, str]] | None = None,
     follow: str | None = None,
-    todo: Callable[[], str] | None = None,
+    todo: Callable[[list[str]], str] | None = None,
 ) -> Match | None:
     """`follow` is "volume" or "brightness" when one was just changed, so "a bit more" continues it."""
     raw = " ".join(text.strip().lower().split())
@@ -219,7 +219,7 @@ def match(
             wants = "play_pause"
         return Match("play_pause", "media_control", {"action": wants})
     if todo and _asks_for_todo(tokens):
-        return Match("todo", local=todo)
+        return Match("todo", local=lambda: todo(tokens))
     if _claims("now_playing", tokens) and (
         "playing" in present or ("song" in present and present & {"this", "name", "called"})
     ):
@@ -283,7 +283,8 @@ def _level_intent(tokens: list[str], follow: str | None) -> str | None:
 
 
 TODO_WORDS = {"todo", "todos", "to", "do", "list", "tasks", "task", "whats", "what", "on", "my", "have", "i",
-              "left", "next", "need", "read", "out", "the", "is", "are", "top", "of", "remaining"}  # fmt: skip
+              "left", "next", "need", "read", "out", "the", "is", "are", "top", "of", "remaining", "for", "today",
+              "tomorrow", "tonight", "this", "week"}  # fmt: skip
 
 
 def _asks_for_todo(tokens: list[str]) -> bool:
@@ -294,7 +295,8 @@ def _asks_for_todo(tokens: list[str]) -> bool:
 
 def say_tasks(tasks: list[str], added: list[str] | None = None, shown: int = 5) -> str:
     def plain(items: list[str]) -> str:
-        return "; ".join(re.sub(r"[*_~`]", "", t).strip() for t in items)
+        # Markdown and emoji (⏭️, ☐) read aloud as noise.
+        return "; ".join(re.sub(r"[*_~`]|[^\w\s,.;:'\"()&/+–—-]", "", t).strip() for t in items)
 
     added = added or []
     if not tasks and not added:

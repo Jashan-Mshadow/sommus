@@ -608,7 +608,7 @@ async def live_chat() -> None:
             console.print(f"[red]Live mode needs macOS echo cancellation, which didn't start ({escape(str(e))}).[/]")
             await hub.__aexit__(None, None, None)
             return
-    brain = Brain(cfg, hub, store, voice=True)
+    brain = Brain(cfg, hub, store, relay=True)  # Gemini does the talking: Claude hands back plain results
     tools = live.declarations(hub.api_tools())
     system = live.instructions(cfg.name, cfg.user, settings.get("style", ""))
     loop = asyncio.get_running_loop()
@@ -708,6 +708,7 @@ async def live_chat() -> None:
         if conversation is None:
             return
         if brain.gate.unlocked:
+            brain.note_unlocked()
             await conversation.send_text(
                 f"[Sommus: his PIN was accepted on the Mac; personal actions are unlocked for "
                 f"{cfg.unlock_minutes:g} minutes. Now do what he asked: {pending or 'his last request'}]"
@@ -776,6 +777,8 @@ async def live_chat() -> None:
             if typed and given and brain.gate.claims(typed):
                 answer = brain.gate.attempt(typed) or ""
                 console.print(f"[dim]  {escape(answer)}[/]")
+                if brain.gate.unlocked:
+                    brain.note_unlocked()
                 if brain.gate.unlocked and state["conversation"] is not None:
                     pending, brain.gate.pending = brain.gate.pending, None
                     state["mode"] = "awake"
@@ -817,7 +820,7 @@ async def live_voices(names: list[str]) -> None:
     console.print(
         f"[dim]Current: {escape(settings.get('voice', 'Leda'))} · style: {escape(style or 'none')} · Ctrl+C stops[/]"
     )
-    for name in names or live.VOICES:
+    for name in names or list(live.VOICES):
         config_ = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
             system_instruction="Read aloud exactly what you're given, nothing else."
@@ -841,7 +844,7 @@ async def live_voices(names: list[str]) -> None:
         except Exception as e:
             console.print(f"[red]  {escape(name)}: {escape(str(e)[:120])}[/]")
             continue
-        console.print(f"[bold]{escape(name)}[/]")
+        console.print(f"[bold]{escape(name)}[/] [dim]— {escape(live.VOICES.get(name, ''))}[/]")
         if audio:
             await asyncio.to_thread(sd.play, np.concatenate(audio), live.OUT_RATE, blocking=True)
     console.print('[dim]Pick one: config.toml → \\[live] voice = "…"; change the accent with style = "…"[/]')

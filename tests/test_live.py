@@ -195,3 +195,39 @@ def test_the_key_comes_from_the_gemini_cli_file(tmp_path, monkeypatch):
     (tmp_path / ".gemini/.env").write_text("")
     with pytest.raises(RuntimeError, match="aistudio"):
         live.gemini_key()
+
+
+def test_the_relay_brain_hands_back_plain_results(tmp_path):
+    """Claude's jokes and PIN questions, relayed through Gemini, sounded wrong (voice.log, 2026-09-28)."""
+    from sommus.brain.prompt import system_prompt
+
+    relay = system_prompt(config(tmp_path, ask=False), relay=True)
+    assert "Relay mode" in relay and "JARVIS" not in relay and "LOCKED" in relay
+    assert "JARVIS" in system_prompt(config(tmp_path, ask=False), voice=True)
+
+
+async def test_tools_are_checked_against_his_words_never_sommus_own(tmp_path):
+    conv, hub, *_ = await conversation(tmp_path)
+    await conv.handle_message(message(input_transcription=SimpleNamespace(text="turn it down a bit")))
+    await conv.handle_message(message(turn_complete=True))  # the exchange ends before the tool runs
+    conv.brain.messages = [{"role": "assistant", "content": "Tomorrow is purely classes."}]
+    await conv.run_tool(SimpleNamespace(id="c5", name="peek", args={}))
+    assert conv.brain._asked == "turn it down a bit"
+    await hub.__aexit__(None, None, None)
+
+
+def test_the_instructions_keep_it_natural():
+    said = live.instructions("Sommus", "Jashan")
+    assert "Answer those directly" in said and "anything else?" in said and "don't reply at all" in said
+    assert "One sec" not in said
+
+
+def test_every_voice_has_a_description():
+    assert len(live.VOICES) == 30 and all(live.VOICES.values())
+
+
+def test_the_pin_unlock_is_written_into_claudes_conversation(tmp_path):
+    brain = Brain.__new__(Brain)
+    brain.messages = []
+    brain.note_unlocked()
+    assert "unlocked" in str(brain.messages)
