@@ -122,9 +122,11 @@ def _all_words(query: str, words: list[str], limit: int) -> str:
             continue
         folded = text.casefold()
         if all(w in folded for w in words):
-            lines = text.splitlines()
-            best = max(range(len(lines)), key=lambda i: sum(w in lines[i].casefold() for w in words), default=0)
-            found.append(f"{note.relative_to(VAULT)}:{best + 1}: {lines[best].strip()[:200] if lines else ''}")
+            lines, missing = text.splitlines(), set(words)
+            while missing:  # the few lines that between them hold every word
+                best = max(range(len(lines)), key=lambda i: sum(w in lines[i].casefold() for w in missing))
+                missing -= {w for w in missing if w in lines[best].casefold()}
+                found.append(f"{note.relative_to(VAULT)}:{best + 1}: {lines[best].strip()[:200]}")
             if len(found) >= limit:
                 break
     if not found:
