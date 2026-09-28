@@ -195,13 +195,15 @@ def create_reminder(title: str, due: str | None = None, list_name: str | None = 
         except ValueError as e:
             raise ActionError(f"Couldn't read the time '{due}'. Use 2026-09-14 20:00 or 2026-09-14T20:00.") from e
         when = f', remind me date:date "{parsed:%-m/%-d/%Y %-I:%M:%S %p}"'
-    target = f'list "{list_name}"' if list_name else "default list"
+    # The list name arrives through argv like the title: pasted into the script, a name containing a
+    # quote could run any AppleScript (`do shell script`), and this tool doesn't wait for the PIN.
+    target = "list (item 2 of argv)" if list_name else "default list"
     script = (
         f'tell application "Reminders" to make new reminder at end of {target} '
         f"with properties {{name:(item 1 of argv){when}}}"
     )
     try:
-        _osascript("on run argv", script, "end run", argv=(title,), timeout=30)
+        _osascript("on run argv", script, "end run", argv=(title, list_name or ""), timeout=30)
     except ActionError as e:
         if "-1743" in str(e) or "not authorized" in str(e):
             raise ActionError(

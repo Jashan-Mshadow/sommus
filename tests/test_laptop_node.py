@@ -145,3 +145,22 @@ def test_typing_focuses_the_app_it_was_given_first(monkeypatch):
     monkeypatch.setattr(server.time, "sleep", lambda _: None)
     assert "Typed 6 characters" in server.type_text("a poem", app="Google Chrome")
     assert opened == ["Google Chrome"]
+
+
+def test_reminder_list_name_never_becomes_applescript(monkeypatch):
+    """A list name with a quote in it used to be pasted into the script: arbitrary AppleScript, no PIN."""
+    from sommus.nodes.laptop import apps
+
+    seen = {}
+
+    def fake_osascript(*lines, argv=(), timeout=10):
+        seen["script"], seen["argv"] = " ".join(lines), argv
+        return ""
+
+    monkeypatch.setattr(apps, "_osascript", fake_osascript)
+    evil = 'x" & (do shell script "touch /tmp/pwned") & "'
+    apps.create_reminder("buy milk", None, evil)
+
+    assert "do shell script" not in seen["script"]
+    assert "item 2 of argv" in seen["script"]
+    assert seen["argv"] == ("buy milk", evil)
