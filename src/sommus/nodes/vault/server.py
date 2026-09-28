@@ -103,7 +103,33 @@ def search_vault(query: str, limit: int = 12) -> str:
                 hits.append(f"{note.relative_to(VAULT)}:{number}{where}: {line.strip()[:200]}")
                 if len(hits) >= limit:
                     return f"Matches for '{query}':\n" + "\n".join(hits) + "\n(more may exist)"
-    return f"Matches for '{query}':\n" + "\n".join(hits) if hits else f"Nothing in the vault mentions '{query}'."
+    if hits:
+        return f"Matches for '{query}':\n" + "\n".join(hits)
+    words = [w for w in re.findall(r"\w+", query.casefold()) if len(w) > 1]
+    if len(words) > 1:
+        return _all_words(query, words, limit)
+    return f"Nothing in the vault mentions '{query}'."
+
+
+def _all_words(query: str, words: list[str], limit: int) -> str:
+    """No line has the exact phrase: notes holding every word, anywhere in them. "MATH 115 midterm" is
+    usually written "MATH 115 — midterm Mon Oct 26" or split over a heading and a line."""
+    found = []
+    for note in _notes():
+        try:
+            text = note.read_text(errors="replace")
+        except OSError:
+            continue
+        folded = text.casefold()
+        if all(w in folded for w in words):
+            lines = text.splitlines()
+            best = max(range(len(lines)), key=lambda i: sum(w in lines[i].casefold() for w in words), default=0)
+            found.append(f"{note.relative_to(VAULT)}:{best + 1}: {lines[best].strip()[:200] if lines else ''}")
+            if len(found) >= limit:
+                break
+    if not found:
+        return f"Nothing in the vault mentions '{query}'."
+    return f"No line has '{query}' exactly; notes with all of its words:\n" + "\n".join(found)
 
 
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")

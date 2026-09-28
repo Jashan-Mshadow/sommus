@@ -79,7 +79,7 @@ path = "~/Documents/Jashans_Brain/Sommus Memory.md"
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]
 # Jashan's call (2026-09-14): Sommus never asks, for anything, on any device.
-# Outward-facing actions (send_message, compose_email with send=true) run like the rest.
+# Outward-facing actions (send_message, send_email) run like the rest; compose_email only opens a draft.
 # The "always_ask" tier still exists in code if a future tool ever earns it.
 
 [security]

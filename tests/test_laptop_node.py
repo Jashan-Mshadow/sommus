@@ -164,3 +164,19 @@ def test_reminder_list_name_never_becomes_applescript(monkeypatch):
     assert "do shell script" not in seen["script"]
     assert "item 2 of argv" in seen["script"]
     assert seen["argv"] == ("buy milk", evil)
+
+
+def test_a_download_name_can_never_leave_its_folder(tmp_path, monkeypatch):
+    from sommus.nodes.laptop import files
+
+    written = []
+
+    def fake_run(args, timeout=10):
+        target = args[args.index("-o") + 1]
+        written.append(target)
+        open(target, "wb").write(b"%PDF-1.7")
+        return ""
+
+    monkeypatch.setattr(files, "_run", fake_run)
+    saved = files.download_url("https://example.com/x.pdf", str(tmp_path), "../../.zshrc")
+    assert saved.parent == tmp_path and saved.name == "zshrc"

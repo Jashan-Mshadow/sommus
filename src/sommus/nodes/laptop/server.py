@@ -454,16 +454,15 @@ def click_page_link(tab: str, text: str) -> str:
 
 
 @tool(REVERSIBLE)
-def compose_email(to: str, subject: str, body: str, send: bool = False) -> str:
-    """Write an email in Gmail. There is no Mail app tool — Gmail in the browser is how email works here.
+def compose_email(to: str, subject: str, body: str) -> str:
+    """Open a pre-filled Gmail draft in the browser for Jashan to look over. To send, use send_email.
 
     Args:
         to: Recipient address.
         subject: Subject line.
         body: Message text.
-        send: False opens a draft for review; True sends it immediately.
     """
-    return browser.compose_gmail(to, subject, body, send)
+    return browser.compose_gmail(to, subject, body)
 
 
 @tool(REVERSIBLE)

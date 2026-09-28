@@ -81,7 +81,9 @@ def download_url(url: str, folder: str = "~/Downloads", filename: str | None = N
     target_dir = Path(folder).expanduser()
     if not target_dir.is_dir():
         raise ActionError(f"'{folder}' isn't a folder.")
-    target = target_dir / (filename or unquote(Path(parsed.path).name) or "download")
+    # Only a name, never a path: "../../.zshrc" as a filename would write outside the folder.
+    name = Path(filename or unquote(Path(parsed.path).name) or "download").name.lstrip(".") or "download"
+    target = target_dir / name
     try:
         _run(
             [

@@ -90,7 +90,7 @@ def find_tab(query: str) -> Tab:
 
 def read_tab(query: str) -> tuple[Tab, str]:
     tab = find_tab(query)
-    text = _script(f'execute tab {tab.index} of window {tab.window} javascript "document.body.innerText"', timeout=30)
+    text = _js(tab, "document.body.innerText")  # _js wakes a tab Chrome's Memory Saver put to sleep
     if not text.strip():
         raise ActionError(
             f"'{tab.title}' returned no text. PDFs and some viewers render outside the page — "
@@ -202,20 +202,19 @@ def _json_string(value: str) -> str:
 GMAIL_COMPOSE = "https://mail.google.com/mail/u/0/?view=cm&fs=1"
 
 
-def compose_gmail(to: str, subject: str, body: str, send: bool = False) -> str:
-    """Open a pre-filled Gmail compose window; optionally press Cmd+Enter to send it."""
-    import time
+def compose_gmail(to: str, subject: str, body: str) -> str:
+    """Open a pre-filled Gmail compose window for Jashan to review.
+
+    It used to send too, by waiting 4 s and pressing Cmd+Return in whatever window was in front, then
+    reporting "Sent" without checking. Sending belongs to send_email, which knows whether it worked.
+    """
     from urllib.parse import quote
 
-    from sommus.nodes.laptop.macos import _run, press_keys
+    from sommus.nodes.laptop.macos import _run
 
     url = f"{GMAIL_COMPOSE}&to={quote(to)}&su={quote(subject)}&body={quote(body)}"
     _run(["open", url])
-    if not send:
-        return f"Draft open to {to}. Say send when you want it gone."
-    time.sleep(4)  # the compose window has to exist before the keystroke lands
-    press_keys("cmd+return")
-    return f"Sent to {to}."
+    return f"Draft open in Gmail to {to}, ready for you to check and send."
 
 
 EMBEDDED_JS = r"""

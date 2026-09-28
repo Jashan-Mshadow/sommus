@@ -83,3 +83,12 @@ def test_new_todos_land_in_the_inbox_above_done_and_are_read_back(tmp_path):
     path = tmp_path / "TODO.md"
     path.write_text(twice)
     assert campus.task_sections(path) == (["gym"], ["buy milk", "call Didi"])
+
+
+def test_a_phrase_found_nowhere_falls_back_to_notes_with_every_word(notes):
+    (notes / "MATH 115.md").write_text("# MATH 115\n\n## Tests\nMidterm: Mon Oct 26, 8 PM\n")
+    exact = vault.search_vault("Mon Oct 26")
+    assert "MATH 115.md:4" in exact
+    loose = vault.search_vault("math 115 midterm")
+    assert "all of its words" in loose and "MATH 115.md:4" in loose
+    assert "Nothing in the vault" in vault.search_vault("linear midterm quantum")
