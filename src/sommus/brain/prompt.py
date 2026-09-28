@@ -61,7 +61,7 @@ def system_prompt(cfg: Config, deferred: list[str] | None = None, voice: bool = 
     locked = ""
     if cfg.pin_tools:
         locked = (
-            f"\n- Personal actions (email, messages, files, notes, the shell, ask_claude) are locked behind "
+            f"\n- Personal actions (email, messages, files, writing notes, the shell, ask_claude) are locked behind "
             f"{cfg.user}'s PIN. If a tool says it's locked, ask for the PIN in a few words and stop: never reach "
             "the same thing another way, and never ask for it to be typed anywhere else."
         )
