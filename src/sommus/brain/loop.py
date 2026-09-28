@@ -169,6 +169,8 @@ class Brain:
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
         if self.gate.active:
             given, rest = split_pin(text)
+            if given and not rest and not self.gate.claims(text):
+                given = None  # a bare number nobody asked a PIN for is an answer: the model gets it
             answer = (self.gate.check(given) if rest else self.gate.attempt(given)) if given else None
             if answer == "":  # the start of a PIN said in pieces: stay quiet and wait for the rest
                 self.store.finish_turn(self.store.start_turn("[PIN entered]"), "", "ok", "pin", Usage())

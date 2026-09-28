@@ -186,7 +186,7 @@ async def test_a_pin_said_with_the_request_unlocks_and_runs_it_in_one_go(tmp_pat
 async def test_after_unlocking_the_model_knows_it_is_unlocked(tmp_path):
     """Found in real use: the PIN was kept out of the conversation, so the model kept asking for it."""
     async with gated_brain(tmp_path, text_reply("Sure.")) as (brain, model, _):
-        await run(brain, "5173")
+        await run(brain, "my pin is 5173")
         await run(brain, "okay, send the message now")
         history = str(model.requests[0]["messages"])
         assert "unlocked" in history and PIN not in history
@@ -219,7 +219,27 @@ def test_a_wrong_pin_says_how_many_digits_it_heard(tmp_path):
     assert gate.attempt("2604") == "Wrong PIN — I heard 4 digits."
 
 
-async def test_a_number_on_its_own_never_reaches_the_model_while_locked(tmp_path):
+async def test_part_of_an_asked_for_pin_never_reaches_the_model(tmp_path):
     async with gated_brain(tmp_path, text_reply("unused")) as (brain, model, _):
+        brain.gate.pending = "read my email"  # a request hit the lock, so a PIN is expected
         events = await run(brain, "268")
         assert model.requests == [] and [e for e in events if isinstance(e, TextDelta)] == []
+
+
+async def test_a_bare_number_nobody_asked_a_pin_for_is_an_answer(tmp_path):
+    """Found in review: "one" (answering "which one?") got no reply at all, and "2026" counted as a wrong PIN."""
+    async with gated_brain(tmp_path, text_reply("The first one, then."), text_reply("2026 it is.")) as (
+        brain,
+        model,
+        _,
+    ):
+        await run(brain, "one")
+        await run(brain, "2026")
+        assert len(model.requests) == 2
+        assert brain.gate.wrong == 0
+
+
+async def test_a_named_pin_unlocks_even_when_nobody_asked(tmp_path):
+    async with gated_brain(tmp_path) as (brain, model, _):
+        await run(brain, f"unlock {PIN}")
+        assert brain.gate.unlocked and model.requests == []

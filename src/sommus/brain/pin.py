@@ -91,6 +91,14 @@ def split_pin(text: str) -> tuple[str | None, str]:
     return re.sub(r"\D", "", found.group(1)), re.sub(r"\s{2,}", " ", rest)
 
 
+PIN_WORDS = {"pin", "code", "passcode", "password", "override", "unlock"}
+
+
+def mentions_pin(text: str) -> bool:
+    """'my pin is 2684', 'unlock 2684' — said as a PIN even when nobody asked for one."""
+    return bool(PIN_WORDS & set(re.findall(r"[a-z]+", text.lower())))
+
+
 def redact(text: str) -> str:
     """For screens, logs and history files."""
     digits, rest = split_pin(text)
@@ -142,6 +150,18 @@ class Gate:
     @property
     def unlocked(self) -> bool:
         return self.clock() < self.unlocked_until
+
+    @property
+    def expecting(self) -> bool:
+        """A PIN was asked for (a request hit the lock) or is being said in pieces right now."""
+        held, at = self.partial
+        return self.pending is not None or bool(held and self.clock() - at <= PARTIAL_SECONDS)
+
+    def claims(self, text: str) -> bool:
+        """Whether a message that is nothing but a number is a PIN. Only when one is expected or named:
+        otherwise "one" (an answer to "which one?") was swallowed without a reply, and "2026" counted
+        as a wrong PIN towards the lockout."""
+        return self.expecting or mentions_pin(text)
 
     def needs_pin(self, tool: str) -> bool:
         return tool in self.tools and not self.unlocked
