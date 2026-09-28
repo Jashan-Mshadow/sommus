@@ -67,3 +67,19 @@ def test_tool_errors_reach_the_model_as_tool_errors(notes):
         pytest.skip("tool registry layout differs in this MCP SDK version")
     with pytest.raises(ToolError):
         registered.fn(path="TODO.md", section="exams")
+
+
+def test_new_todos_land_in_the_inbox_above_done_and_are_read_back(tmp_path):
+    """They used to be appended under the Done table, where nothing ever read them."""
+    from sommus.brain import campus
+    from sommus.nodes.vault.server import with_inbox_item
+
+    note = "# TODO\n\n## This week\n- [ ] gym\n\n## Later\n- [ ] taxes\n\n## Done\n\n| Date | What |\n"
+    once = with_inbox_item(note, "- [ ] buy milk *(added 2026-09-28)*")
+    twice = with_inbox_item(once, "- [ ] call Didi *(added 2026-09-28)*")
+
+    assert twice.index("## 📥 Inbox") < twice.index("## Done")
+    assert twice.index("buy milk") < twice.index("call Didi") < twice.index("## Done")
+    path = tmp_path / "TODO.md"
+    path.write_text(twice)
+    assert campus.task_sections(path) == (["gym"], ["buy milk", "call Didi"])

@@ -20,6 +20,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from sommus.brain import memory
+from sommus.brain.campus import INBOX
 
 VAULT = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
 TODO = "TODO.md"
@@ -220,9 +221,26 @@ def add_todo(text: str) -> str:
     note = _resolve(TODO)
     if not note.exists():
         raise VaultError(f"{TODO} doesn't exist in the vault.")
-    with note.open("a") as f:
-        f.write(f"\n- [ ] {text.strip()} *(added {datetime.now():%Y-%m-%d})*\n")
+    item = f"- [ ] {text.strip()} *(added {datetime.now():%Y-%m-%d})*"
+    note.write_text(with_inbox_item(note.read_text(), item))
     return f"Added to {TODO}: {text.strip()}"
+
+
+def with_inbox_item(text: str, item: str) -> str:
+    """The note with `item` at the end of its inbox section, made above "## Done" if it's missing.
+    Appending to the end of the file put new items under the Done table, where nothing read them."""
+    lines = text.rstrip("\n").split("\n")
+    if INBOX in lines:
+        at = lines.index(INBOX) + 1
+        while at < len(lines) and not lines[at].startswith("## "):
+            at += 1
+        while lines[at - 1].strip() == "":
+            at -= 1
+        lines.insert(at, item)
+    else:
+        done = next((i for i, line in enumerate(lines) if line.strip().startswith("## Done")), len(lines))
+        lines[done:done] = [INBOX, "", item, ""]
+    return "\n".join(lines) + "\n"
 
 
 @tool(REVERSIBLE)

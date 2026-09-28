@@ -238,19 +238,28 @@ def due_summary(schedule: Schedule, now: datetime, days: int = 7) -> str:
 TASK = re.compile(r"^\s*- \[ \] (?:\d+\.\s*)?(.+)$")
 
 
-def open_tasks(todo: Path, limit: int = 15) -> list[str]:
-    """Unchecked items from the first section of the TODO note (the ranked list for right now)."""
+INBOX = "## 📥 Inbox"  # where add_todo puts new items, above "## Done"
+
+
+def task_sections(todo: Path) -> tuple[list[str], list[str]]:
+    """Unchecked items from the first section of the TODO note (the ranked list for right now), and from
+    the inbox of items added by voice or chat, which would otherwise never be read back."""
     if not todo.exists():
-        return []
-    tasks, sections = [], 0
+        return [], []
+    ranked, added, sections, inbox = [], [], 0, False
     for line in todo.read_text(errors="replace").splitlines():
         if line.startswith("## "):
             sections += 1
-            if sections > 1:
-                break
-        elif sections == 1 and (m := TASK.match(line)):
-            tasks.append(re.sub(r"\[\[([^]|]+)(\|[^]]+)?]]", r"\1", m.group(1)).strip())
-    return tasks[:limit]
+            inbox = line.strip() == INBOX
+        elif (sections == 1 or inbox) and (m := TASK.match(line)):
+            item = re.sub(r"\[\[([^]|]+)(\|[^]]+)?]]", r"\1", m.group(1))
+            (added if inbox else ranked).append(re.sub(r"\s*\*\(added [\d-]+\)\*", "", item).strip())
+    return ranked, added
+
+
+def open_tasks(todo: Path, limit: int = 15) -> list[str]:
+    ranked, added = task_sections(todo)
+    return ranked[:limit] + added
 
 
 def today(schedule: Schedule, now: datetime, todo: Path | None = None) -> dict:
