@@ -396,3 +396,123 @@ def test_whispers_spellings_of_the_name_all_become_sommus(heard):
 @pytest.mark.parametrize("heard", ["summers in Waterloo", "the summers", "some of us"])
 def test_words_that_merely_sound_close_do_not_wake_it(heard):
     assert voice.NAME_HEARD.sub("Sommus", heard) == heard
+
+
+def test_one_loud_click_no_longer_keeps_quiet_speech_quiet():
+    """Peak-normalising let a single click near the mic set the level for the whole utterance."""
+    speech = (np.sin(np.linspace(0, 2000, 16000)) * 0.03).astype(np.float32)
+    speech[8000] = 0.9  # a click
+    raised = voice.normalize(speech)
+    assert float(np.percentile(np.abs(raised), 99)) > 0.3  # the speech itself came up
+    assert float(np.max(np.abs(raised))) <= 1.0  # and the click is clipped, not wrapped
+
+
+# ---------------------------------------------------------------- what to do with what was heard
+
+NAMES_ONLY = dict(names_only=True)
+
+
+@pytest.mark.parametrize(
+    ("heard", "awake", "mid_reply", "expected"),
+    [
+        ("what time is it", False, False, (voice.Route.IGNORE, "")),  # asleep, no name
+        ("Hey Sommus, what time is it?", False, False, (voice.Route.RUN, "what time is it?")),
+        ("Sommus.", False, False, (voice.Route.WAKE, "")),
+        ("and tomorrow?", True, False, (voice.Route.CHECK, "and tomorrow?")),  # the room filter decides
+        ("Sommus, that's all.", True, False, (voice.Route.DISMISS, "")),
+        # while it talks, only its name counts: its own echo and the room are ignored
+        ("the weather is sunny", True, True, (voice.Route.IGNORE, "")),
+        ("Sommus, stop.", True, True, (voice.Route.STOP, "")),
+        ("Sommus!", True, True, (voice.Route.STOP, "")),
+        ("Stop talking, Sommus.", True, True, (voice.Route.STOP, "")),
+        ("Sommus, okay stop", True, True, (voice.Route.STOP, "")),
+        ("Sommus, what about tomorrow instead?", True, True, (voice.Route.RUN, "what about tomorrow instead?")),
+    ],
+)
+def test_what_is_done_with_something_heard(heard, awake, mid_reply, expected):
+    assert voice.route(heard, WAKE, awake, mid_reply, **NAMES_ONLY) == expected
+
+
+def test_stop_said_over_sommus_never_reaches_the_music():
+    """'Sommus, stop' used to be queued until the reply ended, then ran as 'stop' — which paused or
+    started Spotify. Said over a reply, it only stops the reply."""
+    kind, request = voice.route("Sommus, stop", WAKE, True, True, names_only=True)
+    assert kind == voice.Route.STOP and request == ""
+    kind, request = voice.route("Sommus, stop", WAKE, True, False, names_only=True)
+    assert kind == voice.Route.RUN and request == "stop"  # with nothing playing, it's about the music
+
+
+def test_without_the_name_rule_any_speech_over_a_reply_is_a_new_request():
+    assert voice.route("make it louder", WAKE, True, True, names_only=False) == (voice.Route.RUN, "make it louder")
+
+
+# ---------------------------------------------------------------- Smart Turn: is he done talking?
+
+
+def test_a_finished_sentence_ends_at_the_short_pause():
+    ends = []
+    found, detector = run_detector(
+        [(0.9, 1.0), (0.0, 2.0)],
+        endpoint=lambda audio: ends.append(len(audio)) or 0.9,
+        check_seconds=0.4,
+        patience_seconds=1.6,
+    )
+    assert len(found) == 1 and len(ends) == 1
+    seconds_of_pause = len(found[0]) / voice.SAMPLE_RATE - 1.0  # minus the speech (no pre-roll: it starts at once)
+    assert seconds_of_pause == pytest.approx(0.4, abs=0.07)  # not the old fixed 0.7–0.9 s
+    assert detector.last_turn_score == 0.9 and detector.last_peak == pytest.approx(0.9)
+
+
+def test_an_unfinished_thought_gets_a_longer_pause():
+    found, _ = run_detector(
+        [(0.9, 1.0), (0.0, 1.0), (0.9, 0.5), (0.0, 2.0)],
+        endpoint=lambda audio: 0.1,  # "remind me to…"
+        check_seconds=0.4,
+        patience_seconds=1.6,
+    )
+    assert len(found) == 1  # the 1 s pause to think didn't split it
+
+
+def test_a_broken_turn_model_falls_back_to_the_fixed_pause():
+    def broken(audio):
+        raise RuntimeError("model gone")
+
+    found, detector = run_detector([(0.9, 1.0), (0.0, 2.0)], endpoint=broken, silence_seconds=0.7)
+    assert len(found) == 1 and detector.endpoint is None
+
+
+def test_whisper_is_told_the_name_so_it_spells_it(monkeypatch):
+    import sys
+    import types
+
+    seen = {}
+
+    def transcribe(audio, **kwargs):
+        seen.update(kwargs)
+        return {"text": "Hey Sommus, mute."}
+
+    monkeypatch.setitem(sys.modules, "mlx_whisper", types.SimpleNamespace(transcribe=transcribe))
+    voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32))
+    assert seen["initial_prompt"] == voice.NAME_PROMPT
+    voice.Transcriber("model").transcribe(np.zeros(100, dtype=np.float32), "digits")
+    assert "PIN" in seen["initial_prompt"]
+
+
+def test_the_voice_log_says_what_happened_and_hides_pins(tmp_path):
+    import json
+
+    log = voice.VoiceLog(tmp_path / "voice.log")
+    log.write(seconds=1.2, loudness_db=-41.0, text="my pin is 2684", outcome="run")
+    log.write(seconds=0.8, text="", outcome="nothing")
+    lines = [json.loads(line) for line in (tmp_path / "voice.log").read_text().splitlines()]
+    assert lines[0]["outcome"] == "run" and "2684" not in lines[0]["text"]
+    assert voice.loudness_db(np.full(1000, 0.1, dtype=np.float32)) == pytest.approx(-20.0)
+
+
+def test_smart_turn_pads_short_audio_in_front():
+    from sommus.interfaces import turn
+
+    window = turn.last_window(np.ones(16000, dtype=np.float32))
+    assert len(window) == 8 * 16000 and window[0] == 0 and window[-1] == 1
+    long = np.arange(10 * 16000, dtype=np.float32)
+    assert turn.last_window(long)[-1] == long[-1] and len(turn.last_window(long)) == 8 * 16000

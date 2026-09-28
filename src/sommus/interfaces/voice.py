@@ -372,9 +372,20 @@ class SpeechDetector:
         max_seconds: float = 20.0,
         pre_roll_seconds: float = 0.5,
         threshold: float = 0.5,
+        endpoint: Callable[[np.ndarray], float] | None = None,
+        check_seconds: float = 0.4,
+        patience_seconds: float = 1.6,
     ):
+        """With `endpoint` (Smart Turn), a pause of `check_seconds` asks it whether he's done: yes ends the
+        utterance there, faster than a fixed pause; no waits up to `patience_seconds` for the rest, so a
+        pause to think isn't taken as the end. Without it, `silence_seconds` of quiet ends it."""
         self._probability = probability
         self._model = None
+        self.endpoint = endpoint
+        self.check_chunks = max(1, round(check_seconds / CHUNK_SECONDS))
+        self.patience_chunks = round(patience_seconds / CHUNK_SECONDS)
+        self.last_peak = 0.0  # the loudest speech score in the last utterance, for the voice log
+        self.last_turn_score: float | None = None  # what Smart Turn said about it
         self.silence_chunks = round(silence_seconds / CHUNK_SECONDS)
         self.min_speech_chunks = round(min_speech_seconds / CHUNK_SECONDS)
         self.max_chunks = round(max_seconds / CHUNK_SECONDS)
@@ -401,6 +412,8 @@ class SpeechDetector:
     def reset(self) -> None:
         self.buffer: list[np.ndarray] = []
         self.speech = self.silence = 0
+        self.peak = 0.0
+        self.turn_score: float | None = None
         self.pre_roll.clear()
         if self._model is not None:
             self._model.reset_states()
@@ -412,17 +425,34 @@ class SpeechDetector:
             self.pre_roll.append(chunk)
             if score >= self.threshold:
                 self.buffer, self.speech, self.silence = list(self.pre_roll), 1, 0
+                self.peak = score
             return None
         self.buffer.append(chunk)
+        self.peak = max(self.peak, score)
         if score >= self.threshold - 0.15:  # a little easier to stay in speech than to start it
             self.speech, self.silence = self.speech + 1, 0
         else:
             self.silence += 1
-        if self.silence >= self.silence_chunks or len(self.buffer) >= self.max_chunks:
+        if self._finished() or len(self.buffer) >= self.max_chunks:
             utterance, long_enough = np.concatenate(self.buffer), self.speech >= self.min_speech_chunks
+            self.last_peak, self.last_turn_score = self.peak, self.turn_score
             self.reset()
             return utterance if long_enough else None
         return None
+
+    def _finished(self) -> bool:
+        if self.endpoint is None:
+            return self.silence >= self.silence_chunks
+        if self.silence == self.check_chunks and self.speech >= self.min_speech_chunks:
+            try:
+                self.turn_score = self.endpoint(np.concatenate(self.buffer))
+            except Exception:  # a broken model must not stop the listening
+                self.turn_score = None
+                self.endpoint = None
+                return self.silence >= self.silence_chunks
+            if self.turn_score >= 0.5:
+                return True
+        return self.silence >= self.patience_chunks
 
 
 class Listener:
@@ -569,6 +599,77 @@ DISMISS = re.compile(
 )
 
 
+# Said over Sommus to make it stop talking — not requests of their own ("stop" alone would pause the music).
+STOP_TALKING = re.compile(
+    r"^\W*(?:ok(?:ay)?\W*)?(?:stop(?: talking| it| that)?|shut up|be quiet|quiet|enough|hold on|wait|"
+    r"cancel(?: that)?|never ?mind|nevermind|that'?s enough|pause)\W*$",
+    re.I,
+)
+
+
+class Route:
+    IGNORE = "ignore"  # not for Sommus: not shown, not kept
+    WAKE = "wake"  # just the name: listen
+    STOP = "stop"  # cut off what it's saying, then listen
+    DISMISS = "dismiss"  # the conversation is over
+    CHECK = "check"  # awake, no name: maybe a follow-up, maybe talk to someone else in the room
+    RUN = "run"  # a request
+
+
+def route(text: str, wake: re.Pattern[str], awake: bool, mid_reply: bool, names_only: bool) -> tuple[str, str]:
+    """What to do with something heard, and the request in it.
+
+    `mid_reply`: Sommus is talking or working on a turn. `names_only`: while it does, only speech that
+    starts or ends with its name counts (it can hear itself through the echo canceller, and the room).
+    """
+    request = heard_wake(text, wake)
+    if mid_reply:
+        if names_only and request is None:
+            return Route.IGNORE, ""
+        said = request if request is not None else text
+        if not said or STOP_TALKING.match(said):
+            return Route.STOP, ""
+        return Route.RUN, said
+    if request is None:
+        return (Route.CHECK, text) if awake else (Route.IGNORE, "")
+    if not request:
+        return Route.WAKE, ""
+    if DISMISS.match(request):
+        return Route.DISMISS, ""
+    return Route.RUN, request
+
+
+class VoiceLog:
+    """One JSON line per thing heard, in data/voice.log: how loud and how sure the detector was, what Whisper
+    wrote, how long it took, and what Sommus did with it. "It didn't hear me" becomes a line that says which
+    layer dropped it. Local only (data/ is gitignored); PINs are redacted."""
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def write(self, **fields: Any) -> None:
+        import json
+        from datetime import datetime
+
+        from sommus.brain.pin import redact
+
+        if "text" in fields and fields["text"]:
+            fields["text"] = redact(fields["text"])
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a") as f:
+                f.write(json.dumps({"at": datetime.now().isoformat(timespec="seconds"), **fields}) + "\n")
+        except OSError:
+            pass
+
+
+def loudness_db(audio: np.ndarray) -> float:
+    """RMS level in dBFS: about -20 up close, -40 and below from across a room."""
+    if not audio.size:
+        return -120.0
+    return round(20 * float(np.log10(max(float(np.sqrt(np.mean(np.square(audio)))), 1e-6))), 1)
+
+
 def open_microphone(device: str | int | None = None):
     """An open input stream and its sample rate, getting past the ways Core Audio refuses one.
 
@@ -578,6 +679,14 @@ def open_microphone(device: str | int | None = None):
     """
     import sounddevice as sd
 
+    # Restarting PortAudio takes a moment, and it used to happen every time the mic reopened (after each
+    # reply and chime), eating the first words said. Now only when the plain attempt fails.
+    try:
+        stream = sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32", blocksize=CHUNK, device=device)
+        stream.start()
+        return stream, SAMPLE_RATE
+    except Exception:
+        pass
     _refresh_audio_devices()
     attempts: list[tuple[str | int | None, float]] = [(device, SAMPLE_RATE)]
     try:
@@ -623,10 +732,21 @@ def normalize(audio: np.ndarray, target_peak: float = 0.7) -> np.ndarray:
     mumbling or as nothing. Scaling the loudest sample to a fixed level costs nothing and doesn't
     change what was said; the cap keeps a hiss-only clip from being amplified into noise.
     """
-    peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+    if not audio.size:
+        return audio
+    # The 99.5th percentile, not the maximum: one click or clap near the mic used to set the level, and
+    # the quiet speech around it stayed quiet. Clipped at full scale so the rare louder sample can't wrap.
+    peak = float(np.percentile(np.abs(audio), 99.5))
     if peak < 0.005 or peak >= target_peak:  # silence, or already loud enough
         return audio
-    return (audio * min(target_peak / peak, 20.0)).astype(np.float32)
+    return np.clip(audio * min(target_peak / peak, 20.0), -1.0, 1.0).astype(np.float32)
+
+
+# Whisper writes what it expects. Told the name up front, it spells it right: measured 2026-09-28 on quiet,
+# echoey speech (-42 dB), small.en woke on 8/8 phrases instead of 6/8 and got 88% of words instead of 71%,
+# at the same speed, with no extra false wakes on noise, silence or room talk. large-v3-turbo was 3.4x slower
+# for no gain. (scratch benchmark in the vault handoff)
+NAME_PROMPT = "Hey Sommus."
 
 
 class Transcriber:
@@ -643,7 +763,7 @@ class Transcriber:
         half-caught number comes out as words ("day four") unless it is told numbers are coming."""
         import mlx_whisper
 
-        hint = {"initial_prompt": "My PIN is 1234."} if expecting == "digits" else {}
+        hint = {"initial_prompt": "My PIN is 1234." if expecting == "digits" else NAME_PROMPT}
         result = mlx_whisper.transcribe(normalize(audio), path_or_hf_repo=self.model, language="en", fp16=True, **hint)
         text = result["text"].strip()
         return "" if text.lower().strip(" .!?") in HALLUCINATIONS else NAME_HEARD.sub("Sommus", text)

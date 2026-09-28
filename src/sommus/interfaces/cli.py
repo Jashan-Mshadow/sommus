@@ -211,6 +211,7 @@ async def voice_chat() -> None:
     """Talk to Sommus hands-free: say "Hey Sommus", then just talk until the conversation ends.
     Typing works too, and Return wakes it without the wake phrase."""
     from sommus.interfaces import addressee, duplex, voice
+    from sommus.interfaces.turn import SmartTurn
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print("[red]No API key.[/] See [bold]sommus check[/].")
@@ -220,10 +221,15 @@ async def voice_chat() -> None:
     store = Store(cfg.data_dir / "sommus.db")
     session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
+    smart_turn = SmartTurn() if settings.get("smart_turn", True) else None
     detector = voice.SpeechDetector(
         silence_seconds=float(settings.get("silence_seconds", 0.7)),
         threshold=float(settings.get("vad_threshold", 0.5)),
+        endpoint=smart_turn.complete if smart_turn else None,
+        check_seconds=float(settings.get("turn_check_seconds", 0.4)),
+        patience_seconds=float(settings.get("turn_patience_seconds", 1.6)),
     )
+    heard_log = voice.VoiceLog(cfg.data_dir / "voice.log")
     wake = voice.wake_pattern(settings.get("wake_phrases", ["sommus", "hey sommus"]))
     awake_seconds = float(settings.get("awake_seconds", 30))
     # A reply that ends in a question is an invitation to answer: don't make him say the name again.
@@ -235,6 +241,12 @@ async def voice_chat() -> None:
         engine = await _warm_voice(voice, settings)
         await asyncio.to_thread(transcriber.warm_up)
         await asyncio.to_thread(detector.probability, np.zeros(voice.CHUNK, dtype=np.float32))  # load the VAD
+        if smart_turn:
+            try:
+                await asyncio.to_thread(smart_turn.warm_up)
+            except Exception as e:  # not downloaded and offline: a fixed pause ends what he says instead
+                console.print(f"[yellow]! Smart Turn unavailable ({escape(str(e))}) — using a fixed pause.[/]")
+                detector.endpoint = None
     speaker = voice.Speaker(
         engine,
         on_error=lambda e: console.print(f"[red]! Voice error: {escape(str(e))}[/]"),
@@ -254,9 +266,10 @@ async def voice_chat() -> None:
     # With barge_in_needs_name, Sommus listens while it talks but only stops for its own name, so
     # a roommate's voice — or its own, coming back through the echo canceller — can't cut it off.
     needs_name = bool(settings.get("barge_in_needs_name", True))
+    names_only = not (engine_io is not None and not needs_name)
     loop = asyncio.get_running_loop()
-    heard: asyncio.Queue[np.ndarray] = asyncio.Queue()
-    state = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False, "held": None}
+    heard: asyncio.Queue[tuple[np.ndarray, float, float | None]] = asyncio.Queue()
+    state: dict[str, Any] = {"awake_until": 0.0, "deaf_until": 0.0, "busy": False, "held": None, "turn": None}
     hold_seconds = float(settings.get("hold_seconds", 2.0))
 
     def deaf() -> bool:  # runs on the listener thread; plain reads only
@@ -281,19 +294,26 @@ async def voice_chat() -> None:
         chime(voice.CHIME_SLEEP)
         console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
 
+    def working() -> bool:
+        turn = state["turn"]
+        return turn is not None and not turn.done()
+
     def barge_in() -> None:  # cut off whatever Sommus is saying or doing
-        turn = state.get("turn")
-        if speaker.speaking or (turn is not None and not turn.done()):
+        work = state.get("work")
+        if speaker.speaking or (work is not None and not work.done()):
             speaker.interrupt()
-            if turn is not None and not turn.done():
-                turn.cancel()
+            if work is not None and not work.done():
+                work.cancel()
             console.print("[dim]  (interrupted)[/]")
 
     listener = voice.Listener(
         detector,
         source=(lambda: (duplex.DuplexStream(engine_io), voice.SAMPLE_RATE)) if engine_io else None,
         on_speech=(lambda: loop.call_soon_threadsafe(barge_in)) if engine_io and not needs_name else None,
-        deliver=lambda audio: loop.call_soon_threadsafe(heard.put_nowait, audio),
+        # Read on the listener thread the moment the utterance ends, so the scores belong to this one.
+        deliver=lambda audio: loop.call_soon_threadsafe(
+            heard.put_nowait, (audio, detector.last_peak, detector.last_turn_score)
+        ),
         deaf=deaf,
         device=settings.get("input_device"),
         on_error=lambda e: loop.call_soon_threadsafe(
@@ -302,34 +322,95 @@ async def voice_chat() -> None:
     )
 
     async def run_turn(text: str, heard_in: float | None) -> None:
+        """One request, run beside the microphone: the main loop keeps hearing, so "Sommus, stop" works."""
         state["busy"] = True
         speaker.first_word_at = None
         asked_at = time.monotonic()
-        turn = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
-        state["turn"] = turn
-        loop.add_signal_handler(signal.SIGINT, turn.cancel)
+        was_awake = time.monotonic() < state["awake_until"]
+        work = asyncio.create_task(TurnView(cfg, session, speaker).run(brain, text))
+        state["work"] = work
+        loop.add_signal_handler(signal.SIGINT, work.cancel)
         try:
-            await turn
+            await work
         except asyncio.CancelledError:
             speaker.interrupt()
             console.print("[yellow]! Cancelled.[/]")
+        except Exception as e:  # in a background task an error would otherwise vanish, and so would the reply
+            speaker.interrupt()
+            console.print(f"[red]! That turn failed: {escape(f'{type(e).__name__}: {e}')}[/]")
         finally:
             loop.remove_signal_handler(signal.SIGINT)
         await speaker.finished()
-        state["turn"] = None
         state["busy"] = False
         if speaker.first_word_at and heard_in is not None:
             console.print(
                 f"[dim]  first spoken word {speaker.first_word_at - asked_at + heard_in:.1f}s after you stopped[/]"
             )
+        if heard_in is not None or was_awake:  # a typed request doesn't open the mic by itself
+            # The follow-up window starts now, and runs longer when Sommus asked him something.
+            asked = brain.last_reply().strip().endswith("?")
+            state["awake_until"] = time.monotonic() + (awake_after_question if asked else awake_seconds)
 
+    async def start_turn(text: str, heard_in: float | None) -> None:
+        nonlocal prompt
+        if working():  # a new request replaces the one in progress
+            barge_in()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state["turn"]
+        if prompt is not None:  # hand Ctrl+C back to the turn: an open prompt would swallow it
+            prompt.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await prompt
+            prompt = None
+        state["turn"] = asyncio.create_task(run_turn(text, heard_in))
+
+    async def act_on(text: str, seconds: float, heard_in: float, logged: dict[str, Any]) -> None:
+        awake = time.monotonic() < state["awake_until"]
+        mid_reply = speaker.speaking or working()
+        kind, request = voice.route(text, wake, awake, mid_reply, names_only)
+        outcome = kind
+        if kind == voice.Route.IGNORE:
+            outcome = "ignored: Sommus talking, no name" if mid_reply else "ignored: asleep, no wake phrase"
+        elif kind == voice.Route.STOP:
+            barge_in()
+            state["awake_until"] = max(state["awake_until"], time.monotonic() + awake_seconds)
+            console.print("[dim]  stopped. Listening…[/]")
+        elif kind == voice.Route.WAKE:
+            wake_up()
+            console.print("[dim]  listening…[/]")
+        elif kind == voice.Route.DISMISS:
+            barge_in()
+            fall_asleep()
+        elif kind == voice.Route.CHECK:
+            # Awake and no wake phrase: a follow-up, or talk to someone else in the room? PINs go
+            # straight to the brain, never to the check.
+            given, _ = pin.split_pin(text)
+            if given is None and settings.get("room_filter", True):
+                if not await addressee.said_to_sommus(brain.client, cfg.user, brain.last_reply(), text):
+                    console.print(f"[dim]  (not for me: “{escape(text)}”)[/]")
+                    kind, outcome = voice.Route.IGNORE, "ignored: room filter says not for Sommus"
+            if kind == voice.Route.CHECK:
+                kind = outcome = voice.Route.RUN
+        heard_log.write(**logged, outcome=outcome)
+        if kind != voice.Route.RUN:
+            return
+        if not awake:
+            wake_up()
+        console.print(
+            f"[bold]you ›[/] {escape(pin.redact(request))} "
+            f"[dim]({seconds:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+        )
+        await start_turn(request, heard_in)
+
+    prompt: asyncio.Task | None = None
     try:
         brain = Brain(cfg, hub, store, voice=True)
         bot_task, telegram_note = await _start_telegram(cfg, brain, store)
+        turn_note = " · Smart Turn" if detector.endpoint else ""
         console.print(
-            f"[bold magenta]{cfg.name}[/] [dim]· voice · {escape(engine.label)}{telegram_note}[/]\n"
-            "[dim]Always listening: say “Hey Sommus”, then just talk. It sleeps again when the conversation "
-            "goes quiet. Return wakes it, typing works, /quit exits.[/]"
+            f"[bold magenta]{cfg.name}[/] [dim]· voice · {escape(engine.label)}{turn_note}{telegram_note}[/]\n"
+            "[dim]Always listening: say “Hey Sommus”, then just talk. “Sommus, stop” cuts it off. It sleeps again "
+            "when the conversation goes quiet. Return wakes it, typing works, /quit exits.[/]"
         )
         if (raised := raise_mic_input()) is not None:
             console.print(f"[dim]Mic input was at {raised}%, turned up to {MIN_MIC_INPUT}% so it hears you "
@@ -338,104 +419,61 @@ async def voice_chat() -> None:
         speaker.flush()
         await speaker.finished()
         listener.start()
-        prompt: asyncio.Task | None = None
-
-        async def act_on(text: str, seconds: float, heard_in: float) -> None:
-            nonlocal prompt
-            awake = time.monotonic() < state["awake_until"]
-            request = voice.heard_wake(text, wake)
-            turn = state.get("turn")
-            mid_reply = speaker.speaking or (turn is not None and not turn.done())
-            if mid_reply and engine_io is not None and needs_name:
-                # It's hearing itself as well as the room right now, so only its name counts.
-                if request is None:
-                    return
-                barge_in()
-            if not awake:
-                if request is None:
-                    return  # not said to Sommus: not shown, not kept
-                wake_up()
-            elif request is None:
-                # Awake and no wake phrase: a follow-up, or talk to someone else in the room? PINs go
-                # straight to the brain, never to the check.
-                given, _ = pin.split_pin(text)
-                if given is None and settings.get("room_filter", True):
-                    if not await addressee.said_to_sommus(brain.client, cfg.user, brain.last_reply(), text):
-                        console.print(f"[dim]  (not for me: “{escape(text)}”)[/]")
-                        return
-                request = text
-            if not request:  # just the name
-                wake_up()
-                console.print("[dim]  listening…[/]")
-                return
-            if voice.DISMISS.match(request):
-                fall_asleep()
-                return
-            console.print(
-                f"[bold]you ›[/] {escape(pin.redact(request))} "
-                f"[dim]({seconds:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
-            )
-            if prompt is not None:  # hand Ctrl+C back to the turn: an open prompt would swallow it
-                prompt.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await prompt
-                prompt = None
-            await run_turn(request, heard_in)
-            # The follow-up window starts now, and runs longer when Sommus asked him something.
-            asked = brain.last_reply().strip().endswith("?")
-            state["awake_until"] = time.monotonic() + (awake_after_question if asked else awake_seconds)
 
         while True:
-            if prompt is None:
+            busy = working()
+            if prompt is None and not busy:
                 prompt = asyncio.create_task(_prompt_line(session))
             listening = asyncio.create_task(heard.get())
+            waits: set[asyncio.Task] = {listening}
+            if prompt is not None:
+                waits.add(prompt)
+            if busy:
+                waits.add(state["turn"])
             now = time.monotonic()
-            deadlines = [state["awake_until"]] if now < state["awake_until"] else []
+            deadlines = [state["awake_until"]] if now < state["awake_until"] and not busy else []
             if state["held"]:
                 deadlines.append(state["held"][1])
             timeout = max(0.0, min(deadlines) - now) if deadlines else None
-            done, _ = await asyncio.wait({prompt, listening}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
             if listening not in done:
                 listening.cancel()
             if not done:
                 now = time.monotonic()
                 if state["held"] and now >= state["held"][1]:
-                    text, _, seconds = state["held"]
+                    text, _, seconds, logged = state["held"]
                     if detector.buffer:  # still talking: that's the rest of the sentence arriving
-                        state["held"] = (text, now + 0.5, seconds)
+                        state["held"] = (text, now + 0.5, seconds, logged)
                     else:  # nothing followed: it was the whole sentence after all
                         state["held"] = None
-                        await act_on(text, seconds, 0.0)
-                elif state["awake_until"] and now >= state["awake_until"]:  # the conversation went quiet
+                        await act_on(text, seconds, 0.0, logged)
+                elif state["awake_until"] and now >= state["awake_until"] and not working():
                     if detector.buffer:  # ...unless someone just started talking
                         state["awake_until"] = now + 1
                     else:
                         fall_asleep()
                 continue
 
-            if prompt in done:
+            if prompt is not None and prompt in done:
                 finished, prompt = prompt, None
                 try:
                     typed = finished.result()
                 except EOFError:
                     break
                 if typed == CTRL_C:
-                    speaker.interrupt()
-                    continue
-                typed = typed.strip()
-                if typed.startswith("/"):
+                    barge_in()
+                elif (typed := typed.strip()).startswith("/"):
                     if not handle_command(typed, brain, hub, store):
                         break
                 elif not typed:  # Return: wake without the wake phrase
                     wake_up()
                     console.print("[dim]  listening…[/]")
                 else:
-                    await run_turn(typed, None)
-                    if time.monotonic() < state["awake_until"]:
-                        state["awake_until"] = time.monotonic() + awake_seconds
-                continue
+                    await start_turn(typed, None)
 
-            audio = listening.result()
+            if listening not in done:
+                continue
+            audio, peak, turn_score = listening.result()
             stt_started = time.monotonic()
             waiting_for_pin = bool(brain.gate.pending) and not brain.gate.unlocked
             if waiting_for_pin:  # stay awake while it's waiting: a fumbled PIN shouldn't end the turn
@@ -447,19 +485,34 @@ async def voice_chat() -> None:
                     console.print(f"[dim]  (that wasn't a PIN — heard “{escape(text)}”)[/]")
             heard_in = time.monotonic() - stt_started
             seconds = len(audio) / voice.SAMPLE_RATE
+            logged = {
+                "seconds": round(seconds, 2),
+                "loudness_db": voice.loudness_db(audio),
+                "speech_score": round(peak, 2),
+                "turn_score": None if turn_score is None else round(turn_score, 2),
+                "stt_seconds": round(heard_in, 2),
+                "text": text,
+            }
             if not text:
+                heard_log.write(**logged, outcome="nothing: silence or a Whisper filler")
                 continue
             if state["held"]:  # the rest of a sentence that stopped mid-thought
-                earlier, _, earlier_seconds = state["held"]
+                earlier, _, earlier_seconds, _ = state["held"]
                 text, seconds, state["held"] = f"{earlier} {text}", seconds + earlier_seconds, None
+                logged["text"] = text
             if voice.sounds_unfinished(text):
-                state["held"] = (text, time.monotonic() + hold_seconds, seconds)
+                state["held"] = (text, time.monotonic() + hold_seconds, seconds, logged)
+                heard_log.write(**logged, outcome="held: sounds unfinished, waiting for the rest")
                 if time.monotonic() < state["awake_until"]:  # don't fall asleep while waiting for the rest
                     state["awake_until"] = max(state["awake_until"], state["held"][1] + 1)
                 continue
-            await act_on(text, seconds, heard_in)
+            await act_on(text, seconds, heard_in, logged)
     finally:
         listener.stop()
+        if working():
+            barge_in()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state["turn"]
         if engine_io is not None:
             engine_io.stop()
         if bot_task:

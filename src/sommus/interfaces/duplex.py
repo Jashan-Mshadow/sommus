@@ -149,7 +149,13 @@ class DuplexStream:
         self.duplex = duplex
 
     def __enter__(self) -> DuplexStream:
-        return self
+        # The engine kept capturing while the listener was away (a chime playing): that audio is old now,
+        # and reading it would put the listener seconds behind the room.
+        while True:
+            try:
+                self.duplex.mic.get_nowait()
+            except queue.Empty:
+                return self
 
     def __exit__(self, *exc) -> None:
         pass  # the engine keeps running: Sommus is still talking through it

@@ -17,6 +17,7 @@ dependencies = [
     "mlx-audio[tts]>=0.5.4",
     "mlx-whisper>=0.4.3",
     "numpy>=2.5.3",
+    "onnxruntime>=1.30.0",
     "prompt-toolkit>=3.0.53",
     "pymupdf>=1.28.2",
     "pyobjc-framework-avfoundation>=12.2.2",

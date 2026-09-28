@@ -127,6 +127,12 @@ barge_in_mic_gain = 2.0                         # echo cancellation halves the m
 room_filter = true                              # awake, check with a fast model that speech was meant for Sommus
 vad_threshold = 0.35                            # speech detector; raise toward 0.6 if noise keeps waking Whisper,
                                                 # lower toward 0.25 if it misses you from across the room
+# Smart Turn (open source, runs on the Mac, ~55 ms): at a short pause it judges from his tone whether he's
+# finished. Yes ends the utterance at turn_check_seconds; "not yet" waits up to turn_patience_seconds, so a
+# pause to think isn't the end. false = the old fixed pause (silence_seconds).
+smart_turn = true
+turn_check_seconds = 0.4
+turn_patience_seconds = 1.6
 # input_device = "Jashan Microphone"            # e.g. use the iPhone as the mic
 
 [budget]
