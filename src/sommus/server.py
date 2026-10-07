@@ -200,12 +200,19 @@ class Server:
             if not await asyncio.to_thread(self.tailnet.is_mine, caller):
                 self.log(f"Refused /ask from {caller}: not one of Jashan's devices")
                 return JSONResponse({"reply": "Not allowed."}, status_code=403)
+            raw = await request.body()
             try:
-                body = await request.json()
-                text = str(body.get("text", "")).strip() if isinstance(body, dict) else ""
+                body = json.loads(raw)
             except ValueError:
-                text = (await request.body()).decode(errors="replace").strip()
+                body = raw.decode(errors="replace")
+            if isinstance(body, dict):
+                # The Shortcut's JSON key is easy to leave blank or misspell: take "text", else any string in it.
+                text = str(body.get("text") or next((v for v in body.values() if isinstance(v, str) and v.strip()), ""))
+            else:
+                text = str(body)
+            text = text.strip()
             if not text:
+                self.log(f"/ask got no words: {len(raw)} bytes, {raw[:120]!r}")
                 return JSONResponse({"reply": "I didn't catch anything.", "action": ""})
             try:
                 result = await self.ask(text)
