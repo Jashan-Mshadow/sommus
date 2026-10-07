@@ -228,6 +228,9 @@ async def voice_chat() -> None:
     store = Store(cfg.data_dir / "sommus.db")
     session: PromptSession = PromptSession(history=PrivateHistory(str(cfg.data_dir / "history")))
     transcriber = voice.Transcriber(settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
+    from sommus.interfaces import speaker as voice_id
+
+    voiceprint = voice_id.Voiceprint.load(cfg.data_dir)  # None until `sommus voiceprint`: the PIN does it all
     smart_turn = SmartTurn() if settings.get("smart_turn", True) else None
     detector = voice.SpeechDetector(
         silence_seconds=float(settings.get("silence_seconds", 0.7)),
@@ -391,6 +394,20 @@ async def voice_chat() -> None:
             return None
         return request
 
+    def vouch_for(logged: dict[str, Any]) -> None:
+        """Voice ID: a request in his voice may use personal tools without the PIN. Anything else — someone
+        else, or too short to tell — leaves only the PIN, so a roommate can't ride on his last request."""
+        if voiceprint is None:
+            return
+        if logged.get("voice_match"):
+            brain.gate.vouch()
+        else:
+            brain.gate.unvouch()
+
+    def voice_note(logged: dict[str, Any]) -> str:
+        match = logged.get("voice_match")
+        return "" if voiceprint is None or match is None else (", your voice" if match else ", not your voice")
+
     async def act_on(text: str, seconds: float, heard_in: float, logged: dict[str, Any]) -> None:
         awake = time.monotonic() < state["awake_until"]
         mid_reply = speaker.speaking or working()
@@ -409,6 +426,7 @@ async def voice_chat() -> None:
             merged = f"{earlier} {text}"
             heard_log.write(**logged, outcome="run: the rest of the request just made")
             console.print(f"[bold]you ›[/] {escape(pin.redact(merged))} [dim](joined)[/]")
+            vouch_for(logged)
             await start_turn(merged, heard_in)
             return
         kind, request = voice.route(text, wake, awake, mid_reply, names_only)
@@ -442,8 +460,9 @@ async def voice_chat() -> None:
             wake_up()
         console.print(
             f"[bold]you ›[/] {escape(pin.redact(request))} "
-            f"[dim]({seconds:.1f}s of audio, understood in {heard_in:.2f}s)[/]"
+            f"[dim]({seconds:.1f}s of audio, understood in {heard_in:.2f}s{voice_note(logged)})[/]"
         )
+        vouch_for(logged)
         await start_turn(request, heard_in)
 
     prompt: asyncio.Task | None = None
@@ -543,6 +562,9 @@ async def voice_chat() -> None:
             if not text:
                 heard_log.write(**logged, outcome="nothing: silence or a Whisper filler")
                 continue
+            if voiceprint is not None:  # ~0.1 s on the M1
+                match, score = await asyncio.to_thread(voice_id.check, voiceprint, audio)
+                logged["voice_match"], logged["voice_score"] = match, score
             if state["held"]:  # the rest of a sentence that stopped mid-thought
                 earlier, _, earlier_seconds, _ = state["held"]
                 text, seconds, state["held"] = f"{earlier} {text}", seconds + earlier_seconds, None
@@ -609,6 +631,21 @@ async def live_chat() -> None:
             await hub.__aexit__(None, None, None)
             return
     brain = Brain(cfg, hub, store, relay=True)  # Gemini does the talking: Claude hands back plain results
+    from sommus.interfaces import speaker as voice_id
+
+    voiceprint = voice_id.Voiceprint.load(cfg.data_dir)
+    said: list[np.ndarray] = []  # his current sentence, kept on the Mac only for voice ID, then dropped
+    quiet_chunks = 0
+
+    async def check_voice(audio: np.ndarray) -> None:
+        """Voice ID for live mode: his last sentence vouches for the tool calls it leads to."""
+        match, score = await asyncio.to_thread(voice_id.check, voiceprint, audio)
+        if match:
+            brain.gate.vouch()
+        elif match is False:
+            brain.gate.unvouch()
+        log(text="", outcome="voice id", voice_match=match, voice_score=score)
+
     tools = live.declarations(hub.api_tools())
     system = live.instructions(cfg.name, cfg.user, settings.get("style", ""), settings.get("persona", "butler"))
     loop = asyncio.get_running_loop()
@@ -719,6 +756,7 @@ async def live_chat() -> None:
 
     async def pump() -> None:
         """Every mic chunk goes one place: the wake-word check (asleep), Google (live), or the PIN check."""
+        nonlocal quiet_chunks
         batch: list[np.ndarray] = []
         while True:
             chunk = await mic.get()
@@ -734,8 +772,18 @@ async def live_chat() -> None:
                     batch = []
                 # His own voice keeps it awake. Gemini sends nothing back while he talks at length, and a long
                 # explanation was taken for 30 s of quiet: it went to sleep mid-sentence (2026-09-28).
-                if detector.probability(chunk) >= detector.threshold:
+                talking = detector.probability(chunk) >= detector.threshold
+                if talking:
                     conversation.last_activity = now
+                if voiceprint is not None and not engine_io.speaking:
+                    if talking or said:
+                        said.append(chunk)
+                        del said[:-300]  # the last ~10 s is plenty to tell whose voice it is
+                    quiet_chunks = 0 if talking else quiet_chunks + 1
+                    if said and quiet_chunks >= 12:  # ~0.4 s of quiet: the sentence is over
+                        sentence = np.concatenate(said)
+                        said.clear()
+                        asyncio.create_task(check_voice(sentence))
                 quiet_for = now - conversation.last_activity
                 if (
                     not engine_io.speaking
@@ -917,6 +965,59 @@ async def voices(names: list[str]) -> None:
         f"[dim]All English voices: {', '.join(available)}\n"
         "Hear any: sommus voices am_adam bf_lily …\n"
         'Pick one: config.toml → \\[voice] kokoro_voice = "…"  (speed = 1.1 talks a little faster)[/]'
+    )
+
+
+def make_voiceprint() -> None:
+    """Learn Jashan's voice: he reads a few sentences, each becomes a voice embedding, and their average is
+    the voiceprint (data/voiceprint.json, numbers only, never audio). Requests in his voice then skip the PIN."""
+    from sommus.interfaces import speaker as voice_id
+    from sommus.interfaces import voice
+
+    cfg = config.load()
+    settings = config.section("voice")
+    lines = voice_id.ENROL_LINES
+    console.print(
+        f"[bold magenta]{cfg.name}[/] [dim]· voiceprint[/]\nRead each sentence after the chime, in your normal "
+        f"voice, from where you usually sit. {len(lines)} sentences, about a minute. Nothing is recorded to disk "
+        "but the voiceprint's numbers. Ctrl+C stops."
+    )
+    raise_mic_input()
+    detector = voice.SpeechDetector(silence_seconds=0.9, threshold=float(settings.get("vad_threshold", 0.35)))
+    samples: list[np.ndarray] = []
+    stream, rate = voice.open_microphone(settings.get("input_device"))
+    block = round(rate * voice.CHUNK_SECONDS)
+    with stream:
+        for i, line in enumerate(lines, 1):
+            console.print(f"\n[bold]{i}/{len(lines)}[/]  [cyan]“{line}”[/]")
+            time.sleep(0.4)
+            voice.chime(voice.CHIME_WAKE)
+            time.sleep(0.3)  # let the chime finish before listening, so it isn't part of the sample
+            if stream.read_available:
+                stream.read(stream.read_available)
+            detector.reset()
+            utterance, started = None, time.monotonic()
+            while utterance is None and time.monotonic() - started < 15:
+                audio, _ = stream.read(block)
+                mono = audio[:, 0]
+                if rate != voice.SAMPLE_RATE:
+                    mono = np.interp(np.linspace(0, len(mono) - 1, voice.CHUNK), np.arange(len(mono)), mono)
+                utterance = detector.feed(np.ascontiguousarray(mono, dtype=np.float32))
+            embedding = voice_id.embed(utterance) if utterance is not None else None
+            if embedding is None:
+                console.print("[yellow]  didn't catch enough of that, skipping[/]")
+                continue
+            samples.append(embedding)
+            console.print(f"[green]  ✓[/] [dim]{len(utterance) / voice.SAMPLE_RATE:.1f}s[/]")
+    if len(samples) < 5:
+        console.print(f"[red]Only {len(samples)} usable sentences; run it again somewhere quieter.[/]")
+        return
+    voiceprint = voice_id.Voiceprint.from_samples(samples)
+    path = voiceprint.save(cfg.data_dir)
+    own = [round(voiceprint.score(e), 2) for e in samples]
+    console.print(
+        f"\n[green]✓[/] Voiceprint saved ({path.relative_to(config.ROOT)}). Your sentences scored {own}; "
+        f"it accepts {voiceprint.threshold:.2f} and up. Restart [bold]sommus voice[/] or [bold]sommus live[/]."
     )
 
 
@@ -1282,6 +1383,7 @@ def main() -> None:
             "live",
             "serve",
             "node",
+            "voiceprint",
         ],
         default="chat",
     )
@@ -1307,6 +1409,8 @@ def main() -> None:
             asyncio.run(run_eval(args.live, args.only))
         elif args.command == "pin":
             set_pin()
+        elif args.command == "voiceprint":
+            make_voiceprint()
         elif args.command == "today":
             show_today()
         elif args.command == "stats":

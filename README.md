@@ -158,6 +158,7 @@ Everything audio stays on the Mac, and none of it costs anything:
 | Interrupting | macOS echo cancellation keeps the mic open while Sommus talks; its name cuts it off ("Sommus, stop", or "Sommus, what about tomorrow?"), anything else — its own echo, the room — is ignored |
 | Understanding | Whisper small.en on Apple silicon (`mlx-whisper`), ~0.4 s per command, offline, told the name up front so it spells it right from across a room |
 | Speaking | **Kokoro-82M** on Apple silicon (`mlx-audio`), ~330 MB, offline. Sentences are voiced as the reply streams, so speech starts about 0.7 s after the first sentence arrives |
+| Voice ID | **WeSpeaker ResNet34** (VoxCeleb, [CC BY 4.0](https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM)) on onnxruntime, 26 MB, ~0.1 s per sentence. `sommus voiceprint` learns the owner's voice from 8 sentences; a request in that voice may use personal tools without the PIN, anyone else still needs it. Only the voiceprint's numbers are stored, never audio |
 
 ### Live mode (Gemini Live)
 

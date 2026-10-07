@@ -121,6 +121,9 @@ def set_pin(data_dir: Path, pin: str) -> None:
     path.chmod(0o600)
 
 
+VOUCH_SECONDS = 90  # a voice-matched request: long enough for a slow turn (calendar ~30 s), no longer
+
+
 class Gate:
     def __init__(
         self,
@@ -136,6 +139,7 @@ class Gate:
         self.unlocked_until = 0.0
         self.wrong = 0
         self.locked_out_until = 0.0
+        self.vouched_until = 0.0  # his voice was recognised on the request being handled (voice ID)
         self.pending: str | None = None  # the request that hit the lock, replayed once unlocked
         self.partial = ("", 0.0)  # digits heard so far, when a PIN is said in pieces
 
@@ -163,8 +167,20 @@ class Gate:
         as a wrong PIN towards the lockout."""
         return self.expecting or mentions_pin(text)
 
+    @property
+    def vouched(self) -> bool:
+        return self.clock() < self.vouched_until
+
+    def vouch(self, seconds: float = VOUCH_SECONDS) -> None:
+        """Voice ID matched the request just said: personal tools run for this request without the PIN.
+        Short on purpose: it covers the turn his voice asked for, not the next person to speak."""
+        self.vouched_until = self.clock() + seconds
+
+    def unvouch(self) -> None:
+        self.vouched_until = 0.0
+
     def needs_pin(self, tool: str) -> bool:
-        return tool in self.tools and not self.unlocked
+        return tool in self.tools and not (self.unlocked or self.vouched)
 
     def locked_message(self, user: str) -> str:
         if not self.pin_set:
