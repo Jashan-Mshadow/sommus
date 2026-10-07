@@ -317,7 +317,8 @@ async def serve(log=print) -> None:
             log(f"Node '{name}': {why}")
         server = Server(cfg, hub, store, phone, log)
         tasks = [asyncio.create_task(server.scheduler()), asyncio.create_task(server.vault_sync())]
-        if os.environ.get("TELEGRAM_BOT_TOKEN"):
+        # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
+        if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":
             token, allowed = tg.credentials()
             server.bot = tg.Bot(token, allowed, server.brain, store, cfg)
             log(f"Telegram: @{await server.bot.whoami()} for {len(allowed)} chat(s)")
