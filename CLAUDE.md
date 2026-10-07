@@ -18,6 +18,9 @@ sommus eval --only "<text>"           # one eval case (~1¢). The full eval is ~
 sommus today                          # today's classes + deadlines, writes data/today.json ($0)
 sommus stats                          # regenerate docs/MEASUREMENTS.md from the log ($0)
 sommus live                           # voice on Gemini Live (free AI Studio key in ~/.gemini/.env)
+sommus node                           # Mac: serve the Mac's tools to the server over the tailnet (Terminal.app)
+sommus voiceprint                     # Mac: learn Jashan's voice (voice ID replaces the PIN for his voice)
+ssh sommus-brain 'journalctl -u sommus -f'   # the always-on brain (systemd unit `sommus`, SOMMUS_ROLE=server)
 ```
 
 Decisions and their reasons: `docs/decisions/`. Add one when a choice is measured or hard to reverse.
@@ -37,6 +40,11 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/pin.py` · `permissions.py` | PIN gate for personal tools · permission tiers |
 | `src/sommus/nodes/<node>/server.py` | MCP servers: laptop, vault, gmail, web, claude |
 | `src/sommus/interfaces/` | cli (incl. the voice and live loops), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), duplex (echo-cancelled audio), live (Gemini Live session, tools, PIN handoff) |
+| `src/sommus/server.py` | `sommus serve` on the Oracle server: brain, Telegram, /ask for the iPhone, brief + nudges, vault git sync |
+| `src/sommus/remote.py` | `sommus node` on the Mac: laptop/claude/bridge nodes over MCP streamable HTTP, tailnet only, bearer token |
+| `src/sommus/brief.py` | $0 morning brief, due-tomorrow heads-up, class-in-15 nudges |
+| `src/sommus/interfaces/speaker.py` | voice ID: WeSpeaker embeddings, voiceprint, check; `Gate.vouch` in brain/pin.py |
+| `docs/IPHONE.md` | building the Action Button Shortcut |
 | `data/voice.log` | one JSON line per utterance: loudness, scores, transcript, outcome — read this first when voice misbehaves |
 | `src/sommus/evals/runner.py` + `evals/commands.toml` | scored eval |
 | `config.toml` | all settings · `profile.md` (gitignored) facts about Jashan · `.env` secrets |
