@@ -79,3 +79,50 @@ def serve(cfg: config.Config, log=print) -> None:
     names = ", ".join(n.name for n in mac_nodes(cfg))
     log(f"Serving {names} to the server on {host}:{port} (tailnet only). Keep this window open; Ctrl+C stops it.")
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def port_in_use(host: str, port: int) -> bool:
+    import socket
+
+    with socket.socket() as probe:
+        probe.settimeout(0.5)
+        return probe.connect_ex((host, port)) == 0
+
+
+def serve_in_background(cfg: config.Config):
+    """`sommus live` doing `sommus node`'s job, so one window keeps both: returns the server task, or None with
+    the reason (no token, or a separate `sommus node` already serving)."""
+    import asyncio
+
+    import uvicorn
+
+    token = os.environ.get("SOMMUS_NODE_TOKEN", "")
+    settings = config.deploy()
+    host, port = settings["mac_host"], int(settings["mac_port"])
+    if len(token) < 32:
+        return None, "no SOMMUS_NODE_TOKEN in .env"
+    if port_in_use(host, port):
+        return None, "a separate `sommus node` is already serving the Mac's tools"
+
+    class QuietServer(uvicorn.Server):
+        @contextlib.contextmanager
+        def capture_signals(self):  # Ctrl+C belongs to live mode, not to this background server
+            yield
+
+    server = QuietServer(uvicorn.Config(build_app(cfg, token, host), host=host, port=port, log_level="warning"))
+    return BackgroundNode(server, asyncio.create_task(server.serve())), f"serving the Mac's tools on {host}:{port}"
+
+
+class BackgroundNode:
+    def __init__(self, server, task):
+        self.server, self.task = server, task
+
+    async def stop(self) -> None:
+        """Let uvicorn finish its open requests and close; cancelling it mid-request printed a traceback."""
+        import asyncio
+
+        self.server.should_exit = True
+        try:
+            await asyncio.wait_for(asyncio.shield(self.task), 5)
+        except (TimeoutError, asyncio.CancelledError, Exception):
+            self.task.cancel()

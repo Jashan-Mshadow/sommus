@@ -622,17 +622,40 @@ async def live_chat() -> None:
 
     bot_task = None
     engine_io = duplex.DuplexAudio(gain=float(voice_settings.get("barge_in_mic_gain", 2.0)))
+    from sommus import client as remote_brain
+    from sommus import remote
+
+    # One Sommus: when the always-on brain answers, live mode uses it (same conversation as the phone and
+    # Telegram) and serves the Mac's tools to it from this same window. Otherwise it runs its own brain.
+    use_server = config.role() != "server" and await asyncio.to_thread(remote_brain.reachable)
+    hub = None
+    node_task, node_note = (None, "")
     with console.status("[dim]Starting nodes, the microphone and the wake word…[/]"):
-        hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
+        if use_server:
+            node_task, node_note = remote.serve_in_background(cfg)
+        else:
+            hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
         await asyncio.to_thread(transcriber.warm_up)
         await asyncio.to_thread(detector.probability, np.zeros(voice.CHUNK, dtype=np.float32))
         try:
             await asyncio.to_thread(engine_io.start)
         except Exception as e:
             console.print(f"[red]Live mode needs macOS echo cancellation, which didn't start ({escape(str(e))}).[/]")
-            await hub.__aexit__(None, None, None)
+            if hub is not None:
+                await hub.__aexit__(None, None, None)
+            if node_task is not None:
+                await node_task.stop()
             return
-    brain = Brain(cfg, hub, store, relay=True)  # Gemini does the talking: Claude hands back plain results
+    if use_server:
+        brain = remote_brain.RemoteBrain(store)
+        try:
+            api_tools = await brain.api_tools()
+        except Exception as e:
+            console.print(f"[red]The always-on brain stopped answering ({escape(type(e).__name__)}). Try again.[/]")
+            return
+    else:
+        brain = Brain(cfg, hub, store, relay=True)  # Gemini does the talking: Claude hands back plain results
+        api_tools = hub.api_tools()
     from sommus.interfaces import speaker as voice_id
 
     voiceprint = voice_id.Voiceprint.load(cfg.data_dir)
@@ -668,7 +691,7 @@ async def live_chat() -> None:
         # Load the model now: the first check otherwise takes seconds (torch + onnx) and loses the race.
         asyncio.create_task(asyncio.to_thread(voice_id.embed, np.random.default_rng(0).normal(0, 0.01, 24000)))
 
-    tools = live.declarations(hub.api_tools())
+    tools = live.declarations(api_tools)
     system = live.instructions(cfg.name, cfg.user, settings.get("style", ""), settings.get("persona", "butler"))
     loop = asyncio.get_running_loop()
     mic: asyncio.Queue[np.ndarray] = asyncio.Queue()
@@ -828,7 +851,11 @@ async def live_chat() -> None:
 
     pumping = None
     try:
-        bot_task, telegram_note = await _start_telegram(cfg, brain, store)
+        if use_server:
+            telegram_note = " · on the always-on brain" + (f" · {node_note}" if node_note else "")
+        else:
+            bot_task, telegram_note = await _start_telegram(cfg, brain, store)
+            telegram_note += " · server unreachable: running on this Mac only"
         console.print(
             f"[bold magenta]{cfg.name}[/] [dim]· live · Gemini {escape(model)} · voice {escape(voice_name)}"
             f"{telegram_note}[/]\n[dim]Say “Hey Sommus”, then talk normally — interrupt it any time. Nothing goes "
@@ -876,7 +903,12 @@ async def live_chat() -> None:
         engine_io.stop()
         if bot_task:
             bot_task.cancel()
-        await hub.__aexit__(None, None, None)
+        if hub is not None:
+            await hub.__aexit__(None, None, None)
+        if node_task is not None:
+            await node_task.stop()
+        if use_server:
+            await brain.aclose()
 
 
 async def live_voices(names: list[str]) -> None:
@@ -1125,7 +1157,7 @@ def show_today() -> None:
     console.print(f"[dim]Wrote {out}[/]")
 
 
-def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
+def handle_command(text: str, brain: Brain, hub: NodeHub | None, store: Store) -> bool:
     """Returns False to exit."""
     command = text.split()[0].lower()
     if command in ("/quit", "/exit"):
@@ -1133,7 +1165,7 @@ def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     if command == "/new":
         brain.reset()
         console.print("[dim]Fresh conversation.[/]")
-    elif command == "/tools":
+    elif command == "/tools" and hub is not None:
         for t in hub.tools:
             console.print(f"  [{TIER_STYLE[t.tier]}]{t.tier.value:<12}[/] {t.tool.name} [dim]({t.node})[/]")
     elif command == "/lock":
@@ -1142,7 +1174,8 @@ def handle_command(text: str, brain: Brain, hub: NodeHub, store: Store) -> bool:
     elif command == "/candidates":
         show_candidates(store)
     elif command == "/cost":
-        console.print(f"[dim]{store.cost_summary(brain.budget.monthly_usd)}[/]")
+        budget = getattr(brain, "budget", None)
+        console.print(f"[dim]{store.cost_summary(budget.monthly_usd if budget else 10.0)}[/]")
     else:
         console.print(HELP)
     return True
