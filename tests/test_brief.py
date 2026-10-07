@@ -38,7 +38,7 @@ def test_a_class_is_nudged_once_inside_the_window(tmp_path):
 def test_the_morning_brief_and_the_evening_heads_up(tmp_path):
     s = schedule(tmp_path)
     morning = datetime(2026, 10, 8, 7, 0, tzinfo=ZONE)
-    text = brief.morning(s, morning, "4° and clear.", "2 new emails: Davison (groups); Learn (grades).", ["gym"])
+    text = brief.morning(s, morning, "4° and clear.", "2 new emails: Davison (groups); Learn (grades).", ["**gym**"])
     assert text.startswith("Morning. Thursday, October 8.")
     assert "Python assignment" in text and "4° and clear." in text and "Top of your list: gym." in text
     evening = datetime(2026, 10, 8, 20, 0, tzinfo=ZONE)

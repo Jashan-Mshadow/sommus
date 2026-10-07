@@ -37,7 +37,8 @@ def morning(schedule: campus.Schedule, now: datetime, weather: str = "", mail: s
     if mail:
         lines.append(mail)
     if tasks:
-        lines.append("Top of your list: " + "; ".join(tasks[:3]) + ".")
+        plain = [re.sub(r"[*_`~]", "", t).strip() for t in tasks[:3]]  # the vault's Markdown reads as clutter here
+        lines.append("Top of your list: " + "; ".join(plain) + ".")
     return "\n".join(lines)
 
 
