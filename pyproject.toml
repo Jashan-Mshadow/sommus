@@ -7,28 +7,30 @@ authors = [
     { name = "Jashan Multani", email = "jashandeepm2008@gmail.com" }
 ]
 requires-python = ">=3.12"
+# Voice, Apple frameworks and the Mac's nodes only install on the Mac; the always-on server runs the brain,
+# Telegram, Gmail, web and the vault, and stays small enough for a 1 GB machine.
 dependencies = [
     "anthropic>=1.5.0",
-    "en-core-web-sm",
-    "google-genai>=2.25.0",
+    "en-core-web-sm; sys_platform == 'darwin'",
+    "google-genai>=2.25.0; sys_platform == 'darwin'",
     "holidays>=0.104",
     "httpx2>=2.12.0",
     "mcp[cli]>=2.2.0",
-    "misaki[en]>=0.9.4",
-    "mlx-audio[tts]>=0.5.4",
-    "mlx-whisper>=0.4.3",
+    "misaki[en]>=0.9.4; sys_platform == 'darwin'",
+    "mlx-audio[tts]>=0.5.4; sys_platform == 'darwin'",
+    "mlx-whisper>=0.4.3; sys_platform == 'darwin'",
     "numpy>=2.5.3",
-    "onnxruntime>=1.30.0",
+    "onnxruntime>=1.30.0; sys_platform == 'darwin'",
     "prompt-toolkit>=3.0.53",
-    "pymupdf>=1.28.2",
-    "pyobjc-framework-avfoundation>=12.2.2",
-    "pyobjc-framework-cocoa>=12.2.2",
-    "pyobjc-framework-quartz>=12.2.2",
-    "pyobjc-framework-vision>=12.2.2",
+    "pymupdf>=1.28.2; sys_platform == 'darwin'",
+    "pyobjc-framework-avfoundation>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-cocoa>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-quartz>=12.2.2; sys_platform == 'darwin'",
+    "pyobjc-framework-vision>=12.2.2; sys_platform == 'darwin'",
     "python-dotenv>=1.2.3",
     "rich>=15.0.0",
-    "silero-vad>=6.2.1",
-    "sounddevice>=0.5.6",
+    "silero-vad>=6.2.1; sys_platform == 'darwin'",
+    "sounddevice>=0.5.6; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

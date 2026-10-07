@@ -34,6 +34,7 @@ fast_path = true
 # Each node is an MCP server, launched as `python -m <module>`.
 [[nodes]]
 name = "laptop"
+where = "mac"
 module = "sommus.nodes.laptop.server"
 # Quitting the terminal Sommus runs in would kill Sommus mid-command.
 env = { SOMMUS_PROTECT_APPS = "Terminal,iTerm2,Ghostty,Warp,Alacritty,kitty,Claude,Code,Cursor" }
@@ -60,12 +61,14 @@ env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
 # Full rights (Jashan, 2026-09-15); ask_claude is behind the PIN in [security].
 [[nodes]]
 name = "claude"
+where = "mac"
 module = "sommus.nodes.claude.server"
 env = { SOMMUS_CLAUDE_MODEL = "sonnet", SOMMUS_CLAUDE_CWD = "~/Documents" }
 
 # Gemini and ChatGPT on Jashan's free sign-ins (Gemini CLI, Codex CLI). Also registered with Claude Code.
 [[nodes]]
 name = "bridge"
+where = "mac"
 module = "sommus.nodes.bridge.server"
 
 [[nodes]]
@@ -166,3 +169,16 @@ persona = "butler"                   # "butler": dry, sarcastic, Alfred-style ·
 style = ""                                    # how it speaks; "" for the voice's natural style
 awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
 interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech
+
+[deploy]
+# The always-on brain (Oracle free server) and the Mac, on Jashan's tailnet. On the server, SOMMUS_ROLE=server
+# makes the nodes marked where = "mac" remote: the Mac serves them with `sommus node`.
+server_host = "100.101.226.81"
+api_port = 8780                  # /ask for the iPhone, only on the tailnet
+mac_host = "100.76.57.64"
+mac_port = 8790                  # `sommus node` on the Mac
+telegram = "server"              # only one process may poll the bot; the Mac's sessions leave it to the server
+
+[brief]
+morning = "07:00"                # Telegram morning brief: classes, due soon, weather, unread mail ($0, no model)
+nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"

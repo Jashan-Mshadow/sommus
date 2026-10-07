@@ -194,6 +194,13 @@ class Brain:
         self._read_outside: str | None = None  # the first untrusted tool this turn read from
         self._turn_start: int | None = None  # index of this turn's request in messages, when worth caching
         self._last_turn_at = float("-inf")
+        # Where this turn came from when it isn't obvious: "iPhone" for the Action Button, so the model reaches for
+        # the phone's own tools (flashlight, texting from the phone) and knows the Mac may be asleep.
+        self.channel = ""
+
+    def _from_channel(self, text: str) -> str:
+        channel = getattr(self, "channel", "")  # tests build bare brains without __init__
+        return f"{text}\n[Said into his {channel}]" if channel else text
 
     def _memory_mtime(self) -> float:
         path = self.cfg.memory_path
@@ -293,7 +300,7 @@ class Brain:
         history_len = len(self.messages)
         live = self._voice or time.monotonic() - self._last_turn_at <= LIVE_SECONDS
         self._turn_start = history_len if live and history_len else None
-        self.messages.append({"role": "user", "content": stamp(text)})
+        self.messages.append({"role": "user", "content": stamp(self._from_channel(text))})
         usage, reply, status, steps = Usage(), [], "error", 0
 
         budget = self.cfg.max_steps
@@ -544,7 +551,7 @@ class Brain:
         # side so the model never copies the note into what it says.
         if done:
             text = f"{text}\n[Handled without you: {done} Nothing left to do for this request.]"
-        self.messages.append({"role": "user", "content": stamp(text)})
+        self.messages.append({"role": "user", "content": stamp(self._from_channel(text))})
         self.messages.append({"role": "assistant", "content": reply})
 
     def _tools(self) -> list[dict[str, Any]]:

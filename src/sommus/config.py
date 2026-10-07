@@ -17,6 +17,25 @@ class NodeConfig:
     name: str
     module: str  # launched as `python -m <module>` over stdio
     env: dict[str, str] = field(default_factory=dict)
+    where: str = ""  # "mac" = needs the Mac (apps, screen, Claude Code); "" = runs wherever the brain runs
+    url: str | None = None  # set on the server for Mac nodes: reached over the tailnet instead of launched
+
+
+def role() -> str:
+    """'server' on the always-on machine (set in its systemd unit), 'mac' everywhere else."""
+    return os.environ.get("SOMMUS_ROLE", "mac")
+
+
+def deploy(path: Path | None = None) -> dict:
+    """[deploy]: where the server and the Mac's node server listen (tailnet addresses)."""
+    return {
+        "server_host": "100.101.226.81",
+        "api_port": 8780,
+        "mac_host": "100.76.57.64",
+        "mac_port": 8790,
+        "telegram": "server",
+        **section("deploy", path),
+    }
 
 
 @dataclass(frozen=True)
@@ -50,6 +69,17 @@ def load(path: Path | None = None) -> Config:
     path = path or Path(os.environ.get("SOMMUS_CONFIG", ROOT / "config.toml"))
     raw = tomllib.loads(path.read_text())
     assistant = raw["assistant"]
+    remote = deploy(path)
+    on_server = role() == "server"
+
+    def node(n: dict) -> NodeConfig:
+        where = n.get("where", "")
+        url = None
+        if on_server and where == "mac":
+            url = f"http://{remote['mac_host']}:{remote['mac_port']}/{n['name']}/mcp"
+        env = {k: os.path.expandvars(v) for k, v in n.get("env", {}).items()}
+        return NodeConfig(n["name"], n["module"], env, where, url)
+
     return Config(
         name=assistant["name"],
         user=assistant["user"],
@@ -61,10 +91,7 @@ def load(path: Path | None = None) -> Config:
         core_tools=tuple(assistant.get("core_tools", [])),
         history_turns=assistant.get("history_turns", 12),
         fast_path=assistant.get("fast_path", True),
-        nodes=tuple(
-            NodeConfig(n["name"], n["module"], {k: os.path.expandvars(v) for k, v in n.get("env", {}).items()})
-            for n in raw.get("nodes", [])
-        ),
+        nodes=tuple(node(n) for n in raw.get("nodes", [])),
         overrides={tool: Tier(tier) for tool, tier in raw.get("permissions", {}).items()},
         data_dir=ROOT / "data",
         ask_before_destructive=raw.get("safety", {}).get("ask_before_destructive", False),

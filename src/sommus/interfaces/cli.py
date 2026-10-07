@@ -948,6 +948,8 @@ async def _start_telegram(cfg: config.Config, brain: Brain, store: Store):
 
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
         return None, ""
+    if config.deploy().get("telegram") == "server" and config.role() != "server":
+        return None, " · Telegram on the server"  # two pollers on one bot break both (409)
     if background.running_pid(cfg):
         return None, " · Telegram handled by the background service"
     try:
@@ -1278,6 +1280,8 @@ def main() -> None:
             "today",
             "stats",
             "live",
+            "serve",
+            "node",
         ],
         default="chat",
     )
@@ -1319,6 +1323,14 @@ def main() -> None:
             asyncio.run(live_voices(names) if args.gemini else voices(names))
         elif args.command in ("start", "stop", "status"):
             asyncio.run(service(args.command))
+        elif args.command == "serve":
+            from sommus import server
+
+            asyncio.run(server.serve(lambda line: print(f"{datetime.now():%H:%M:%S} {line}", flush=True)))
+        elif args.command == "node":
+            from sommus import remote
+
+            remote.serve(config.load(), lambda line: console.print(f"[bold magenta]Sommus[/] [dim]{line}[/]"))
         else:
             asyncio.run(commands[args.command]())
     except KeyboardInterrupt:
