@@ -186,6 +186,8 @@ def match(
     if not tokens or len(tokens) > 12 or stopped:
         return None
 
+    if found := reminder(text):
+        return found
     if apps and (found := _app_command(tokens, apps)):
         return found
     if (
@@ -280,6 +282,129 @@ def _level_intent(tokens: list[str], follow: str | None) -> str | None:
     if "turn" in present and present & {"up", "down"}:
         return "volume"  # "turn it up" with nothing changed lately: on a Mac that means the sound
     return None
+
+
+# ---------------------------------------------------------------- reminders and timers
+# "remind me to X at 8", "remind me tomorrow at 9 to X", "set a timer for 10 minutes". The task is free text,
+# so the every-word rule can't apply; instead the whole sentence has to fit a template, with an explicit
+# "to" before the task ("remind me what my next class is" is a question, not a reminder). Both become a
+# Reminders entry, which outlives Sommus and rings on the iPhone too.
+_NUM = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "ten": 10, "fifteen": 15,
+        "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "half": 0.5}  # fmt: skip
+_COUNT = r"\d{1,3}|half an?|a|an|one|two|three|four|five|ten|fifteen|twenty|thirty|forty|fifty|sixty"
+_UNIT = r"min(?:ute)?s?|hours?|hrs?"
+_IN = rf"in\s+(?P<n>{_COUNT})\s+(?P<unit>{_UNIT})"
+_AT = (
+    r"(?:(?P<day>today|tonight|tomorrow)\s+)?(?:at\s+)?(?P<h>\d{1,2})(?::(?P<m>\d{2}))?\s*(?P<ap>a\.?m\.?|p\.?m\.?)?"
+    r"(?:\s+(?P<day2>today|tonight|tomorrow))?"
+)
+_WHEN = rf"(?:{_IN}|{_AT}|(?P<only>tonight|tomorrow))"
+_LEAD = r"^(?:(?:hey|yo|ok|okay)\s+)?(?:sommus|somis|sommis)?[,\s]*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
+_REMIND_A = re.compile(_LEAD + rf"remind\s+me\s+to\s+(?P<task>.+?)(?:\s+(?:at\s+)?{_WHEN})?[.!?\s]*$", re.I)
+_REMIND_B = re.compile(_LEAD + rf"remind\s+me\s+{_WHEN}\s+to\s+(?P<task>.+?)[.!?\s]*$", re.I)
+_TIMER = re.compile(
+    _LEAD + rf"(?:set\s+(?:a\s+|me\s+a\s+)?)?(?:(?P<n1>\d{{1,3}})[\s-]+(?P<u1>{_UNIT})\s+timer"
+    rf"|timer\s+(?:for\s+)?(?P<n2>{_COUNT})\s+(?P<u2>{_UNIT}))(?:\s+please)?[.!?\s]*$",
+    re.I,
+)
+_DAY_WORDS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "weekend", "week", "month",
+              "morning", "afternoon", "evening", "noon", "midnight", "tonight", "tomorrow", "today"}  # fmt: skip
+_TASK_STOP = {"and", "then", "also", "if", "when", "unless", "or", "every", "each", "daily", "weekly"}
+
+
+def _minutes(n: str, unit: str) -> float | None:
+    n = n.lower().split()[0]
+    value = float(n) if n.isdigit() else _NUM.get(n)
+    if not value:
+        return None
+    return value * 60 if unit.lower().startswith("h") else value
+
+
+def _clock_time(hour: int, minute: int, ap: str | None, day: str | None, now: datetime) -> datetime | None:
+    """'at 8' means the next 8 o'clock still ahead: 8 PM in the afternoon, 8 AM tomorrow late at night.
+    'tonight' means PM; 'tomorrow at 9' means 9 AM. 1-6 without AM/PM is always the afternoon: nobody
+    asks for 3 AM by saying "at 3"."""
+    if not (0 <= minute < 60) or hour > 23 or (ap and not 1 <= hour <= 12):
+        return None
+    if ap:
+        hour = hour % 12 + (12 if ap.lower().startswith("p") else 0)
+    base = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if not ap and 1 <= hour <= 6:
+        hour += 12
+    if day == "tomorrow":
+        return base + timedelta(days=1, hours=hour, minutes=minute)
+    if day == "tonight" and not ap and hour < 12:
+        hour += 12
+    for h in (hour, hour + 12) if not ap and hour < 12 and day != "tonight" else (hour,):
+        when = base + timedelta(hours=h, minutes=minute)
+        if when > now:
+            return when
+    if day in ("today", "tonight"):
+        return None  # "today at 8" when 8 PM is gone: ask the model, don't guess
+    return base + timedelta(days=1, hours=hour, minutes=minute)
+
+
+def _due(m: re.Match[str], now: datetime) -> datetime | None | bool:
+    """The time a reminder is for; None = no time said; False = said but couldn't be read."""
+    groups = m.groupdict()
+    if groups.get("n"):
+        minutes = _minutes(groups["n"], groups["unit"])
+        return now + timedelta(minutes=minutes) if minutes else False
+    if groups.get("h"):
+        day = groups.get("day") or groups.get("day2")
+        return _clock_time(int(groups["h"]), int(groups.get("m") or 0), groups.get("ap"), day, now) or False
+    if only := groups.get("only"):
+        return (
+            now.replace(hour=20, minute=0, second=0, microsecond=0) + timedelta(days=only == "tomorrow")
+            if only == "tonight"
+            else now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        )
+    return None
+
+
+def say_when(when: datetime, now: datetime) -> str:
+    clock = f"{when:%-I:%M %p}".replace(":00 ", " ")
+    if when.date() == now.date():
+        return f"at {clock}"
+    if when.date() == now.date() + timedelta(days=1):
+        return f"tomorrow at {clock}"
+    return f"{when:%A} at {clock}"
+
+
+def reminder(text: str, now: datetime | None = None) -> Match | None:
+    now = now or datetime.now()
+    raw = " ".join(text.strip().split())
+    if m := _TIMER.match(raw):
+        n, unit = (m["n1"], m["u1"]) if m["n1"] else (m["n2"], m["u2"])
+        minutes = _minutes(n, unit)
+        if not minutes or minutes > 24 * 60:
+            return None
+        when = now + timedelta(minutes=minutes)
+        label = f"{int(minutes)} min" if minutes < 60 else f"{minutes / 60:g} hr"
+        return Match(
+            "timer",
+            "create_reminder",
+            {"title": f"Timer ({label})", "due": f"{when:%Y-%m-%d %H:%M}"},
+            phrase=lambda _: f"Timer set for {label}, ends {say_when(when, now)}.",
+        )
+    m = _REMIND_B.match(raw) or _REMIND_A.match(raw)
+    if not m:
+        return None
+    task = m["task"].strip(" ,.")
+    task_words = set(words(task))
+    if not task or len(task) > 120 or task_words & _TASK_STOP or task_words <= {"me", "it", "this", "that"}:
+        return None
+    if re.search(r"\b(?:in|at|by|on)\s*$|\b(?:at|by|before|after|around)\s+\d", task, re.I) or task_words & _DAY_WORDS:
+        return None  # a time we couldn't read ended up in the task ("at 8ish", "on friday at 3")
+    due = _due(m, now)
+    if due is False:
+        return None
+    task = task[0].upper() + task[1:]
+    args: dict[str, Any] = {"title": task}
+    if due:
+        args["due"] = f"{due:%Y-%m-%d %H:%M}"
+    said = f"I'll remind you {say_when(due, now)}." if due else "It's on your reminders."
+    return Match("reminder", "create_reminder", args, phrase=lambda _: said)
 
 
 TODO_WORDS = {"todo", "todos", "to", "do", "list", "tasks", "task", "whats", "what", "on", "my", "have", "i",

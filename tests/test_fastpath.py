@@ -427,3 +427,70 @@ async def test_a_bit_more_follows_the_level_the_brain_just_changed(tmp_path):
         [e async for e in brain.handle("brightness 40", lambda *_: True)]
         [e async for e in brain.handle("a bit more", lambda *_: True)]
     assert levels == {"brightness": 50, "volume": 50}
+
+
+# ---------------------------------------------------------------- reminders and timers
+AFTERNOON = datetime(2026, 10, 6, 14, 30)
+
+
+@pytest.mark.parametrize(
+    ("said", "title", "due"),
+    [
+        ("remind me to email warg tonight at 8", "Email warg", "2026-10-06 20:00"),
+        ("Remind me to email Warg at 8", "Email Warg", "2026-10-06 20:00"),
+        ("remind me tomorrow at 9 to submit the ECE 150 lab", "Submit the ECE 150 lab", "2026-10-07 09:00"),
+        ("remind me in 10 minutes to take the pizza out", "Take the pizza out", "2026-10-06 14:40"),
+        ("remind me in an hour to stretch", "Stretch", "2026-10-06 15:30"),
+        ("Hey Sommus, remind me to call mom tomorrow", "Call mom", "2026-10-07 09:00"),
+        ("remind me at 8:30 pm to drink water", "Drink water", "2026-10-06 20:30"),
+        ("remind me to drink water at 9am", "Drink water", "2026-10-07 09:00"),
+        ("remind me to call mom at 1", "Call mom", "2026-10-07 13:00"),  # 1-6 means the afternoon
+        ("remind me to text didi at 5", "Text didi", "2026-10-06 17:00"),
+        ("remind me to call mom", "Call mom", None),
+    ],
+)
+def test_reminders_skip_the_model(said, title, due):
+    found = fastpath.reminder(said, AFTERNOON)
+    assert found and found.tool == "create_reminder"
+    assert found.args.get("title") == title and found.args.get("due") == due
+
+
+@pytest.mark.parametrize(
+    ("said", "due", "spoken"),
+    [
+        ("set a timer for 10 minutes", "2026-10-06 14:40", "Timer set for 10 min, ends at 2:40 PM."),
+        ("10 minute timer", "2026-10-06 14:40", None),
+        ("timer 25 minutes", "2026-10-06 14:55", None),
+        ("set a timer for half an hour", "2026-10-06 15:00", None),
+        ("set a timer for 2 hours", "2026-10-06 16:30", "Timer set for 2 hr, ends at 4:30 PM."),
+    ],
+)
+def test_timers_are_reminders_that_ring_on_time(said, due, spoken):
+    found = fastpath.reminder(said, AFTERNOON)
+    assert found and found.intent == "timer" and found.args["due"] == due
+    if spoken:
+        assert found.phrase("") == spoken
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "remind me what my next class is",  # a question
+        "remind me about the meeting",  # no "to": the model decides what to write
+        "remind me in a notification to drink water",
+        "remind me to email warg and text didi at 8",  # two tasks
+        "remind me to buy milk when i get home",  # a condition, not a time
+        "remind me to study at 8ish",
+        "remind me to stretch on friday at 3",  # a day we don't parse
+        "remind me to call mom today at 1",  # already past
+        "remind me every day at 8 to take vitamins",
+        "set a timer",
+    ],
+)
+def test_reminders_the_template_cant_read_go_to_the_model(said):
+    assert fastpath.reminder(said, AFTERNOON) is None
+
+
+def test_late_at_night_at_8_means_tomorrow_morning():
+    found = fastpath.reminder("remind me to email warg at 8", datetime(2026, 10, 6, 23, 0))
+    assert found.args["due"] == "2026-10-07 08:00" and found.phrase("") == "I'll remind you tomorrow at 8 AM."
