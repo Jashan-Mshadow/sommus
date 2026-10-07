@@ -136,6 +136,9 @@ def asked_range(tokens: list[str], today: date) -> tuple[str, int]:
     if "weekend" in words:
         saturday = today + timedelta(days=(5 - today.weekday()) % 7)
         return saturday.isoformat(), 2
+    if "week" in words and "next" in words:  # "next week": Monday to Sunday after this one
+        monday = today + timedelta(days=7 - today.weekday())
+        return monday.isoformat(), 7
     if "week" in words:
         return "today", 7
     if "tomorrow" in words or "tomorrows" in words:

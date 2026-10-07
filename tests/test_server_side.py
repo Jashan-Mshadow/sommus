@@ -133,5 +133,6 @@ def test_calendar_questions_pick_the_days():
     assert asked_range(["whats", "on", "my", "calendar"], wednesday) == ("today", 1)
     assert asked_range(["am", "i", "free", "tomorrow"], wednesday) == ("tomorrow", 1)
     assert asked_range(["calendar", "this", "week"], wednesday) == ("today", 7)
+    assert asked_range(["schedule", "next", "week"], wednesday) == ("2026-10-12", 7)
     assert asked_range(["plans", "this", "weekend"], wednesday) == ("2026-10-10", 2)
     assert asked_range(["schedule", "for", "monday"], wednesday) == ("2026-10-12", 1)
