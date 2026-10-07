@@ -651,7 +651,8 @@ def echo_of(heard: str, said: str) -> bool:
 class VoiceLog:
     """One JSON line per thing heard, in data/voice.log: how loud and how sure the detector was, what Whisper
     wrote, how long it took, and what Sommus did with it. "It didn't hear me" becomes a line that says which
-    layer dropped it. Local only (data/ is gitignored); PINs are redacted."""
+    layer dropped it. Local only (data/ is gitignored); PINs are redacted. Speech that wasn't addressed to
+    Sommus is kept as a word count, not as text: the room's talk, a video, a call are nobody's business."""
 
     def __init__(self, path: Path):
         self.path = path
@@ -663,7 +664,10 @@ class VoiceLog:
         from sommus.brain.pin import redact
 
         if "text" in fields and fields["text"]:
-            fields["text"] = redact(fields["text"])
+            if str(fields.get("outcome", "")).startswith("ignored"):
+                fields["text"] = f"[{len(fields['text'].split())} words, not kept]"
+            else:
+                fields["text"] = redact(fields["text"])
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a") as f:

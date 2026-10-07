@@ -504,8 +504,10 @@ def test_the_voice_log_says_what_happened_and_hides_pins(tmp_path):
     log = voice.VoiceLog(tmp_path / "voice.log")
     log.write(seconds=1.2, loudness_db=-41.0, text="my pin is 2684", outcome="run")
     log.write(seconds=0.8, text="", outcome="nothing")
+    log.write(seconds=3.0, text="my girl is going to ASU", outcome="ignored: asleep, no wake phrase")
     lines = [json.loads(line) for line in (tmp_path / "voice.log").read_text().splitlines()]
     assert lines[0]["outcome"] == "run" and "2684" not in lines[0]["text"]
+    assert lines[2]["text"] == "[6 words, not kept]" and "ASU" not in (tmp_path / "voice.log").read_text()
     assert voice.loudness_db(np.full(1000, 0.1, dtype=np.float32)) == pytest.approx(-20.0)
 
 
