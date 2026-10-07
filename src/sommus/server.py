@@ -98,14 +98,14 @@ class Tailnet:
         self._seen: dict[str, tuple[bool, float]] = {}
 
     def _run(self, *args: str) -> dict:
-        done = subprocess.run(["tailscale", *args, "--json"], capture_output=True, text=True, timeout=5)
+        # --json before the address: Go's flag parsing stops at the first plain argument.
+        done = subprocess.run(["tailscale", args[0], "--json", *args[1:]], capture_output=True, text=True, timeout=5)
         return json.loads(done.stdout) if done.returncode == 0 else {}
 
     def owner(self) -> str:
-        if self._owner is None:
-            status = self._run("status")
-            user = status.get("User", {}).get(str(status.get("Self", {}).get("UserID", "")), {})
-            self._owner = user.get("LoginName", "")
+        """The tailnet user this server belongs to: Jashan."""
+        if not self._owner:
+            self._owner = str(self._run("status").get("Self", {}).get("UserID", ""))
         return self._owner
 
     def is_mine(self, address: str) -> bool:
@@ -113,7 +113,7 @@ class Tailnet:
         if seen and time.monotonic() - seen[1] < 600:
             return seen[0]
         try:
-            who = self._run("whois", address).get("UserProfile", {}).get("LoginName", "")
+            who = str(self._run("whois", address).get("Node", {}).get("User", ""))
             mine = bool(who) and who == self.owner()
         except Exception:
             mine = False
