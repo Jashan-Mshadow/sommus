@@ -17,7 +17,6 @@ sommus tool [name k=v]                # run a tool directly, no model, $0
 sommus eval --only "<text>"           # one eval case (~1¢). The full eval is ~40–50¢: don't run it casually
 sommus today                          # today's classes + deadlines, writes data/today.json ($0)
 sommus stats                          # regenerate docs/MEASUREMENTS.md from the log ($0)
-sommus live                           # voice on Gemini Live (free AI Studio key in ~/.gemini/.env)
 sommus live                           # Mac, the one window to keep open: uses the server's brain + serves the Mac's tools
 sommus node                           # Mac: only the Mac's tools for the server, without live mode (Terminal.app)
 sommus voiceprint                     # Mac: learn Jashan's voice (voice ID replaces the PIN for his voice)
