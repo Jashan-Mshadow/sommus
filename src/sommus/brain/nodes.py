@@ -125,9 +125,11 @@ class NodeHub:
 
     async def __aenter__(self) -> NodeHub:
         try:
+            remote = [node for node in self._node_configs if node.url]
+            if remote:  # all at once: one after another, an asleep Mac cost 6 s per node at startup
+                await asyncio.gather(*(self._add_remote(node) for node in remote))
             for node in self._node_configs:
                 if node.url:
-                    await self._add_remote(node)
                     continue
                 params = StdioServerParameters(
                     command=sys.executable,
