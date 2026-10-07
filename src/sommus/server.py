@@ -436,6 +436,10 @@ async def serve(log=print) -> None:
         await hub.add("phone", Client(phone.node()))
         await hub.add("reminders", Client(reminders.node()))
         await hub.add("contacts", Client(contacts.node()))
+        from sommus import calendars
+
+        if links := calendars.urls():  # CALENDAR_ICS_URLS in .env: Google's secret iCal addresses
+            await hub.add("calendar", Client(calendars.Calendars(links).node()))
         for name, why in hub.unreachable.items():
             log(f"Node '{name}': {why}")
         server = Server(cfg, hub, store, phone, log, reminders, contacts)

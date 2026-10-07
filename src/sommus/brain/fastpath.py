@@ -98,6 +98,7 @@ class Match:
     local: Callable[[], str] | None = field(default=None, compare=False)
     phrase: Callable[[str], str] | None = field(default=None, compare=False)
     fallback: str | None = None  # the tool to use when `tool` isn't connected (e.g. no server: the Mac's Reminders)
+    fallback_args: dict[str, Any] | None = None  # its arguments, when they differ
 
 
 def words(text: str) -> list[str]:
@@ -253,8 +254,19 @@ def match(
                        "schedule", "events", "plans", "busy", "free"}
         and not (present & {"holiday", "holidays"})
     ):  # fmt: skip
-        # Claude Code reads both Google calendars; nothing for the model to add on either side.
-        return Match("calendar", "ask_claude", {"task": text.strip()})
+        # The server reads the Google calendars itself (calendars.py, $0, <1 s); without it, Claude Code on the
+        # Mac reads them. Nothing for the model to add on either side.
+        from sommus.calendars import asked_range
+
+        start, days = asked_range(tokens, date.today())
+        return Match(
+            "calendar",
+            "calendar_events",
+            {"start": start, "days": days},
+            phrase=lambda result: result,
+            fallback="ask_claude",
+            fallback_args={"task": text.strip()},
+        )
     if _claims("holiday", tokens) and present & {"holiday", "holidays"} and present & {"next", "upcoming", "coming"}:
         return Match("holiday", local=next_holidays)
     if tokens[:2] == ["when", "is"] and (name := " ".join(t for t in tokens[2:] if t not in FILLER)):

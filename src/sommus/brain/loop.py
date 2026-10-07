@@ -282,7 +282,7 @@ class Brain:
             else None
         )
         if quick and quick.fallback and self.hub.tier(quick.tool or "") is None:
-            quick = dataclasses.replace(quick, tool=quick.fallback)
+            quick = dataclasses.replace(quick, tool=quick.fallback, args=quick.fallback_args or quick.args, phrase=None)
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):

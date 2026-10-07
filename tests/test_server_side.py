@@ -77,3 +77,61 @@ async def test_the_servers_contacts_replace_the_macs_and_the_mac_is_still_reacha
         await hub.add("contacts", Client(book.node()))
         result = await hub.call("find_contact", {"name": "didi"})
     assert "832-5827" in result.text
+
+
+ICS = """BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:1
+SUMMARY:ECE 198 lab
+LOCATION:E2 1792
+DTSTART;TZID=America/Toronto:20260923T083000
+DTEND;TZID=America/Toronto:20260923T112000
+RRULE:FREQ=WEEKLY;BYDAY=WE
+END:VEVENT
+BEGIN:VEVENT
+UID:2
+SUMMARY:Hackathon info session
+DTSTART:20261008T230000Z
+DTEND:20261009T000000Z
+END:VEVENT
+BEGIN:VEVENT
+UID:3
+SUMMARY:Reading week
+DTSTART;VALUE=DATE:20261012
+DTEND;VALUE=DATE:20261017
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+def test_the_calendar_reads_repeating_and_all_day_events():
+    from datetime import date
+
+    from sommus import calendars
+
+    zone = calendars.ZONE
+    start, end = datetime(2026, 10, 7, tzinfo=zone), datetime(2026, 10, 13, tzinfo=zone)
+    events = calendars.parse(ICS, start, end)
+    assert [(e.title, e.start.strftime("%a %H:%M")) for e in events] == [
+        ("ECE 198 lab", "Wed 08:30"),  # the weekly lab, expanded
+        ("Hackathon info session", "Thu 19:00"),  # UTC turned into Toronto time
+        ("Reading week", "Mon 00:00"),
+    ]
+    now = datetime(2026, 10, 6, 22, 0, tzinfo=zone)
+    said = calendars.say(events, date(2026, 10, 7), 1, now)
+    assert said == "Tomorrow: 8:30 AM ECE 198 lab (E2 1792)."
+    assert "Reading week (all day)" in calendars.say(events, date(2026, 10, 7), 7, now)
+
+
+def test_calendar_questions_pick_the_days():
+    from datetime import date
+
+    from sommus.calendars import asked_range
+
+    wednesday = date(2026, 10, 7)
+    assert asked_range(["whats", "on", "my", "calendar"], wednesday) == ("today", 1)
+    assert asked_range(["am", "i", "free", "tomorrow"], wednesday) == ("tomorrow", 1)
+    assert asked_range(["calendar", "this", "week"], wednesday) == ("today", 7)
+    assert asked_range(["plans", "this", "weekend"], wednesday) == ("2026-10-10", 2)
+    assert asked_range(["schedule", "for", "monday"], wednesday) == ("2026-10-12", 1)

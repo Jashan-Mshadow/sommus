@@ -257,9 +257,10 @@ def test_next_holiday():
         "what's my schedule looking like tomorrow",  # voice.log, 2026-09-28
     ],
 )
-def test_calendar_questions_go_straight_to_claude_code(text):
+def test_calendar_questions_go_to_the_calendar_or_claude_code(text):
     found = fastpath.match(text, WEATHER, PLACES)
-    assert found is not None and (found.intent, found.tool, found.args) == ("calendar", "ask_claude", {"task": text})
+    assert found is not None and (found.intent, found.tool) == ("calendar", "calendar_events")
+    assert (found.fallback, found.fallback_args) == ("ask_claude", {"task": text})  # no server: Claude Code reads it
 
 
 @pytest.mark.parametrize(
