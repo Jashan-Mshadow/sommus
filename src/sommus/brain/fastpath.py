@@ -385,7 +385,7 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
             "timer",
             "create_reminder",
             {"title": f"Timer ({label})", "due": f"{when:%Y-%m-%d %H:%M}"},
-            phrase=lambda _: f"Timer set for {label}, ends {say_when(when, now)}.",
+            phrase=lambda _: f"Timer set for {label}, it ends {say_when(when, now)}.",
         )
     m = _REMIND_B.match(raw) or _REMIND_A.match(raw)
     if not m:
@@ -403,7 +403,7 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
     args: dict[str, Any] = {"title": task}
     if due:
         args["due"] = f"{due:%Y-%m-%d %H:%M}"
-    said = f"I'll remind you {say_when(due, now)}." if due else "It's on your reminders."
+    said = f"Done, I'll remind you {say_when(due, now)}." if due else "It's on your reminders."
     return Match("reminder", "create_reminder", args, phrase=lambda _: said)
 
 

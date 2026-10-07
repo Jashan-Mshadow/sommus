@@ -492,7 +492,10 @@ class Brain:
             else:
                 reply = result.text
         yield TextDelta(reply)
-        self._remember(text, reply)
+        done = None
+        if not quick.local and result.decision == "ran" and not result.is_error:
+            done = f"{tool} already ran: {result.text[:200]}"
+        self._remember(text, reply, done)
         self.store.finish_turn(turn_id, reply, "ok", "fastpath", Usage())
         yield TurnDone(Usage(), 0.0, 0)
 
@@ -534,8 +537,13 @@ class Brain:
                 return " ".join(t for t in texts if t)
         return ""
 
-    def _remember(self, text: str, reply: str) -> None:
-        # Plain text in the conversation, so a follow-up ("a bit higher") still has context.
+    def _remember(self, text: str, reply: str, done: str | None = None) -> None:
+        # Plain text in the conversation, so a follow-up ("a bit higher") still has context. `done` notes the
+        # action a fast-path turn already took: with only "I'll remind you at 9:30 PM." to go on, the model read
+        # a promise and made the reminder a second time on the next request (2026-10-06). It goes on the user
+        # side so the model never copies the note into what it says.
+        if done:
+            text = f"{text}\n[Handled without you: {done} Nothing left to do for this request.]"
         self.messages.append({"role": "user", "content": stamp(text)})
         self.messages.append({"role": "assistant", "content": reply})
 

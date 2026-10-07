@@ -125,6 +125,8 @@ async def test_a_fast_command_never_calls_the_model(tmp_path):
         assert [e.text for e in events if isinstance(e, TextDelta)] == ["Brightness is at 20."]
         assert isinstance(events[-1], TurnDone) and events[-1].cost_usd == 0
         assert brain.messages[-1] == {"role": "assistant", "content": "Brightness is at 20."}  # follow-ups have context
+        # The model must see it's done, or it "keeps the promise" on the next request (a reminder made twice).
+        assert "set_brightness already ran: Brightness 20%." in brain.messages[-2]["content"]
 
 
 async def test_a_relative_change_reads_the_level_then_adjusts_it(tmp_path):
@@ -458,11 +460,11 @@ def test_reminders_skip_the_model(said, title, due):
 @pytest.mark.parametrize(
     ("said", "due", "spoken"),
     [
-        ("set a timer for 10 minutes", "2026-10-06 14:40", "Timer set for 10 min, ends at 2:40 PM."),
+        ("set a timer for 10 minutes", "2026-10-06 14:40", "Timer set for 10 min, it ends at 2:40 PM."),
         ("10 minute timer", "2026-10-06 14:40", None),
         ("timer 25 minutes", "2026-10-06 14:55", None),
         ("set a timer for half an hour", "2026-10-06 15:00", None),
-        ("set a timer for 2 hours", "2026-10-06 16:30", "Timer set for 2 hr, ends at 4:30 PM."),
+        ("set a timer for 2 hours", "2026-10-06 16:30", "Timer set for 2 hr, it ends at 4:30 PM."),
     ],
 )
 def test_timers_are_reminders_that_ring_on_time(said, due, spoken):
@@ -493,4 +495,4 @@ def test_reminders_the_template_cant_read_go_to_the_model(said):
 
 def test_late_at_night_at_8_means_tomorrow_morning():
     found = fastpath.reminder("remind me to email warg at 8", datetime(2026, 10, 6, 23, 0))
-    assert found.args["due"] == "2026-10-07 08:00" and found.phrase("") == "I'll remind you tomorrow at 8 AM."
+    assert found.args["due"] == "2026-10-07 08:00" and found.phrase("") == "Done, I'll remind you tomorrow at 8 AM."
