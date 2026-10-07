@@ -97,6 +97,7 @@ class Match:
     delta: int = 0
     local: Callable[[], str] | None = field(default=None, compare=False)
     phrase: Callable[[str], str] | None = field(default=None, compare=False)
+    fallback: str | None = None  # the tool to use when `tool` isn't connected (e.g. no server: the Mac's Reminders)
 
 
 def words(text: str) -> list[str]:
@@ -388,9 +389,10 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
         label = f"{int(minutes)} min" if minutes < 60 else f"{minutes / 60:g} hr"
         return Match(
             "timer",
-            "create_reminder",
+            "set_reminder",
             {"title": f"Timer ({label})", "due": f"{when:%Y-%m-%d %H:%M}"},
             phrase=lambda _: f"Timer set for {label}, it ends {say_when(when, now)}.",
+            fallback="create_reminder",
         )
     m = _REMIND_B.match(raw) or _REMIND_A.match(raw)
     if not m:
@@ -409,7 +411,7 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
     if due:
         args["due"] = f"{due:%Y-%m-%d %H:%M}"
     said = f"Done, I'll remind you {say_when(due, now)}." if due else "It's on your reminders."
-    return Match("reminder", "create_reminder", args, phrase=lambda _: said)
+    return Match("reminder", "set_reminder", args, phrase=lambda _: said, fallback="create_reminder")
 
 
 TODO_WORDS = {"todo", "todos", "to", "do", "list", "tasks", "task", "whats", "what", "on", "my", "have", "i",

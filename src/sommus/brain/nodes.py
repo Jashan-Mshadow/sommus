@@ -172,6 +172,18 @@ class NodeHub:
         if tools and name in self._remote:
             self.unreachable.pop(name, None)
 
+    async def call_on(self, node: str, tool_name: str, arguments: dict[str, Any]) -> ToolOutput:
+        """Run a tool on one particular remote node, even when a local node shadows its name (the server
+        copying the Mac's contacts through the Mac's own list_contacts)."""
+        remote = self._remote.get(node)
+        if remote is None:
+            return ToolOutput.failure(f"No remote node '{node}'.")
+        result = await self._call_remote(remote, tool_name, arguments)
+        if isinstance(result, ToolOutput):
+            return result
+        text = "\n".join(b.text for b in result.content if isinstance(b, types.TextContent))
+        return ToolOutput([{"type": "text", "text": text}], text, bool(result.is_error))
+
     def reachable(self, node: str) -> bool:
         remote = self._remote.get(node)
         return remote is None or remote.client is not None
@@ -185,8 +197,11 @@ class NodeHub:
         await self._stack.enter_async_context(client)
         self._clients[name] = client
         for tool in (await client.list_tools()).tools:
-            if tool.name in self._tools:
-                raise ValueError(f"Tool '{tool.name}' is defined by both '{self._tools[tool.name].node}' and '{name}'.")
+            owner = self._tools.get(tool.name)
+            # A tool on this machine beats a Mac tool of the same name: the server's own contacts work while the
+            # Mac sleeps. Two local nodes defining one tool is still a mistake.
+            if owner and owner.node not in self._remote:
+                raise ValueError(f"Tool '{tool.name}' is defined by both '{owner.node}' and '{name}'.")
             self._tools[tool.name] = NodeTool(name, tool, self._policy.tier_for(tool.name, tool.annotations))
 
     @property

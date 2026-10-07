@@ -16,7 +16,7 @@ web_search = false
 # search, so the prompt stays small — 59 full tool definitions cost ~7k tokens a step.
 core_tools = [
     "get_battery", "get_volume", "set_volume", "set_mute", "set_brightness", "list_apps", "open_app",
-    "quit_app", "open_url", "media_control", "notify", "create_reminder", "find_contact", "send_message",
+    "quit_app", "open_url", "media_control", "notify", "set_reminder", "create_reminder", "find_contact", "send_message",
     "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search", "ask_claude",
     # quick spoken requests: deferred, each first cost a tool search (~2 s before the tool ran)
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",

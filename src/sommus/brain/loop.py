@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -215,7 +216,7 @@ class Brain:
             self.system = system_prompt(self.cfg, self._deferred, voice=self._voice, relay=self._relay)
 
     def reset(self) -> None:
-        self.messages = []
+        self.messages.clear()  # in place: on the server, Telegram, the iPhone and the Mac share this one list
 
     def _request(self) -> dict[str, Any]:
         request: dict[str, Any] = dict(
@@ -280,6 +281,8 @@ class Brain:
             if self.cfg.fast_path
             else None
         )
+        if quick and quick.fallback and self.hub.tier(quick.tool or "") is None:
+            quick = dataclasses.replace(quick, tool=quick.fallback)
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):

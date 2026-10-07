@@ -27,9 +27,12 @@ from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
+from sommus.contacts import ContactBook
+from sommus.reminders import Reminders
 
 VAULT_SYNC_SECONDS = 300
 TICK_SECONDS = 30
+CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
 
 
 # ---------------------------------------------------------------- the phone's own tools
@@ -125,13 +128,28 @@ class Tailnet:
 
 
 class Server:
-    def __init__(self, cfg: config.Config, hub: NodeHub, store: Store, phone: Phone, log=print):
+    def __init__(
+        self,
+        cfg: config.Config,
+        hub: NodeHub,
+        store: Store,
+        phone: Phone,
+        log=print,
+        reminders: Reminders | None = None,
+        contacts: ContactBook | None = None,
+    ):
         self.cfg, self.hub, self.store, self.phone, self.log = cfg, hub, store, phone, log
-        self.brain = Brain(cfg, hub, store)  # Telegram's: written replies
-        # The Action Button's: spoken replies (short, no lists). Its own thread of conversation, one lock with Telegram.
+        self.reminders, self.contacts = reminders, contacts
+        # One Sommus: Telegram (written replies), the iPhone (spoken) and the Mac's live mode (relayed through
+        # Gemini) each get the system prompt that fits, but share one conversation, one PIN lock and one lock
+        # on turns. Ask on the phone, follow up on the laptop.
+        self.brain = Brain(cfg, hub, store)
         self.voice_brain = Brain(cfg, hub, store, voice=True)
-        self.voice_brain.lock = self.brain.lock
         self.voice_brain.channel = "iPhone (Action Button); the reply is spoken"
+        self.relay_brain = Brain(cfg, hub, store, relay=True)
+        self.relay_brain.channel = "MacBook (live voice)"
+        for other in (self.voice_brain, self.relay_brain):
+            other.messages, other.gate, other.lock = self.brain.messages, self.brain.gate, self.brain.lock
         self.bot = None
         self.tailnet = Tailnet()
         self.state_path = cfg.data_dir / "brief_state.json"
@@ -201,7 +219,83 @@ class Server:
             mac = all(self.hub.reachable(n.name) for n in self.cfg.nodes if n.where == "mac")
             return JSONResponse({"ok": True, "mac": mac})
 
-        return Starlette(routes=[Route("/ask", ask, methods=["POST"]), Route("/health", health)])
+        def mine(handler):
+            async def checked(request: Request) -> JSONResponse:
+                caller = request.client.host if request.client else ""
+                if not await asyncio.to_thread(self.tailnet.is_mine, caller):
+                    self.log(f"Refused {request.url.path} from {caller}")
+                    return JSONResponse({"error": "not allowed"}, status_code=403)
+                body = await request.json() if request.method == "POST" else {}
+                try:
+                    return JSONResponse(await handler(body if isinstance(body, dict) else {}))
+                except Exception as e:
+                    self.log(f"{request.url.path} failed: {type(e).__name__}: {e}")
+                    return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=500)
+
+            return checked
+
+        routes = [
+            Route("/ask", ask, methods=["POST"]),
+            Route("/health", health),
+            Route("/live/tools", mine(self.live_tools)),
+            Route("/live/ask", mine(self.live_ask), methods=["POST"]),
+            Route("/live/tool", mine(self.live_tool), methods=["POST"]),
+            Route("/live/pin", mine(self.live_pin), methods=["POST"]),
+            Route("/live/gate", mine(self.live_gate), methods=["POST"]),
+        ]
+        return Starlette(routes=routes)
+
+    # -- the Mac's live mode, as a client of this brain (client.py)
+
+    def gate_state(self) -> dict[str, Any]:
+        gate = self.brain.gate
+        left = max(0.0, gate.unlocked_until - gate.clock()) if gate.unlocked else 0.0
+        return {"pending": gate.pending, "unlocked_for": left, "expecting": gate.expecting}
+
+    async def live_tools(self, _body: dict) -> dict[str, Any]:
+        return {"tools": self.hub.api_tools()}
+
+    async def live_ask(self, body: dict) -> dict[str, Any]:
+        parts: list[str] = []
+
+        async def allow(name: str, args: dict) -> bool:
+            return True
+
+        async with self.brain.lock:
+            async for event in self.relay_brain.handle(str(body.get("text", "")), allow):
+                if isinstance(event, TextDelta):
+                    parts.append(event.text)
+                elif isinstance(event, Notice):
+                    parts.append(f" ({event.text})")
+        return {"reply": "".join(parts).strip(), **self.gate_state()}
+
+    async def live_tool(self, body: dict) -> dict[str, Any]:
+        result = await self.relay_brain.call_tool(str(body["name"]), dict(body.get("args") or {}), str(body["asked"]))
+        return {"text": result.text, "decision": result.decision, "is_error": result.is_error, **self.gate_state()}
+
+    async def live_pin(self, body: dict) -> dict[str, Any]:
+        """A PIN heard or typed on the Mac (never sent to Google): checked here, where the lock is."""
+        gate = self.brain.gate
+        answer = gate.attempt(str(body.get("text", "")))
+        if gate.unlocked:
+            for brain in (self.brain, self.voice_brain, self.relay_brain):
+                brain.note_unlocked()
+        return {"answer": answer, **self.gate_state()}
+
+    async def live_gate(self, body: dict) -> dict[str, Any]:
+        gate = self.brain.gate
+        match body.get("do"):
+            case "clear_pending":
+                gate.pending = None
+            case "lock":
+                gate.lock()
+            case "vouch":
+                gate.vouch()
+            case "unvouch":
+                gate.unvouch()
+            case "new":
+                self.brain.reset()
+        return self.gate_state()
 
     # -- what Sommus says first
 
@@ -235,7 +329,10 @@ class Server:
         schedule = campus.cached(campus.schedule_path())
         weather = await asyncio.to_thread(self._weather)
         ranked, _added = campus.task_sections(campus.todo_path())
-        return brief.morning(schedule, now, weather, await self._mail(), ranked)
+        text = brief.morning(schedule, now, weather, await self._mail(), ranked)
+        if self.reminders and (today := brief.reminders_today(self.reminders.open(), now)):
+            text += "\n" + today
+        return text
 
     async def tick(self, now: datetime) -> None:
         settings = config.section("brief")
@@ -262,10 +359,32 @@ class Server:
         self.state["nudged"] = [list(k) for k in sorted(sent)][-50:]
         self._save_state()
 
+    async def fire_reminders(self, now: datetime) -> None:
+        if not self.reminders:
+            return
+        for reminder, late in self.reminders.take_due(now):
+            note = f" (meant for {reminder.when():%-I:%M %p})" if late else ""
+            await self.tell(f"⏰ {reminder.title}{note}")
+            self.log(f"Reminder sent: {reminder.title}")
+
+    async def copy_contacts(self) -> None:
+        """While the Mac is awake, refresh the server's copy of its Contacts."""
+        if not self.contacts or not self.hub.reachable("laptop"):
+            return
+        listing = await self.hub.call_on("laptop", "list_contacts", {})
+        if not listing.is_error and (count := self.contacts.replace(listing.text, datetime.now())):
+            self.log(f"Copied {count} contacts from the Mac")
+            self.state["contacts_at"] = time.time()
+            self._save_state()
+
     async def scheduler(self) -> None:
         while True:
+            now = datetime.now().astimezone()
             try:
-                await self.tick(datetime.now().astimezone())
+                await self.tick(now)
+                await self.fire_reminders(now.replace(tzinfo=None))
+                if time.time() - self.state.get("contacts_at", 0) > CONTACTS_EVERY_SECONDS:
+                    await self.copy_contacts()
             except Exception as e:
                 self.log(f"Scheduler: {type(e).__name__}: {e}")
             await asyncio.sleep(TICK_SECONDS)
@@ -312,10 +431,14 @@ async def serve(log=print) -> None:
     async with NodeHub(cfg.nodes, Policy(cfg.overrides)) as hub:
         from mcp import Client
 
+        reminders = Reminders(cfg.data_dir / "reminders.json")
+        contacts = ContactBook(cfg.data_dir / "contacts.txt")
         await hub.add("phone", Client(phone.node()))
+        await hub.add("reminders", Client(reminders.node()))
+        await hub.add("contacts", Client(contacts.node()))
         for name, why in hub.unreachable.items():
             log(f"Node '{name}': {why}")
-        server = Server(cfg, hub, store, phone, log)
+        server = Server(cfg, hub, store, phone, log, reminders, contacts)
         tasks = [asyncio.create_task(server.scheduler()), asyncio.create_task(server.vault_sync())]
         # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":

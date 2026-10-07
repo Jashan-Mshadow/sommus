@@ -69,3 +69,15 @@ def class_nudges(schedule: campus.Schedule, now: datetime, minutes: int, sent: s
 def due_at(clock_text: str, day: date, zone) -> datetime:
     hour, minute = (int(x) for x in clock_text.split(":"))
     return datetime(day.year, day.month, day.day, hour, minute, tzinfo=zone)
+
+
+def reminders_today(reminders, now: datetime) -> str:
+    """'Reminders today: Take creatine at 9:30 PM; Call the bank.' — timed ones due today, plus untimed ones."""
+    parts = []
+    for r in reminders:
+        when = r.when()
+        if when is None:
+            parts.append(r.title)
+        elif when.date() == now.date():
+            parts.append(f"{r.title} at {campus.clock(when)}")
+    return "Reminders today: " + "; ".join(parts[:5]) + "." if parts else ""

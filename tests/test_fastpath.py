@@ -453,7 +453,7 @@ AFTERNOON = datetime(2026, 10, 6, 14, 30)
 )
 def test_reminders_skip_the_model(said, title, due):
     found = fastpath.reminder(said, AFTERNOON)
-    assert found and found.tool == "create_reminder"
+    assert found and found.tool == "set_reminder" and found.fallback == "create_reminder"
     assert found.args.get("title") == title and found.args.get("due") == due
 
 
