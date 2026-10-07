@@ -427,7 +427,16 @@ class Brain:
         request falls through to the model (which can still ask Claude for the calendar)."""
         schedule = campus.cached(campus.schedule_path())
         now = datetime.now(schedule.zone)
-        return campus.answer(schedule, tokens, now) if kind == "classes" else campus.due_answer(schedule, tokens, now)
+        if kind == "classes":
+            return campus.answer(schedule, tokens, now)
+        # Most of what he has to do lives on the to-do list (applications, hackathons, assignments), not in the
+        # schedule's deadlines, so "what's due" reads both (Jashan, 2026-10-06).
+        said = campus.due_answer(schedule, tokens, now)
+        with contextlib.suppress(Exception):
+            ranked, added = campus.task_sections(campus.todo_path())
+            if ranked or added:
+                said = f"{said} {fastpath.say_tasks(ranked, added)}"
+        return said
 
     def _recent_level(self) -> str | None:
         if self._level and time.monotonic() - self._level[1] <= FOLLOW_SECONDS:
