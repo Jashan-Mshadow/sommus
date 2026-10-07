@@ -136,3 +136,10 @@ def test_calendar_questions_pick_the_days():
     assert asked_range(["schedule", "next", "week"], wednesday) == ("2026-10-12", 7)
     assert asked_range(["plans", "this", "weekend"], wednesday) == ("2026-10-10", 2)
     assert asked_range(["schedule", "for", "monday"], wednesday) == ("2026-10-12", 1)
+
+
+def test_uw_flow_classes_are_recognised_for_reading_week():
+    from sommus.calendars import CLASS_EVENT
+
+    assert CLASS_EVENT.match("ECE150 - LEC 001") and CLASS_EVENT.match("MATH117 - TUT 101")
+    assert not CLASS_EVENT.match("Point72 — Info Session") and not CLASS_EVENT.match("Spare")

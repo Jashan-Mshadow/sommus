@@ -8,7 +8,9 @@ included — in well under a second, for $0. Read-only: adding events still goes
 
 from __future__ import annotations
 
+import contextlib
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -16,6 +18,9 @@ from zoneinfo import ZoneInfo
 
 from sommus.brain import campus
 
+# UW Flow's events look like "ECE150 - LEC 001". Its feed doesn't know reading week, so on the schedule file's
+# breaks these are dropped (personal events stay).
+CLASS_EVENT = re.compile(r"^[A-Z]{2,8}\s?\d{3}[A-Z]?\s+-\s+(?:LEC|TUT|LAB|SEM|TST|PRJ)\b")
 CACHE_SECONDS = 600  # a calendar changes rarely; refetching each question would cost a second every time
 ZONE = ZoneInfo("America/Toronto")
 
@@ -98,6 +103,9 @@ class Calendars:
         found: list[Event] = []
         for link in self.links:
             found += parse(self._fetch(link), start, end, zone)
+        with contextlib.suppress(Exception):  # no schedule file: keep everything
+            breaks = campus.cached(campus.schedule_path()).breaks
+            found = [e for e in found if not (CLASS_EVENT.match(e.title) and campus._in(e.start.date(), breaks))]
         return sorted(found, key=lambda e: (e.start, not e.all_day))
 
     def node(self):
