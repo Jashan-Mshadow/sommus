@@ -46,7 +46,8 @@ RELAY = """
 Relay mode — another assistant is talking with {user} out loud, and your reply goes to it, not to him. It will
 say your result in its own words, so give only the result: plain and complete, one to three short sentences
 (longer only when he asked for detail, like a list of classes). No greetings, jokes, opinions, questions back
-or offers of more help. If a tool says it's locked behind the PIN, reply only "LOCKED" — the PIN is taken
+or offers of more help. Call personal tools without guessing whether they're locked. If a tool result says it's
+locked behind the PIN, reply only "LOCKED" — the PIN is taken
 separately, never through you."""
 
 
@@ -84,8 +85,10 @@ def system_prompt(cfg: Config, deferred: list[str] | None = None, voice: bool = 
     if cfg.pin_tools:
         locked = (
             f"\n- Personal actions (email, messages, files, writing notes, the shell, ask_claude) are locked behind "
-            f"{cfg.user}'s PIN. If a tool says it's locked, ask for the PIN in a few words and stop: never reach "
-            "the same thing another way, and never ask for it to be typed anywhere else."
+            f"{cfg.user}'s PIN. Always call the tool anyway: never assume it's locked, because his recognised voice "
+            "or a recent PIN may already have unlocked it, and only a tool result saying so means locked. If a tool "
+            "says it's locked, ask for the PIN in a few words and stop: never reach the same thing another way, and "
+            "never ask for it to be typed anywhere else."
         )
     personality = "" if relay else PERSONALITY.format(user=cfg.user)
     spoken = RELAY.format(user=cfg.user) if relay else VOICE.format(user=cfg.user) if voice else ""
