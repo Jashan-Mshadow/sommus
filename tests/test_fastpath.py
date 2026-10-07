@@ -496,3 +496,23 @@ def test_reminders_the_template_cant_read_go_to_the_model(said):
 def test_late_at_night_at_8_means_tomorrow_morning():
     found = fastpath.reminder("remind me to email warg at 8", datetime(2026, 10, 6, 23, 0))
     assert found.args["due"] == "2026-10-07 08:00" and found.phrase("") == "Done, I'll remind you tomorrow at 8 AM."
+
+
+@pytest.mark.parametrize(
+    ("said", "on"),
+    [
+        ("turn on my flashlight", True),
+        ("flashlight on", True),
+        ("turn the torch off", False),
+        ("kill the flashlight", False),
+    ],
+)
+def test_the_flashlight_is_the_phones(said, on):
+    found = fastpath.match(said)
+    assert found and found.tool == "phone_flashlight" and found.args == {"on": on}
+
+
+@pytest.mark.parametrize("said", ["is my flashlight on", "turn on the lights in my room", "flashlight"])
+def test_flashlight_questions_go_to_the_model(said):
+    found = fastpath.match(said)
+    assert not found or found.tool != "phone_flashlight"

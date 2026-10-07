@@ -59,6 +59,7 @@ VOCAB = {
     "next": {"skip", "next", "song", "track", "this"},
     "previous": {"previous", "back", "go", "last", "song", "track"},
     "lock": {"lock", "screen"},
+    "flashlight": {"flashlight", "torch", "on", "off", "phone", "phones", "iphone", "light", "switch", "kill"},
     "screen_off": {"off", "screen", "display", "sleep", "monitor"},
     "weather": WEATHER_TRIGGERS
     | {"outside", "today", "tomorrow", "degrees", "like", "going", "need", "i", "do", "an", "does", "feel"},
@@ -204,6 +205,10 @@ def match(
         return Match("shortcuts", "list_shortcuts")
     if _claims("screen_off", tokens) and present & {"off", "sleep"} and present & {"screen", "display", "monitor"}:
         return Match("screen_off", "sleep_display", phrase=lambda _: "Screen's off.")
+    switch = present & {"on", "off", "kill"} and tokens[0] not in {"is", "are", "whats", "what"}  # not "is it on?"
+    if _claims("flashlight", tokens) and present & {"flashlight", "torch"} and switch:
+        on = "on" in present and not present & {"off", "kill"}
+        return Match("flashlight", "phone_flashlight", {"on": on}, phrase=lambda result: result)
     if _claims("lock", tokens) and "lock" in present:
         return Match("lock", "lock_screen", phrase=lambda _: "Locked.")
     if _claims("unmute", tokens) and "unmute" in present:
