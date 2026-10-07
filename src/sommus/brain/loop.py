@@ -683,6 +683,11 @@ class Brain:
         return result
 
     async def _run_tool(self, turn_id: int, name: str, input: dict[str, Any], confirm: ConfirmFn) -> ToolResult:
+        if self.gate.needs_pin(name) and self.gate.settle is not None:
+            # Live mode: Gemini can call a tool before the Mac has finished checking whose voice asked. Without
+            # this wait, his own voice (0.64, a match) hit the PIN lock first (2026-10-06).
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self.gate.settle(), 3.0)
         tier = self.hub.tier(name)
         blocks: list[dict[str, Any]] = []
         if tier is None:

@@ -231,6 +231,8 @@ async def voice_chat() -> None:
     from sommus.interfaces import speaker as voice_id
 
     voiceprint = voice_id.Voiceprint.load(cfg.data_dir)  # None until `sommus voiceprint`: the PIN does it all
+    if voiceprint is not None:  # load the model now, not on his first request
+        asyncio.create_task(asyncio.to_thread(voice_id.embed, np.random.default_rng(0).normal(0, 0.01, 24000)))
     smart_turn = SmartTurn() if settings.get("smart_turn", True) else None
     detector = voice.SpeechDetector(
         silence_seconds=float(settings.get("silence_seconds", 0.7)),
@@ -637,6 +639,8 @@ async def live_chat() -> None:
     said: list[np.ndarray] = []  # his current sentence, kept on the Mac only for voice ID, then dropped
     quiet_chunks = 0
 
+    checking: dict[str, asyncio.Task | None] = {"task": None}
+
     async def check_voice(audio: np.ndarray) -> None:
         """Voice ID for live mode: his last sentence vouches for the tool calls it leads to."""
         match, score = await asyncio.to_thread(voice_id.check, voiceprint, audio)
@@ -645,6 +649,24 @@ async def live_chat() -> None:
         elif match is False:
             brain.gate.unvouch()
         log(text="", outcome="voice id", voice_match=match, voice_score=score)
+
+    def start_check(audio: np.ndarray) -> None:
+        checking["task"] = asyncio.create_task(check_voice(audio))
+
+    async def settle() -> None:
+        """A personal tool is about to run: finish deciding whose voice asked. If the sentence hasn't ended
+        yet on this side (Gemini can act first), check what's been heard so far."""
+        task = checking["task"]
+        if (task is None or task.done()) and sum(map(len, said)) / voice_id.SAMPLE_RATE >= voice_id.MIN_SECONDS:
+            start_check(np.concatenate(said))
+            task = checking["task"]
+        if task is not None:
+            await task
+
+    if voiceprint is not None:
+        brain.gate.settle = settle
+        # Load the model now: the first check otherwise takes seconds (torch + onnx) and loses the race.
+        asyncio.create_task(asyncio.to_thread(voice_id.embed, np.random.default_rng(0).normal(0, 0.01, 24000)))
 
     tools = live.declarations(hub.api_tools())
     system = live.instructions(cfg.name, cfg.user, settings.get("style", ""), settings.get("persona", "butler"))
@@ -783,7 +805,7 @@ async def live_chat() -> None:
                     if said and quiet_chunks >= 12:  # ~0.4 s of quiet: the sentence is over
                         sentence = np.concatenate(said)
                         said.clear()
-                        asyncio.create_task(check_voice(sentence))
+                        start_check(sentence)
                 quiet_for = now - conversation.last_activity
                 if (
                     not engine_io.speaking

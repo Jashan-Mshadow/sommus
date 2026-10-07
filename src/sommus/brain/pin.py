@@ -18,7 +18,7 @@ import json
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 PIN_FILE = "pin.json"
@@ -140,6 +140,8 @@ class Gate:
         self.wrong = 0
         self.locked_out_until = 0.0
         self.vouched_until = 0.0  # his voice was recognised on the request being handled (voice ID)
+        # Voice ID still deciding: awaited before a personal tool runs, so it doesn't lose the race (live mode).
+        self.settle: Callable[[], Awaitable[None]] | None = None
         self.pending: str | None = None  # the request that hit the lock, replayed once unlocked
         self.partial = ("", 0.0)  # digits heard so far, when a PIN is said in pieces
 

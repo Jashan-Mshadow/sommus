@@ -24,8 +24,8 @@ MODEL_REPO = "Wespeaker/wespeaker-voxceleb-resnet34-LM"
 MODEL_FILE = "voxceleb_resnet34_LM.onnx"
 PRINT_FILE = "voiceprint.json"
 MIN_SECONDS = 1.0  # shorter than this, an embedding says little: neither yes nor no
-# Cosine similarity to the voiceprint. Same speaker with this model is typically 0.55–0.85, someone else
-# under 0.3; between, it's unsure and nothing is vouched. Tuned from his own samples by `sommus voiceprint`.
+# Cosine similarity to the voiceprint. Same speaker with this model is typically 0.5–0.85, someone else
+# under 0.3. Tuned from his own samples by `sommus voiceprint`, capped at 0.5.
 DEFAULT_THRESHOLD = 0.5
 
 
@@ -78,7 +78,9 @@ class Voiceprint:
 
     @classmethod
     def from_samples(cls, samples: list[np.ndarray]) -> Voiceprint:
-        """Average of his embeddings; the threshold sits below his own spread (leave-one-out), never above 0.6."""
+        """Average of his embeddings; the threshold sits below his own spread (leave-one-out), never above 0.5:
+        through live mode's echo cancellation his voice scored 0.52-0.67 against a print made from the plain mic,
+        while other voices scored 0.04-0.26 (2026-10-06)."""
         stack = np.stack(samples)
         centre = stack.mean(axis=0)
         centre /= np.linalg.norm(centre) or 1.0
@@ -87,7 +89,7 @@ class Voiceprint:
             for i in range(len(samples)):
                 rest = np.delete(stack, i, axis=0).mean(axis=0)
                 own.append(float(samples[i] @ (rest / (np.linalg.norm(rest) or 1.0))))
-            threshold = float(np.clip(np.mean(own) - 2.5 * np.std(own), 0.35, 0.6))
+            threshold = float(np.clip(np.mean(own) - 2.5 * np.std(own), 0.35, 0.5))
         else:
             threshold = DEFAULT_THRESHOLD
         return cls(centre, threshold)
