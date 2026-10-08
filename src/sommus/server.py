@@ -213,7 +213,8 @@ class Server:
             text = text.strip()
             if not text:
                 self.log(f"/ask got no words: {len(raw)} bytes, {raw[:120]!r}")
-                return JSONResponse({"reply": "I didn't catch anything.", "action": ""})
+                # Silence in the Shortcut's loop means he's done: end it rather than ask again and again.
+                return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
             if fastpath.DISMISS.match(text):  # "you're good to go": the Shortcut stops listening
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
             try:
