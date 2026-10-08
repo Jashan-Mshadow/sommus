@@ -32,8 +32,7 @@ from sommus.reminders import Reminders
 
 VAULT_SYNC_SECONDS = 300
 TICK_SECONDS = 30
-CONTACTS_EVERY_SECONDS = 6 * 3600
-REPEAT_IS_SILENCE_SECONDS = 60  # recopy the Mac's contacts this often, when it's awake
+CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
 
 
 # ---------------------------------------------------------------- the phone's own tools
@@ -152,7 +151,6 @@ class Server:
         for other in (self.voice_brain, self.relay_brain):
             other.messages, other.gate, other.lock = self.brain.messages, self.brain.gate, self.brain.lock
         self.bot = None
-        self.last_asked: tuple[str, float] = ("", float("-inf"))  # the iPhone's last request, to spot silence
         self.tailnet = Tailnet()
         self.state_path = cfg.data_dir / "brief_state.json"
         self.state = self._load_state()
@@ -219,13 +217,7 @@ class Server:
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
             if fastpath.DISMISS.match(text):  # "you're good to go": the Shortcut stops listening
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
-            # iOS's Dictate Text hands back the last thing it heard when it hears nothing, so silence in the
-            # Shortcut's loop arrived as the previous request again (2026-10-08). The same words within a minute
-            # mean he's done.
-            last, at = self.last_asked
-            self.last_asked = (text, time.monotonic())
-            if text == last and time.monotonic() - at < REPEAT_IS_SILENCE_SECONDS:
-                return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
+
             try:
                 result = await self.ask(text)
             except Exception as e:
