@@ -27,6 +27,9 @@ from typing import Any
 
 import numpy as np
 
+# Said to end the conversation rather than as a request. One list for every device: the server uses it too.
+from sommus.brain.fastpath import DISMISS  # noqa: F401
+
 SAMPLE_RATE = 16_000
 CHUNK = 512  # Silero VAD's frame at 16 kHz: 32 ms
 CHUNK_SECONDS = CHUNK / SAMPLE_RATE
@@ -589,14 +592,6 @@ def sounds_unfinished(text: str) -> bool:
         return True
     words = re.findall(r"[a-z']+", stripped.lower())
     return bool(words) and words[-1] in UNFINISHED
-
-
-# Said to end the conversation rather than as a request.
-DISMISS = re.compile(
-    r"^\W*(?:that'?s (?:all|it)|thanks?(?: you)?|never ?mind|go to sleep|stop listening|good ?bye|bye|"
-    r"nothing|no thanks|i'?m good|all good|we'?re done|done)\W*$",
-    re.I,
-)
 
 
 # Said over Sommus to make it stop talking — not requests of their own ("stop" alone would pause the music).

@@ -517,3 +517,28 @@ def test_the_flashlight_is_the_phones(said, on):
 def test_flashlight_questions_go_to_the_model(said):
     found = fastpath.match(said)
     assert not found or found.tool != "phone_flashlight"
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "that's all",
+        "Turn off.",
+        "you're good to go",
+        "ur good",
+        "okay, go to sleep",
+        "Sommus, you can turn off",
+        "thanks Sommus",
+        "goodnight",
+        "all good thanks",
+    ],
+)
+def test_saying_youre_done_ends_the_conversation(said):
+    assert fastpath.DISMISS.match(said)
+
+
+@pytest.mark.parametrize(
+    "said", ["turn off the flashlight", "turn off the screen", "is my flashlight on", "I'm good at math", "done yet?x"]
+)
+def test_requests_that_sound_like_goodbyes_are_not(said):
+    assert not fastpath.DISMISS.match(said)

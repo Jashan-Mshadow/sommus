@@ -82,6 +82,17 @@ VOCAB = {
                 "off", "when", "does", "fall", "on", "this", "year", "are", "there", "any"},
 }  # fmt: skip
 
+# "I'm done": the conversation ends and the device stops listening (the Mac's voice modes, the iPhone's Action
+# Button). Whole sentences only, so "turn off the flashlight" is still a request.
+DISMISS = re.compile(
+    r"^\W*(?:(?:ok(?:ay)?|alright|cool|sommus)[\s,]+)*"
+    r"(?:that'?s (?:all|it)|that'?ll be all|thanks?(?: you)?|never ?mind|(?:go to )?sleep|stop listening|"
+    r"good ?bye|bye|good ?night|nothing|no thanks|i'?m good|all good|we'?re done|done|"
+    r"(?:you can )?turn off|(?:you'?re|your|ur) good(?: to go)?|you can go|that'?s enough)"
+    r"(?:[\s,]+(?:sommus|thanks?(?: you)?))*\W*$",
+    re.I,
+)
+
 # Words that make a sentence more than one simple command.
 STOP_WORDS = {"and", "then", "also", "after", "before", "if", "when", "why", "dont", "not", "never", "no", "or"}
 # Said after the place ("time in Delhi right now"), so not part of its name.
