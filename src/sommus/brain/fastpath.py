@@ -85,7 +85,7 @@ VOCAB = {
 # "I'm done": the conversation ends and the device stops listening (the Mac's voice modes, the iPhone's Action
 # Button). Whole sentences only, so "turn off the flashlight" is still a request.
 DISMISS = re.compile(
-    r"^\W*(?:(?:ok(?:ay)?|alright|cool|sommus)[\s,]+)*"
+    r"^\W*(?:(?:ok(?:ay)?|alright|cool|sommus|oh|yeah|yep|hey|um+|uh+|perfect|great|nice|no)[\s,]+)*"
     r"(?:that'?s (?:all|it)|that'?ll be all|thanks?(?: you)?|never ?mind|(?:go to )?sleep|stop listening|"
     r"good ?bye|bye|good ?night|nothing|no thanks|i'?m good|all good|we'?re done|done|"
     r"(?:you can )?turn off|(?:you'?re|your|ur) good(?: to go)?|you can go|that'?s enough)"
