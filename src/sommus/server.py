@@ -300,7 +300,10 @@ class Server:
                 if not await asyncio.to_thread(self.tailnet.is_mine, caller):
                     self.log(f"Refused {request.url.path} from {caller}")
                     return JSONResponse({"error": "not allowed"}, status_code=403)
-                body = await request.json() if request.method == "POST" else {}
+                try:
+                    body = await request.json() if request.method == "POST" else {}
+                except ValueError:
+                    return JSONResponse({"error": "the body isn't JSON"}, status_code=400)
                 try:
                     return JSONResponse(await handler(body if isinstance(body, dict) else {}))
                 except Exception as e:
@@ -477,7 +480,10 @@ class Server:
         """The vault here is a clone: pull what the Mac pushed, push what Sommus wrote (to-dos, memories)."""
         vault = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
         while True:
-            await asyncio.to_thread(sync_vault, vault, self.log)
+            try:
+                await asyncio.to_thread(sync_vault, vault, self.log)
+            except Exception as e:  # a hung pull (TimeoutExpired) used to end this task, and gather() with it
+                self.log(f"Vault sync: {type(e).__name__}: {e}")
             await asyncio.sleep(VAULT_SYNC_SECONDS)
 
 
@@ -495,7 +501,8 @@ def sync_vault(vault: Path, log=print) -> None:
         git("rebase", "--abort")
         log(f"Vault pull failed, left as is: {pulled.stderr.strip()[:200]}")
         return
-    if git("status", "-sb").stdout.splitlines()[0].find("ahead") != -1:
+    branch = git("status", "-sb").stdout.splitlines()
+    if branch and "ahead" in branch[0]:
         pushed = git("push", "-q")
         if pushed.returncode != 0:
             log(f"Vault push failed: {pushed.stderr.strip()[:200]}")
