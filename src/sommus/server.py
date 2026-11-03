@@ -28,11 +28,13 @@ from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
 from sommus.contacts import ContactBook
+from sommus.herald import Herald
 from sommus.reminders import Reminders
 
 VAULT_SYNC_SECONDS = 300
 TICK_SECONDS = 30
 CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
+GREET_RETRY_SECONDS = 600  # the Mac was awake but didn't say good morning (muted): try again this much later
 
 
 # ---------------------------------------------------------------- the phone's own tools
@@ -154,6 +156,11 @@ class Server:
         self.tailnet = Tailnet()
         self.state_path = cfg.data_dir / "brief_state.json"
         self.state = self._load_state()
+        # Nudges speak on the Mac when it's awake and it isn't quiet hours; otherwise Telegram, as before.
+        self.herald = Herald(hub, self.tell, config.section("brief"), log)
+        self.phrases = brief.Phrasebook()
+        self.say_as = config.section("voice").get("say_as", {})
+        self._greet_tried = -GREET_RETRY_SECONDS
 
     def _load_state(self) -> dict:
         with contextlib.suppress(OSError, ValueError):
@@ -358,24 +365,44 @@ class Server:
             self.state["brief"] = today
             self._save_state()
             await self.tell(await self.morning_brief(now))
+        await self.greet(schedule, now, morning)
         evening = brief.due_at(settings.get("evening", "20:00"), now.date(), schedule.zone)
         if now >= evening and self.state.get("evening") != today and (now - evening).total_seconds() < 3600:
             self.state["evening"] = today
             self._save_state()
             if heads_up := brief.due_tomorrow(schedule, now):
-                await self.tell(heads_up)
+                spoken = brief.spoken_due_tomorrow(schedule, now, self.say_as, self.phrases)
+                await self.herald.deliver(heads_up, spoken, now)
         sent = {tuple(k) for k in self.state.get("nudged", [])}
-        for line in brief.class_nudges(schedule, now, int(settings.get("nudge_minutes", 15)), sent):
-            await self.tell(line)
+        for session in brief.classes_starting(schedule, now, int(settings.get("nudge_minutes", 15)), sent):
+            spoken = brief.spoken_class_nudge(session, now, self.say_as, self.phrases)
+            await self.herald.deliver(brief.class_nudge(session, now), spoken, now)
         self.state["nudged"] = [list(k) for k in sorted(sent)][-50:]
         self._save_state()
+
+    async def greet(self, schedule: campus.Schedule, now: datetime, morning: datetime) -> None:
+        """The first time the Mac is awake on a morning (after quiet hours, before noon), say good morning and
+        what's first. The written brief went to Telegram at its time either way; this is only ever spoken."""
+        today = now.date().isoformat()
+        if self.state.get("greeted") == today or now < morning or now.hour >= 12 or not self.herald.can_speak(now):
+            return
+        if time.monotonic() - self._greet_tried < GREET_RETRY_SECONDS:
+            return  # muted or in quiet mode: ask again in a while, not every tick
+        self._greet_tried = time.monotonic()
+        weather = await asyncio.to_thread(self._weather)
+        line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather)
+        if await self.herald.say(line, now):
+            self.state["greeted"] = today
+            self._save_state()
 
     async def fire_reminders(self, now: datetime) -> None:
         if not self.reminders:
             return
         for reminder, late in self.reminders.take_due(now):
             note = f" (meant for {reminder.when():%-I:%M %p})" if late else ""
-            await self.tell(f"⏰ {reminder.title}{note}")
+            spoken = brief.spoken_reminder(reminder.title, self.phrases, reminder.when() if late else None)
+            # Telegram always: the phone keeps it, and he may not be at the awake Mac. Spoken too when it can be.
+            await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True)
             self.log(f"Reminder sent: {reminder.title}")
 
     async def copy_contacts(self) -> None:

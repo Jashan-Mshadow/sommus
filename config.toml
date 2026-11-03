@@ -182,3 +182,9 @@ telegram = "server"              # only one process may poll the bot; the Mac's 
 [brief]
 morning = "07:00"                # Telegram morning brief: classes, due soon, weather, unread mail ($0, no model)
 nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"
+# Said out loud on the Mac when it's awake ("Physics in fifteen, room E2 1792."), else Telegram as above. The
+# first time the Mac is awake on a morning it also says good morning and what's first. Reminders always go to
+# Telegram, and are spoken too. Never during quiet_hours [from, until), or when the Mac is muted or told
+# "be quiet" (set_quiet). speak = false: Telegram only.
+speak = true
+quiet_hours = ["23:00", "07:30"]
