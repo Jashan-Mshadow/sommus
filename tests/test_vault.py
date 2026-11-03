@@ -92,3 +92,17 @@ def test_a_phrase_found_nowhere_falls_back_to_notes_with_every_word(notes):
     loose = vault.search_vault("math 115 midterm")
     assert "all of its words" in loose and "MATH 115.md:4" in loose
     assert "Nothing in the vault" in vault.search_vault("linear midterm quantum")
+
+
+def test_a_git_that_hangs_is_stopped_with_a_message(notes, monkeypatch):
+    import subprocess
+
+    (notes / ".git").mkdir()
+
+    def hang(*args, **kwargs):
+        assert kwargs.get("timeout"), "every git call needs a timeout"
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(vault.subprocess, "run", hang)
+    with pytest.raises(vault.VaultError, match="took over 30 s"):
+        vault.commit_vault("notes")
