@@ -22,7 +22,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, browser, files, macos, pdf
+from sommus.nodes.laptop import apps, browser, files, macos, pdf, speak
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -157,6 +157,30 @@ def notify(title: str, message: str) -> str:
     """
     macos.notify(title, message)
     return "Notification shown."
+
+
+@tool(REVERSIBLE)
+def announce(text: str) -> str:
+    """Say a short line out loud on the Mac's speakers, in Sommus's voice, right now. For telling Jashan (or
+    whoever is in the room) something when he isn't looking at a screen. Fails when the Mac is muted or quiet
+    mode is on: then don't retry, send it another way.
+
+    Args:
+        text: One or two short sentences, written the way they should be said.
+    """
+    return f"Said: {speak.announcer.announce(text)}"
+
+
+@tool(REVERSIBLE)
+def set_quiet(on: bool) -> str:
+    """Quiet mode: while on, Sommus doesn't speak up on the Mac by itself (class nudges, reminders); they go to
+    Telegram instead. Answers to his own questions still speak. Use for "be quiet", "stop announcing things".
+
+    Args:
+        on: True to keep quiet, False to speak up again.
+    """
+    speak.announcer.set_quiet(on)
+    return "Quiet mode on: nudges go to Telegram." if on else "Quiet mode off: I'll speak up on the Mac again."
 
 
 @tool(REVERSIBLE)

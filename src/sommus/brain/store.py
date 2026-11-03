@@ -134,6 +134,15 @@ class Store:
         ).fetchall()
         return [(tool, text, count, spent or 0.0) for tool, text, count, spent in rows]
 
+    def turns_between(self, since: str, until: str) -> list[tuple[str, str, str, str]]:
+        """(started_at, user_text, reply, model) for every finished turn in [since, until), oldest first:
+        the nightly diary's input (brain/diary.py)."""
+        return self._db.execute(
+            "SELECT started_at, user_text, COALESCE(reply, ''), COALESCE(model, '') FROM turns"
+            " WHERE started_at >= ? AND started_at < ? AND status IS NOT NULL ORDER BY id",
+            (since, until),
+        ).fetchall()
+
     def cost_month(self) -> float:
         """Spend since the 1st, the window Anthropic's monthly limit counts."""
         row = self._db.execute(

@@ -74,11 +74,16 @@ module = "sommus.nodes.bridge.server"
 [[nodes]]
 name = "vault"
 module = "sommus.nodes.vault.server"
-env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain", SOMMUS_MEMORY_PATH = "~/Documents/Jashans_Brain/Sommus Memory.md" }
+env = { SOMMUS_VAULT_PATH = "~/Documents/Jashans_Brain", SOMMUS_MEMORY_PATH = "~/Documents/Jashans_Brain/Sommus Memory.md", SOMMUS_DIARY_PATH = "~/Documents/Jashans_Brain/Sommus Diary.md" }
 
 [memory]
 # Facts Sommus saves itself ("remember my gym days are..."), loaded into every prompt. Private: in the vault.
 path = "~/Documents/Jashans_Brain/Sommus Memory.md"
+# What happened each day, distilled overnight from the conversation log by the cheap model (~1¢ a night, $0 on a
+# day with no conversation). The last few days and open follow-ups go into the prompt (docs/decisions/0011).
+diary = "~/Documents/Jashans_Brain/Sommus Diary.md"
+diary_at = "03:30"                   # in the schedule's time zone; a run before noon writes up the day before
+diary_model = "claude-haiku-4-5"
 
 # Override any tool's permission tier: "read" | "reversible" | "destructive" | "blocked"
 [permissions]
@@ -188,3 +193,9 @@ telegram = "server"              # only one process may poll the bot; the Mac's 
 [brief]
 morning = "07:00"                # Telegram morning brief: classes, due soon, weather, unread mail ($0, no model)
 nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"
+# Said out loud on the Mac when it's awake ("Physics in fifteen, room E2 1792."), else Telegram as above. The
+# first time the Mac is awake on a morning it also says good morning and what's first. Reminders always go to
+# Telegram, and are spoken too. Never during quiet_hours [from, until), or when the Mac is muted or told
+# "be quiet" (set_quiet). speak = false: Telegram only.
+speak = true
+quiet_hours = ["23:00", "07:30"]

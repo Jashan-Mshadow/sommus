@@ -51,10 +51,18 @@ class FakeModel:
         self.responses = list(responses)
         self.requests = []
         self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
+        self.messages = SimpleNamespace(create=self._create)  # one-shot calls, e.g. the nightly diary
 
     def _stream(self, **request):
         self.requests.append(request | {"messages": list(request["messages"])})
         return FakeStream(self.responses.pop(0))
+
+    async def _create(self, **request):
+        self.requests.append(request)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def build_node():

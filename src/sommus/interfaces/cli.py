@@ -11,7 +11,7 @@ import re
 import signal
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import anthropic
@@ -1177,6 +1177,53 @@ def show_today() -> None:
     console.print(f"[dim]Wrote {out}[/]")
 
 
+async def show_diary(action: str | None, words: list[str]) -> None:
+    """`sommus diary`: the recent days and open follow-ups ($0). `sommus diary write`: write up the last 24
+    hours now instead of waiting for the night (the cheap model, ~1¢). `sommus diary forget <words|date>`."""
+    import anthropic
+
+    from sommus.brain import diary
+
+    cfg = config.load()
+    if not cfg.diary_path:
+        console.print("[red]No [memory] diary path in config.toml.[/]")
+        return
+    if action == "write":
+        store = Store(cfg.data_dir / "sommus.db")
+        clock = datetime.now()
+        model = config.section("memory").get("diary_model", "claude-haiku-4-5")
+        written = await diary.write_day(
+            store,
+            anthropic.AsyncAnthropic(),
+            model,
+            cfg.diary_path,
+            cfg.memory_path,
+            clock.date(),
+            (clock - timedelta(days=1)).isoformat(timespec="seconds"),
+            clock.isoformat(timespec="seconds"),
+            cfg.name,
+            cfg.user,
+        )
+        if written.entry:
+            console.print(escape(written.entry.render()))
+        for fact in written.facts:
+            console.print(f"[green]+ fact[/] {escape(fact)}")
+        console.print(f"[dim]${written.cost_usd:.4f} · {cfg.diary_path}[/]")
+        return
+    if action == "forget":
+        try:
+            console.print(diary.forget(cfg.diary_path, " ".join(words)))
+        except Exception as e:
+            console.print(f"[red]{escape(str(e))}[/]")
+        return
+    console.print(escape(diary.search(cfg.diary_path, " ".join([action or "", *words]).strip())))
+    follow = diary.open_follow_ups(diary.entries(cfg.diary_path), datetime.now().date())
+    if follow:
+        console.print("\n[bold]Open follow-ups[/]")
+        for _, f in follow:
+            console.print(f"  - {escape(f.text)}")
+
+
 def handle_command(text: str, brain: Brain, hub: NodeHub | None, store: Store) -> bool:
     """Returns False to exit."""
     command = text.split()[0].lower()
@@ -1459,6 +1506,7 @@ def main() -> None:
             "serve",
             "node",
             "voiceprint",
+            "diary",
         ],
         default="chat",
     )
@@ -1488,6 +1536,8 @@ def main() -> None:
             make_voiceprint()
         elif args.command == "today":
             show_today()
+        elif args.command == "diary":
+            asyncio.run(show_diary(args.tool_name, args.tool_args))
         elif args.command == "stats":
             from sommus import stats
 

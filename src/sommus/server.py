@@ -17,22 +17,24 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sommus import brief, config
-from sommus.brain import campus, fastpath
+from sommus.brain import campus, diary, fastpath
 from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
 from sommus.contacts import ContactBook
+from sommus.herald import Herald
 from sommus.reminders import Reminders
 
 VAULT_SYNC_SECONDS = 300
 TICK_SECONDS = 30
 CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
+GREET_RETRY_SECONDS = 600  # the Mac was awake but didn't say good morning (muted): try again this much later
 
 
 # ---------------------------------------------------------------- the phone's own tools
@@ -154,6 +156,11 @@ class Server:
         self.tailnet = Tailnet()
         self.state_path = cfg.data_dir / "brief_state.json"
         self.state = self._load_state()
+        # Nudges speak on the Mac when it's awake and it isn't quiet hours; otherwise Telegram, as before.
+        self.herald = Herald(hub, self.tell, config.section("brief"), log)
+        self.phrases = brief.Phrasebook()
+        self.say_as = config.section("voice").get("say_as", {})
+        self._greet_tried = -GREET_RETRY_SECONDS
 
     def _load_state(self) -> dict:
         with contextlib.suppress(OSError, ValueError):
@@ -358,24 +365,44 @@ class Server:
             self.state["brief"] = today
             self._save_state()
             await self.tell(await self.morning_brief(now))
+        await self.greet(schedule, now, morning)
         evening = brief.due_at(settings.get("evening", "20:00"), now.date(), schedule.zone)
         if now >= evening and self.state.get("evening") != today and (now - evening).total_seconds() < 3600:
             self.state["evening"] = today
             self._save_state()
             if heads_up := brief.due_tomorrow(schedule, now):
-                await self.tell(heads_up)
+                spoken = brief.spoken_due_tomorrow(schedule, now, self.say_as, self.phrases)
+                await self.herald.deliver(heads_up, spoken, now)
         sent = {tuple(k) for k in self.state.get("nudged", [])}
-        for line in brief.class_nudges(schedule, now, int(settings.get("nudge_minutes", 15)), sent):
-            await self.tell(line)
+        for session in brief.classes_starting(schedule, now, int(settings.get("nudge_minutes", 15)), sent):
+            spoken = brief.spoken_class_nudge(session, now, self.say_as, self.phrases)
+            await self.herald.deliver(brief.class_nudge(session, now), spoken, now)
         self.state["nudged"] = [list(k) for k in sorted(sent)][-50:]
         self._save_state()
+
+    async def greet(self, schedule: campus.Schedule, now: datetime, morning: datetime) -> None:
+        """The first time the Mac is awake on a morning (after quiet hours, before noon), say good morning and
+        what's first. The written brief went to Telegram at its time either way; this is only ever spoken."""
+        today = now.date().isoformat()
+        if self.state.get("greeted") == today or now < morning or now.hour >= 12 or not self.herald.can_speak(now):
+            return
+        if time.monotonic() - self._greet_tried < GREET_RETRY_SECONDS:
+            return  # muted or in quiet mode: ask again in a while, not every tick
+        self._greet_tried = time.monotonic()
+        weather = await asyncio.to_thread(self._weather)
+        line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather)
+        if await self.herald.say(line, now):
+            self.state["greeted"] = today
+            self._save_state()
 
     async def fire_reminders(self, now: datetime) -> None:
         if not self.reminders:
             return
         for reminder, late in self.reminders.take_due(now):
             note = f" (meant for {reminder.when():%-I:%M %p})" if late else ""
-            await self.tell(f"⏰ {reminder.title}{note}")
+            spoken = brief.spoken_reminder(reminder.title, self.phrases, reminder.when() if late else None)
+            # Telegram always: the phone keeps it, and he may not be at the awake Mac. Spoken too when it can be.
+            await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True)
             self.log(f"Reminder sent: {reminder.title}")
 
     async def copy_contacts(self) -> None:
@@ -388,6 +415,47 @@ class Server:
             self.state["contacts_at"] = time.time()
             self._save_state()
 
+    async def write_diary(self, now: datetime, clock: datetime | None = None) -> None:
+        """Once a night, the day's turns become a diary entry (brain/diary.py). `now` is aware; `clock` is the
+        naive local time the turn log is written in (the server's own clock)."""
+        settings = config.section("memory")
+        if not self.cfg.diary_path:
+            return
+        with contextlib.suppress(Exception):
+            now = now.astimezone(campus.cached(campus.schedule_path()).zone)
+        at = settings.get("diary_at", "03:30")
+        due = brief.due_at(at, now.date(), now.tzinfo)
+        today = now.date().isoformat()
+        if not (now >= due and self.state.get("diary") != today and (now - due).total_seconds() < 3 * 3600):
+            return
+        self.state["diary"] = today
+        self._save_state()
+        budget = self.brain.budget
+        if self.store.cost_month() >= budget.monthly_usd * budget.cheap_at:
+            self.log("Diary skipped: the month's budget is nearly spent")
+            return
+        clock = clock or datetime.now()
+        until = clock.isoformat(timespec="seconds")
+        since = self.state.get("diary_upto") or (clock - timedelta(days=1)).isoformat(timespec="seconds")
+        day = diary.day_for(now, at)
+        written = await diary.write_day(
+            self.store,
+            self.brain.client,
+            settings.get("diary_model", "claude-haiku-4-5"),
+            self.cfg.diary_path,
+            self.cfg.memory_path,
+            day,
+            since,
+            until,
+            self.cfg.name,
+            self.cfg.user,
+        )
+        self.state["diary_upto"] = until
+        self._save_state()
+        if written.entry or written.facts:
+            extra = f", {len(written.facts)} new fact(s)" if written.facts else ""
+            self.log(f"Diary: wrote {day} (${written.cost_usd:.4f}{extra})")
+
     async def scheduler(self) -> None:
         while True:
             now = datetime.now().astimezone()
@@ -398,6 +466,10 @@ class Server:
                     await self.copy_contacts()
             except Exception as e:
                 self.log(f"Scheduler: {type(e).__name__}: {e}")
+            try:  # apart from the rest: a failed model call mustn't hold up reminders
+                await self.write_diary(now)
+            except Exception as e:  # not retried tonight; tomorrow's run picks these turns up
+                self.log(f"Diary: {type(e).__name__}: {e}")
             await asyncio.sleep(TICK_SECONDS)
 
     # -- the vault

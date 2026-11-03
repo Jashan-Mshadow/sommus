@@ -92,3 +92,20 @@ def test_a_phrase_found_nowhere_falls_back_to_notes_with_every_word(notes):
     loose = vault.search_vault("math 115 midterm")
     assert "all of its words" in loose and "MATH 115.md:4" in loose
     assert "Nothing in the vault" in vault.search_vault("linear midterm quantum")
+
+
+def test_forget_reaches_the_diary_when_no_fact_matches_and_recall_reads_it(tmp_path, monkeypatch):
+    from datetime import date
+
+    from sommus.brain import diary, memory
+
+    monkeypatch.setattr(vault, "MEMORY", tmp_path / "Memory.md")
+    monkeypatch.setattr(vault, "DIARY", tmp_path / "Diary.md")
+    memory.remember(vault.MEMORY, "Gym days are Monday and Friday")
+    diary.save(vault.DIARY, [diary.Entry(date(2026, 10, 12), "He had his Amazon interview. He cooked dal.")])
+    assert "Amazon interview" in vault.recall_diary("2026-10-12")
+    assert vault.forget("gym days").startswith("Forgot: Gym days")  # a fact first
+    assert vault.forget("amazon") == "Forgot from the diary: He had his Amazon interview."
+    assert "Amazon" not in vault.recall_diary("")
+    with pytest.raises(vault.VaultError, match="Nothing remembered"):
+        vault.forget("skydiving")
