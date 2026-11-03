@@ -3,7 +3,8 @@
 One process holds the brain and everything that should work with the laptop closed: Telegram, Gmail, web
 search, the vault (a clone of its private repo, synced by git), the morning brief and the nudges, and /ask for
 the iPhone's Action Button. The Mac's tools arrive over the tailnet from `sommus node` (remote.py); while the
-Mac sleeps they answer "the laptop is asleep" instead of vanishing.
+Mac sleeps they answer "the laptop is asleep" instead of vanishing, and a few small ones ([mac_queue]) wait
+here and run when it wakes (brain/later.py).
 
 /ask listens only on the server's tailnet address, and every caller is checked with `tailscale whois`: it must
 be one of Jashan's own devices. So the phone needs no token, and nothing on the public internet can reach it.
@@ -25,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 from sommus import brief, config
 from sommus.brain import campus, fastpath
+from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
@@ -450,12 +452,19 @@ class Server:
             self.state["contacts_at"] = time.time()
             self._save_state()
 
+    async def run_waiting(self) -> None:
+        """Mac actions that waited for the Mac to wake (brain/later.py): run them now if it's back."""
+        for line in await self.hub.run_waiting():
+            self.log(line)
+            await self.tell(line)
+
     async def scheduler(self) -> None:
         while True:
             now = datetime.now().astimezone()
             try:
                 await self.tick(now)
                 await self.fire_reminders(now.replace(tzinfo=None))
+                await self.run_waiting()
                 if time.time() - self.state.get("contacts_at", 0) > CONTACTS_EVERY_SECONDS:
                     await self.copy_contacts()
             except Exception as e:
@@ -519,7 +528,9 @@ async def serve(log=print) -> None:
     store = Store(cfg.data_dir / "sommus.db")
     phone = Phone(zone)
     settings = config.deploy()
-    async with NodeHub(cfg.nodes, Policy(cfg.overrides)) as hub:
+    waits = config.section("mac_queue")
+    later = Later(cfg.data_dir / "mac_queue.json", waits.get("tools", []), cfg.pin_tools, waits.get("hours", 24))
+    async with NodeHub(cfg.nodes, Policy(cfg.overrides), later=later) as hub:
         from mcp import Client
 
         reminders = Reminders(cfg.data_dir / "reminders.json")
