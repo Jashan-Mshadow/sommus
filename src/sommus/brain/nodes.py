@@ -205,10 +205,6 @@ class NodeHub:
         remote = self._remote.get(node)
         return remote is None or remote.client is not None
 
-    def node_of(self, tool_name: str) -> str | None:
-        found = self._tools.get(tool_name)
-        return found.node if found else None
-
     async def add(self, name: str, client: Client) -> None:
         """Connect a node. Public so tests can attach in-process servers."""
         await self._stack.enter_async_context(client)

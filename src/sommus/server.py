@@ -393,14 +393,8 @@ class Server:
         return ""
 
     def _weather(self) -> str:
-        home = config.section("fastpath")
         with contextlib.suppress(Exception):
-            return fastpath.weather_answer(
-                ["weather", "today"],
-                home.get("place", "Waterloo"),
-                float(home.get("latitude", 43.4643)),
-                float(home.get("longitude", -80.5204)),
-            )
+            return self.brain._weather(["weather", "today"], None)  # home, from [fastpath], as the brain reads it
         return ""
 
     async def morning_brief(self, now: datetime) -> str:
