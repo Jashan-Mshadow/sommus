@@ -17,12 +17,12 @@ import json
 import os
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sommus import brief, config
-from sommus.brain import campus, fastpath
+from sommus.brain import campus, diary, fastpath
 from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
@@ -388,6 +388,47 @@ class Server:
             self.state["contacts_at"] = time.time()
             self._save_state()
 
+    async def write_diary(self, now: datetime, clock: datetime | None = None) -> None:
+        """Once a night, the day's turns become a diary entry (brain/diary.py). `now` is aware; `clock` is the
+        naive local time the turn log is written in (the server's own clock)."""
+        settings = config.section("memory")
+        if not self.cfg.diary_path:
+            return
+        with contextlib.suppress(Exception):
+            now = now.astimezone(campus.cached(campus.schedule_path()).zone)
+        at = settings.get("diary_at", "03:30")
+        due = brief.due_at(at, now.date(), now.tzinfo)
+        today = now.date().isoformat()
+        if not (now >= due and self.state.get("diary") != today and (now - due).total_seconds() < 3 * 3600):
+            return
+        self.state["diary"] = today
+        self._save_state()
+        budget = self.brain.budget
+        if self.store.cost_month() >= budget.monthly_usd * budget.cheap_at:
+            self.log("Diary skipped: the month's budget is nearly spent")
+            return
+        clock = clock or datetime.now()
+        until = clock.isoformat(timespec="seconds")
+        since = self.state.get("diary_upto") or (clock - timedelta(days=1)).isoformat(timespec="seconds")
+        day = diary.day_for(now, at)
+        written = await diary.write_day(
+            self.store,
+            self.brain.client,
+            settings.get("diary_model", "claude-haiku-4-5"),
+            self.cfg.diary_path,
+            self.cfg.memory_path,
+            day,
+            since,
+            until,
+            self.cfg.name,
+            self.cfg.user,
+        )
+        self.state["diary_upto"] = until
+        self._save_state()
+        if written.entry or written.facts:
+            extra = f", {len(written.facts)} new fact(s)" if written.facts else ""
+            self.log(f"Diary: wrote {day} (${written.cost_usd:.4f}{extra})")
+
     async def scheduler(self) -> None:
         while True:
             now = datetime.now().astimezone()
@@ -398,6 +439,10 @@ class Server:
                     await self.copy_contacts()
             except Exception as e:
                 self.log(f"Scheduler: {type(e).__name__}: {e}")
+            try:  # apart from the rest: a failed model call mustn't hold up reminders
+                await self.write_diary(now)
+            except Exception as e:  # not retried tonight; tomorrow's run picks these turns up
+                self.log(f"Diary: {type(e).__name__}: {e}")
             await asyncio.sleep(TICK_SECONDS)
 
     # -- the vault
