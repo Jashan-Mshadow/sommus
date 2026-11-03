@@ -3,7 +3,8 @@
 One process holds the brain and everything that should work with the laptop closed: Telegram, Gmail, web
 search, the vault (a clone of its private repo, synced by git), the morning brief and the nudges, and /ask for
 the iPhone's Action Button. The Mac's tools arrive over the tailnet from `sommus node` (remote.py); while the
-Mac sleeps they answer "the laptop is asleep" instead of vanishing.
+Mac sleeps they answer "the laptop is asleep" instead of vanishing, and a few small ones ([mac_queue]) wait
+here and run when it wakes (brain/later.py).
 
 /ask listens only on the server's tailnet address, and every caller is checked with `tailscale whois`: it must
 be one of Jashan's own devices. So the phone needs no token, and nothing on the public internet can reach it.
@@ -15,14 +16,17 @@ import asyncio
 import contextlib
 import json
 import os
+import re
 import subprocess
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sommus import brief, config
 from sommus.brain import campus, diary, fastpath
+from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
@@ -44,9 +48,11 @@ class Phone:
     """Tools that run on the iPhone itself. The brain can't reach into a phone, so a tool here only queues the
     action; /ask hands it back and the Shortcut does it (flashlight, a text from the phone, an alarm)."""
 
-    def __init__(self) -> None:
+    def __init__(self, zone: ZoneInfo | None = None, clock=None) -> None:
         self.present = False  # true only while a request from the iPhone is being handled
         self.action: dict[str, Any] = {}
+        self.zone = zone or ZoneInfo("America/Toronto")
+        self.clock = clock or (lambda: datetime.now(self.zone))
 
     def node(self):
         from mcp.server.mcpserver import MCPServer
@@ -55,9 +61,11 @@ class Phone:
         server = MCPServer("phone", log_level="WARNING")
         quick = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 
+        away = "This only works when Jashan is talking through his iPhone (the Action Button)."
+
         def queue(action: dict[str, Any], done: str) -> str:
             if not self.present:
-                return "This only works when Jashan is talking through his iPhone (the Action Button)."
+                return away
             if self.action:
                 return f"The phone can do one thing per request; already queued: {self.action['action']}."
             self.action = action
@@ -80,16 +88,72 @@ class Phone:
             return queue({"action": "text", "to": to, "message": message}, f"Texting {to} from the phone.")
 
         @server.tool(annotations=quick, structured_output=False)
-        def phone_alarm(time_24h: str, label: str = "") -> str:
-            """Set an alarm on the iPhone. Only when the request came from the iPhone.
+        def phone_alarm(time_24h: str, day: str = "", label: str = "") -> str:
+            """Set an alarm in the iPhone's Clock app. Only when the request came from the iPhone. An iPhone
+            alarm rings at the next time of day it's set for, so it's for the next 24 hours; anything later
+            is a reminder (set_reminder).
 
             Args:
-                time_24h: "07:30" style.
+                time_24h: The time it rings, "13:05" (also accepts "1:05 PM").
+                day: "2026-10-08" when he named a day; leave empty for the next time it's that time.
                 label: Optional alarm name.
             """
-            return queue({"action": "alarm", "time": time_24h, "label": label}, f"Alarm set for {time_24h}.")
+            if not self.present:
+                return away + " For an alarm from here, use set_reminder: it pings his phone on Telegram."
+            try:
+                when = alarm_time(time_24h, day, self.clock())
+            except ValueError as e:
+                return str(e)
+            action = {
+                "action": "alarm",
+                "time": f"{when:%H:%M}",  # what the Shortcut's Create Alarm reads
+                "at": when.isoformat(timespec="minutes"),
+                "label": label.strip() or "Sommus",
+            }
+            return queue(action, f"Setting an alarm on your phone for {spoken_time(when, self.clock())}.")
 
         return server
+
+
+ALARM_TIME = re.compile(r"^(\d{1,2})(?:[:.h]?(\d{2}))?\s*(?:([ap])\.?\s*m?\.?)?$", re.I)
+
+
+def alarm_time(said: str, day: str, now: datetime) -> datetime:
+    """When an alarm said as "13:05", "1:05 PM", "7am" or "0730" rings: on `day` ("2026-10-08") if one was
+    given, else the next time the clock shows it. `now` is aware, in Jashan's zone. Raises ValueError with a
+    message for the model when the time can't be read, is past, or is beyond what an iPhone alarm can do."""
+    found = ALARM_TIME.match(said.strip())
+    if not found:
+        raise ValueError(f"Couldn't read the alarm time '{said}'. Use 24-hour time, like 13:05.")
+    hour, minute, half = int(found[1]), int(found[2] or 0), (found[3] or "").lower()
+    if half:
+        if not 1 <= hour <= 12:
+            raise ValueError(f"'{said}' isn't a time.")
+        hour = hour % 12 + (12 if half == "p" else 0)
+    if hour > 23 or minute > 59:
+        raise ValueError(f"'{said}' isn't a time.")
+    if day.strip():
+        try:
+            date = datetime.strptime(day.strip(), "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError(f"Couldn't read the day '{day}'. Use 2026-10-08.") from None
+        when = datetime.combine(date, datetime.min.time().replace(hour=hour, minute=minute), now.tzinfo)
+        if when <= now:
+            raise ValueError(f"{when:%A %B %-d, %-I:%M %p} has already passed.")
+        if when - now > timedelta(hours=24):
+            raise ValueError(
+                f"An iPhone alarm can't be set for {when:%A %B %-d} yet: it rings the next time the clock shows "
+                f"{when:%-I:%M %p}. Use set_reminder for {when:%Y-%m-%d %H:%M} instead, and say so."
+            )
+        return when
+    when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return when if when > now else when + timedelta(days=1)
+
+
+def spoken_time(when: datetime, now: datetime) -> str:
+    """'1:05 PM', '7:30 AM tomorrow'."""
+    said = f"{when:%-I:%M %p}"
+    return said if when.date() == now.date() else f"{said} tomorrow"
 
 
 # ---------------------------------------------------------------- who's asking
@@ -243,7 +307,10 @@ class Server:
                 if not await asyncio.to_thread(self.tailnet.is_mine, caller):
                     self.log(f"Refused {request.url.path} from {caller}")
                     return JSONResponse({"error": "not allowed"}, status_code=403)
-                body = await request.json() if request.method == "POST" else {}
+                try:
+                    body = await request.json() if request.method == "POST" else {}
+                except ValueError:
+                    return JSONResponse({"error": "the body isn't JSON"}, status_code=400)
                 try:
                     return JSONResponse(await handler(body if isinstance(body, dict) else {}))
                 except Exception as e:
@@ -333,14 +400,8 @@ class Server:
         return ""
 
     def _weather(self) -> str:
-        home = config.section("fastpath")
         with contextlib.suppress(Exception):
-            return fastpath.weather_answer(
-                ["weather", "today"],
-                home.get("place", "Waterloo"),
-                float(home.get("latitude", 43.4643)),
-                float(home.get("longitude", -80.5204)),
-            )
+            return self.brain._weather(["weather", "today"], None)  # home, from [fastpath], as the brain reads it
         return ""
 
     async def morning_brief(self, now: datetime) -> str:
@@ -456,12 +517,19 @@ class Server:
             extra = f", {len(written.facts)} new fact(s)" if written.facts else ""
             self.log(f"Diary: wrote {day} (${written.cost_usd:.4f}{extra})")
 
+    async def run_waiting(self) -> None:
+        """Mac actions that waited for the Mac to wake (brain/later.py): run them now if it's back."""
+        for line in await self.hub.run_waiting():
+            self.log(line)
+            await self.tell(line)
+
     async def scheduler(self) -> None:
         while True:
             now = datetime.now().astimezone()
             try:
                 await self.tick(now)
                 await self.fire_reminders(now.replace(tzinfo=None))
+                await self.run_waiting()
                 if time.time() - self.state.get("contacts_at", 0) > CONTACTS_EVERY_SECONDS:
                     await self.copy_contacts()
             except Exception as e:
@@ -478,7 +546,10 @@ class Server:
         """The vault here is a clone: pull what the Mac pushed, push what Sommus wrote (to-dos, memories)."""
         vault = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
         while True:
-            await asyncio.to_thread(sync_vault, vault, self.log)
+            try:
+                await asyncio.to_thread(sync_vault, vault, self.log)
+            except Exception as e:  # a hung pull (TimeoutExpired) used to end this task, and gather() with it
+                self.log(f"Vault sync: {type(e).__name__}: {e}")
             await asyncio.sleep(VAULT_SYNC_SECONDS)
 
 
@@ -496,10 +567,26 @@ def sync_vault(vault: Path, log=print) -> None:
         git("rebase", "--abort")
         log(f"Vault pull failed, left as is: {pulled.stderr.strip()[:200]}")
         return
-    if git("status", "-sb").stdout.splitlines()[0].find("ahead") != -1:
+    branch = git("status", "-sb").stdout.splitlines()
+    if branch and "ahead" in branch[0]:
         pushed = git("push", "-q")
         if pushed.returncode != 0:
             log(f"Vault push failed: {pushed.stderr.strip()[:200]}")
+
+
+def home_zone() -> ZoneInfo:
+    return ZoneInfo(config.section("fastpath").get("timezone", "America/Toronto"))
+
+
+def pin_local_time(zone: str) -> bool:
+    """Make naive local times (reminders' due times, the prompt's clock stamp) Jashan's, not the VM's: a cloud
+    server defaults to UTC, which would ring a 21:30 reminder at 17:30 in Waterloo. True if it changed."""
+    if os.environ.get("TZ") == zone:
+        return False
+    before = datetime.now().astimezone().utcoffset()
+    os.environ["TZ"] = zone
+    time.tzset()
+    return datetime.now().astimezone().utcoffset() != before
 
 
 async def serve(log=print) -> None:
@@ -507,11 +594,16 @@ async def serve(log=print) -> None:
 
     from sommus.interfaces import telegram as tg
 
+    zone = home_zone()
+    if pin_local_time(zone.key):
+        log(f"Server clock was not on Jashan's time: using {zone.key} for local times")
     cfg = config.load()
     store = Store(cfg.data_dir / "sommus.db")
-    phone = Phone()
+    phone = Phone(zone)
     settings = config.deploy()
-    async with NodeHub(cfg.nodes, Policy(cfg.overrides)) as hub:
+    waits = config.section("mac_queue")
+    later = Later(cfg.data_dir / "mac_queue.json", waits.get("tools", []), cfg.pin_tools, waits.get("hours", 24))
+    async with NodeHub(cfg.nodes, Policy(cfg.overrides), later=later) as hub:
         from mcp import Client
 
         reminders = Reminders(cfg.data_dir / "reminders.json")

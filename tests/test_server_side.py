@@ -143,3 +143,30 @@ def test_uw_flow_classes_are_recognised_for_reading_week():
 
     assert CLASS_EVENT.match("ECE150 - LEC 001") and CLASS_EVENT.match("MATH117 - TUT 101")
     assert not CLASS_EVENT.match("Point72 — Info Session") and not CLASS_EVENT.match("Spare")
+
+
+async def test_a_broken_calendar_link_hides_neither_the_others_nor_leaks_its_secret_url(monkeypatch):
+    import httpx2
+
+    from sommus import calendars
+
+    good, broken = (
+        "https://calendar.example/private-GOOD/basic.ics",
+        "https://calendar.example/private-SECRET/basic.ics",
+    )
+
+    def fetch(link):
+        if link == broken:
+            request = httpx2.Request("GET", link)
+            httpx2.Response(404, request=request).raise_for_status()
+        return ICS.encode()
+
+    book = calendars.Calendars([good, broken])
+    monkeypatch.setattr(book, "_fetch", fetch)
+    async with Client(book.node()) as client:
+        said = (await client.call_tool("calendar_events", {"start": "2026-10-08"})).content[0].text
+        monkeypatch.setattr(book, "links", [broken])
+        none = (await client.call_tool("calendar_events", {"start": "2026-10-08"})).content[0].text
+    assert "Hackathon info session" in said and "calendar 2 (HTTP 404)" in said
+    assert none == "Couldn't read the calendars right now: calendar 1 (HTTP 404)."
+    assert "SECRET" not in said + none
