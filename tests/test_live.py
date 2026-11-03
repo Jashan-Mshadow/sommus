@@ -28,6 +28,9 @@ class FakeSession:
     async def send_tool_response(self, function_responses):
         self.responses.extend(function_responses)
 
+    async def send_client_content(self, turns, turn_complete=True):
+        self.sent_text.append(turns.parts[0].text)
+
     async def close(self):
         pass
 
@@ -151,6 +154,40 @@ async def test_ask_sommus_hands_the_request_to_claude(tmp_path):
     conv, hub, *_ = await conversation(tmp_path, text_reply("Why did calculus break up? Too many limits."))
     await conv.run_tool(SimpleNamespace(id="c2", name="ask_sommus", args={"request": "tell me a calculus joke"}))
     assert conv.session.responses[0].response == {"result": "Why did calculus break up? Too many limits."}
+    await hub.__aexit__(None, None, None)
+
+
+async def test_a_slow_lookup_gets_a_holding_line_and_a_quick_one_does_not(tmp_path, monkeypatch):
+    """Gemini never fills a slow lookup by itself: Sommus nudges it to say "one sec" so there's no dead air."""
+    import asyncio
+
+    monkeypatch.setattr(live, "HOLD_SECONDS", 0.01)
+    conv, hub, *_ = await conversation(tmp_path)
+
+    async def slow():
+        await asyncio.sleep(0.05)
+        return "Physics at 2:30.", False
+
+    assert await conv.hold_while("c5", slow()) == ("Physics at 2:30.", False)
+    assert conv.session.sent_text == [live.HOLDING_NUDGE]
+
+    async def quick():
+        return "Done.", False
+
+    conv.session.sent_text.clear()
+    monkeypatch.setattr(live, "HOLD_SECONDS", 1.0)
+    await conv.hold_while("c6", quick())
+    assert conv.session.sent_text == []
+    await hub.__aexit__(None, None, None)
+
+
+async def test_ask_sommus_is_non_blocking_and_answers_when_gemini_is_idle(tmp_path):
+    from google.genai import types
+
+    assert live.ASK_SOMMUS["behavior"] == "NON_BLOCKING"
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    await conv.run_tool(SimpleNamespace(id="c7", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses[0].scheduling == types.FunctionResponseScheduling.WHEN_IDLE
     await hub.__aexit__(None, None, None)
 
 

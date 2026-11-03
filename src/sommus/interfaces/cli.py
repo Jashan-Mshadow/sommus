@@ -597,7 +597,7 @@ async def live_chat() -> None:
     it, change your mind mid-sentence. Sommus keeps the wake word, the tools, the PIN and the rules."""
     from google import genai
 
-    from sommus.interfaces import duplex, live, voice
+    from sommus.interfaces import duplex, live, voice, wakeword
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         console.print("[red]No API key.[/] ask_sommus needs Claude — see [bold]sommus check[/].")
@@ -614,6 +614,13 @@ async def live_chat() -> None:
     transcriber = voice.Transcriber(voice_settings.get("stt_model", "mlx-community/whisper-small.en-mlx"))
     detector = voice.SpeechDetector(silence_seconds=0.6, threshold=float(voice_settings.get("vad_threshold", 0.5)))
     wake = voice.wake_pattern(voice_settings.get("wake_phrases", ["sommus", "hey sommus"]))
+    # The wake-word model hears "Hey Jarvis" from the sound; the Whisper check above still catches "Hey Sommus".
+    wake_model = voice_settings.get("wake_model", wakeword.DEFAULT_MODEL)
+    wake_word = (
+        wakeword.WakeWord(cfg.data_dir / "models", wake_model, float(voice_settings.get("wake_threshold", 0.5)))
+        if wake_model
+        else None
+    )
     heard_log = voice.VoiceLog(cfg.data_dir / "voice.log")
     model = settings.get("model", live.MODEL)
     voice_name = settings.get("voice", "Leda")
@@ -637,6 +644,12 @@ async def live_chat() -> None:
             hub = await NodeHub(cfg.nodes, Policy(cfg.overrides)).__aenter__()
         await asyncio.to_thread(transcriber.warm_up)
         await asyncio.to_thread(detector.probability, np.zeros(voice.CHUNK, dtype=np.float32))
+        if wake_word is not None:
+            try:
+                await asyncio.to_thread(wake_word.warm_up)
+            except Exception as e:  # no download, broken model: Whisper still hears the wake phrase
+                console.print(f"[yellow]! Wake-word model off ({escape(f'{type(e).__name__}: {e}'[:120])}).[/]")
+                wake_word = None
         try:
             await asyncio.to_thread(engine_io.start)
         except Exception as e:
@@ -766,6 +779,8 @@ async def live_chat() -> None:
             with contextlib.suppress(Exception):
                 await context.__aexit__(None, None, None)
         detector.reset()
+        if wake_word is not None:
+            wake_word.reset()  # its history holds the last conversation's audio: start the next wait clean
         if not quiet:
             voice.chime(voice.CHIME_SLEEP)
             console.print("[dim]  … sleeping. Say “Hey Sommus” to wake me.[/]")
@@ -838,6 +853,11 @@ async def live_chat() -> None:
                     await close_conversation()
                 continue
             batch = []
+            if mode == "asleep" and wake_word is not None and wake_word.feed(chunk):
+                log(text="", outcome="wake: wake-word model", wake_score=round(wake_word.last_score, 3))
+                detector.reset()  # the phrase itself isn't a request; what he says next goes to Gemini
+                await open_conversation()
+                continue
             utterance = detector.feed(chunk)
             if mode == "pin":
                 if now > state["pin_until"]:

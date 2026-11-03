@@ -119,7 +119,12 @@ say_rate = 190                                  # words per minute
 stt_model = "mlx-community/whisper-small.en-mlx"  # runs on the M1, ~0.35s per command
 silence_seconds = 0.7                           # how long a pause ends what you're saying
 hold_seconds = 2.0                              # ...unless it stopped mid-thought ("remind me to"): wait this long for the rest
-wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus"]  # at the start or end of what's said
+wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus", "hey jarvis"]  # at the start or end of what's said
+# Live mode also listens with a wake-word model (openWakeWord, on the Mac, ~1 ms per 80 ms of audio). It hears the
+# sound, not Whisper's spelling, so it doesn't miss. Pretrained phrase: "Hey Jarvis". "" turns it off; a custom
+# "Hey Sommus" model goes here once trained. Raise wake_threshold toward 0.7 if it wakes by itself.
+wake_model = "hey_jarvis_v0.1.onnx"
+wake_threshold = 0.5
 awake_seconds = 30                              # after a reply, how long it keeps listening without the wake phrase
                                                 # (10 was too short mid-conversation: he had to say the name again)
 awake_after_question = 90                       # ...and this long when Sommus ended its reply with a question
@@ -167,7 +172,8 @@ model = "gemini-3.8-live"
 voice = ""                           # "" = Google's default voice (Jashan's pick) · or one of ~30: sommus voices --gemini
 persona = "butler"                   # "butler": dry, sarcastic, Alfred-style · "teen": sarcastic teenager · or write your own
 style = ""                                    # how it speaks; "" for the voice's natural style
-awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
+awake_seconds = 60                   # the session closes (and stops sending audio) after this long quiet
+                                     # (30 meant saying the wake word again mid-conversation; 2026-11-03)
 interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech
 
 [deploy]

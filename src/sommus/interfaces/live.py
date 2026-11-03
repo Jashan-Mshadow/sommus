@@ -40,6 +40,13 @@ MODEL = "gemini-3.8-live"
 IN_RATE, OUT_RATE = 16_000, 24_000
 SEND_CHUNKS = 3  # mic chunks per message: ~100 ms of audio
 PIN_SECONDS = 25  # how long Sommus listens for a PIN before giving up
+# ask_sommus slower than this gets a spoken holding line. Gemini never fills the gap by itself: measured
+# 2026-11-03, a 4 s lookup meant 4 s of silence; with the nudge it said "Just a second" 1.7 s in.
+HOLD_SECONDS = 1.0
+HOLDING_NUDGE = (
+    "[Sommus: the lookup is still running. Say one short, natural holding line in character, like "
+    "'one sec, sir', and nothing else.]"
+)
 # Gemini's voices and Google's one-word description of each. Hear them: sommus voices --gemini
 VOICES = {
     "Zephyr": "bright", "Puck": "upbeat", "Charon": "informative", "Kore": "firm", "Fenrir": "excitable",
@@ -68,6 +75,8 @@ ASK_SOMMUS = {
         "properties": {"request": {"type": "string", "description": "What he asked, in his words, with context."}},
         "required": ["request"],
     },
+    # Non-blocking: Gemini can still talk while Claude works, so a slow lookup gets a holding line, not silence.
+    "behavior": "NON_BLOCKING",
 }
 LOCKED = (
     "LOCKED: this needs Jashan's PIN. Say only \"What's your PIN?\" and stop. Sommus is listening for it privately "
@@ -321,7 +330,7 @@ class LiveConversation:
         self.show(f"  [dim]→ {escape(name)}({escape(', '.join(f'{k}={v!r}' for k, v in args.items()))})[/]")
         try:
             if name == "ask_sommus":
-                reply, locked = await self.ask_sommus(args.get("request") or asked)
+                reply, locked = await self.hold_while(call.id, self.ask_sommus(args.get("request") or asked))
             else:
                 result = await self.brain.call_tool(name, args, asked)
                 reply, locked = result.text, result.decision == "needs_pin"
@@ -333,9 +342,23 @@ class LiveConversation:
         self.show(f"    [dim]{escape(reply[:200])}[/]")
         if call.id in self.cancelled:  # he talked over it and Gemini moved on
             return
-        await self.session.send_tool_response(
-            function_responses=[types.FunctionResponse(id=call.id, name=name, response={"result": reply})]
-        )
+        response = types.FunctionResponse(id=call.id, name=name, response={"result": reply})
+        if name == "ask_sommus":  # non-blocking: say the answer once any holding line has finished
+            response.scheduling = types.FunctionResponseScheduling.WHEN_IDLE
+        await self.session.send_tool_response(function_responses=[response])
+
+    async def hold_while(self, call_id: str, work):
+        """Run `work`; if it takes longer than HOLD_SECONDS, have Gemini say a short holding line meanwhile."""
+        from google.genai import types
+
+        task = asyncio.ensure_future(work)
+        done, _ = await asyncio.wait({task}, timeout=HOLD_SECONDS)
+        if not done and call_id not in self.cancelled:
+            with contextlib.suppress(Exception):  # a missed holding line is not worth failing the lookup
+                await self.session.send_client_content(
+                    turns=types.Content(role="user", parts=[types.Part(text=HOLDING_NUDGE)]), turn_complete=True
+                )
+        return await task
 
     async def ask_sommus(self, request: str) -> tuple[str, bool]:
         from sommus.brain.loop import Notice, TextDelta
