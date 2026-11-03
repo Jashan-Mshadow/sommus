@@ -11,3 +11,4 @@ The numbers behind them are in [MEASUREMENTS.md](../MEASUREMENTS.md) (regenerate
 | [4](0004-no-local-llm.md) | No local LLM for the brain |
 | [5](0005-one-model-with-a-budget-guard.md) | One model plus a monthly budget guard, instead of per-request routing |
 | [6](0006-fast-path-and-campus-engine.md) | Answer everyday requests without a model |
+| [11](0011-a-nightly-diary-instead-of-mem0.md) | Long-term memory is a nightly diary distilled from the log, not Mem0 |

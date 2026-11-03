@@ -14,13 +14,13 @@ import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 import anthropic
 
 from sommus.brain import budget as spending
-from sommus.brain import campus, fastpath
+from sommus.brain import campus, diary, fastpath
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
 from sommus.brain.pin import Gate, split_pin
@@ -175,7 +175,7 @@ class Brain:
         self._deferred = [t["name"] for t in hub.api_tools(cfg.core_tools) if t.get("defer_loading")]
         self._voice = voice or relay
         self._relay = relay
-        self._memory_seen = self._memory_mtime()
+        self._memory_seen = self._memory_key()
         self.system = system_prompt(cfg, self._deferred, voice=voice, relay=relay)
         # Spoken, a pause before the first word feels broken. Measured on Sonnet 5 (2026-09-16): the
         # first word of a plain answer came at ~1.5 s with adaptive thinking, ~0.7 s without.
@@ -203,14 +203,19 @@ class Brain:
         channel = getattr(self, "channel", "")  # tests build bare brains without __init__
         return f"{text}\n[Said into his {channel}]" if channel else text
 
-    def _memory_mtime(self) -> float:
-        path = self.cfg.memory_path
-        return path.stat().st_mtime if path and path.exists() else 0.0
+    def _memory_key(self) -> tuple[float, float, date]:
+        """What the remembered part of the prompt depends on: the memory file, the diary, and the day (the
+        diary's 'yesterday' and its follow-ups move on at midnight, hours after the cache has expired)."""
+
+        def mtime(path) -> float:
+            return path.stat().st_mtime if path and path.exists() else 0.0
+
+        return mtime(self.cfg.memory_path), mtime(self.cfg.diary_path), date.today()
 
     def _refresh_prompt(self) -> None:
-        """Rebuild the system prompt when the memory file changed. That rewrites the prompt cache once
-        (~2.4¢), which is why memory lives in the prompt only after it actually changes."""
-        seen = self._memory_mtime()
+        """Rebuild the system prompt when the memory file or the diary changed. That rewrites the prompt cache
+        once (~2.4¢), which is why memory lives in the prompt only after it actually changes."""
+        seen = self._memory_key()
         if seen != self._memory_seen:
             self._memory_seen = seen
             self.system = system_prompt(self.cfg, self._deferred, voice=self._voice, relay=self._relay)
@@ -303,7 +308,10 @@ class Brain:
         history_len = len(self.messages)
         live = self._voice or time.monotonic() - self._last_turn_at <= LIVE_SECONDS
         self._turn_start = history_len if live and history_len else None
-        self.messages.append({"role": "user", "content": stamp(self._from_channel(text))})
+        # An older diary day that this request seems to be about rides on the request itself, after the cached
+        # prefix: the system prompt stays byte-for-byte the same and the note costs only its own few tokens.
+        recalled = diary.recall_note(self.cfg.diary_path, text) if self.cfg.diary_path else ""
+        self.messages.append({"role": "user", "content": stamp(self._from_channel(text)) + recalled})
         usage, reply, status, steps = Usage(), [], "error", 0
 
         budget = self.cfg.max_steps

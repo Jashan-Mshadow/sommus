@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sommus.brain import memory
+from sommus.brain import diary, memory
 from sommus.config import ROOT, Config
 
 PROFILE_PATH = ROOT / "profile.md"
@@ -51,7 +51,9 @@ locked behind the PIN, reply only "LOCKED" — the PIN is taken
 separately, never through you."""
 
 
-def system_prompt(cfg: Config, deferred: list[str] | None = None, voice: bool = False, relay: bool = False) -> str:
+def system_prompt(
+    cfg: Config, deferred: list[str] | None = None, voice: bool = False, relay: bool = False, today: date | None = None
+) -> str:
     catalog = ""
     if deferred:
         catalog = (
@@ -69,6 +71,14 @@ def system_prompt(cfg: Config, deferred: list[str] | None = None, voice: bool = 
             'done, or says "remember", save it with `remember` as one short sentence, then carry on. Don\'t save '
             "one-off requests, things already listed below, or anything secret. If a remembered fact is wrong or "
             "out of date, `forget` it (and remember the new one)."
+        )
+    lately = diary.prompt_block(cfg.diary_path, cfg.user, today)
+    if lately and not relay:
+        remembering += (
+            "\n- Your diary below is what you noticed on recent days. Use it the way a friend would: when it fits, "
+            "bring up one thing worth bringing up (at most one per reply, never as a list), and don't repeat one "
+            "already talked about in this conversation. Notes marked as from your diary in a request are "
+            "background: use them only if they help."
         )
     if cfg.ask_before_destructive:
         permission = (
@@ -142,7 +152,7 @@ a sentence to correct; a needless question costs {cfg.user} a round trip. Ask on
 destructive and the target is ambiguous.{locked}{remembering}
 - Look things up before asking {cfg.user} for them: what you know about him is below, the rest is on the \
 laptop or the web.
-{spoken}{catalog}{profile_block}{remembered}"""
+{spoken}{catalog}{profile_block}{remembered}{lately}"""
 
 
 def stamp(text: str, now: datetime | None = None) -> str:

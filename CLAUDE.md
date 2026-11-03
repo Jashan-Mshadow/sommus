@@ -17,6 +17,8 @@ sommus tool [name k=v]                # run a tool directly, no model, $0
 sommus eval --only "<text>"           # one eval case (~1¢). The full eval is ~40–50¢: don't run it casually
 sommus today                          # today's classes + deadlines, writes data/today.json ($0)
 sommus stats                          # regenerate docs/MEASUREMENTS.md from the log ($0)
+sommus diary [day|words]              # what the nightly diary remembers, + open follow-ups ($0)
+sommus diary write                    # write up the last 24 h now instead of at 03:30 (Haiku, ~1¢) · `diary forget <words|date>`
 sommus live                           # Mac, the one window to keep open: uses the server's brain + serves the Mac's tools
 sommus node                           # Mac: only the Mac's tools for the server, without live mode (Terminal.app)
 sommus voiceprint                     # Mac: learn Jashan's voice (voice ID replaces the PIN for his voice)
@@ -34,6 +36,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/campus.py` | $0 schedule engine: next class, today, today.json |
 | `src/sommus/brain/budget.py` | monthly spend guard; cheap model past 90% of the cap (no per-request routing: see docs/decisions/0005) |
 | `src/sommus/brain/memory.py` | long-term facts (remember / forget) loaded into the prompt |
+| `src/sommus/brain/diary.py` | episodic memory: nightly summary of the day's turns + follow-ups, recent days in the prompt, keyword recall on the request (docs/decisions/0011) |
 | `src/sommus/brain/prompt.py` | system prompt |
 | `src/sommus/stats.py` | `sommus stats`: aggregates only, never request text (the page is public) |
 | `src/sommus/brain/store.py` | SQLite log of turns, tool calls, cost |

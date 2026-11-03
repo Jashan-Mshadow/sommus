@@ -19,12 +19,13 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from sommus.brain import memory
+from sommus.brain import diary, memory
 from sommus.brain.campus import INBOX
 
 VAULT = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
 TODO = "TODO.md"
 MEMORY = Path(os.environ.get("SOMMUS_MEMORY_PATH", str(VAULT / "Sommus Memory.md"))).expanduser()
+DIARY = Path(os.environ.get("SOMMUS_DIARY_PATH", str(VAULT / "Sommus Diary.md"))).expanduser()
 MAX_NOTE_CHARS = 20_000
 # Longer notes return an outline first. read_note averaged 8.7k chars per call in the log — the
 # most expensive read Sommus makes — and most questions only need one section of the note.
@@ -305,22 +306,43 @@ def remember(fact: str) -> str:
 
 @tool(REVERSIBLE)
 def forget(words: str) -> str:
-    """Remove a remembered fact that's wrong or out of date.
+    """Remove a remembered fact, or a line of the diary, that's wrong, out of date or unwanted.
 
     Args:
-        words: Words from the fact, e.g. "gym days".
+        words: Words from the fact or diary line, e.g. "gym days" — or a diary date like "2026-10-12" to drop
+            that whole day.
     """
     try:
         return memory.forget(MEMORY, words)
+    except memory.MemoryError as fact_error:
+        if not str(fact_error).startswith("No remembered fact"):
+            raise VaultError(str(fact_error)) from fact_error
+    try:
+        return diary.forget(DIARY, words)
     except memory.MemoryError as e:
         raise VaultError(str(e)) from e
 
 
 @tool(READ)
 def list_memories() -> str:
-    """Everything Jashan has asked to be remembered."""
+    """Everything Jashan has asked to be remembered, plus the diary's open follow-ups."""
     known = memory.facts(MEMORY)
-    return "\n".join(f"- {f}" for f in known) if known else "Nothing remembered yet."
+    out = "\n".join(f"- {f}" for f in known) if known else "Nothing remembered yet."
+    follow = diary.open_follow_ups(diary.entries(DIARY), datetime.now().date())
+    if follow:
+        out += "\n\nDiary follow-ups:\n" + "\n".join(f"- {f.text} (from {e.day:%a %b %-d})" for e, f in follow)
+    return out
+
+
+@tool(READ)
+def recall_diary(query: str = "") -> str:
+    """What happened on an earlier day, from Sommus's diary (written each night from the conversations).
+
+    Args:
+        query: A day ("yesterday", "monday", "2026-10-12") or words ("interview", "physics midterm").
+            Empty for the last few days.
+    """
+    return diary.search(DIARY, query, datetime.now().date())
 
 
 def main() -> None:
