@@ -17,3 +17,4 @@ data/
 .ruff_cache/
 .mcp.json
 profile.md
+scripts/sommus-live.command
