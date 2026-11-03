@@ -282,8 +282,8 @@ def commit_vault(message: str) -> str:
         raise VaultError("The vault isn't a git repository.")
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        # A timeout: a git waiting on a lock (the server's sync running at the same moment) or a hook used to
-        # hang this node, and every vault tool with it.
+        # A timeout: a git stuck on a hook, a signing or credential prompt used to hang this node, and every
+        # vault tool with it.
         try:
             return subprocess.run(["git", "-C", str(VAULT), *args], capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired:
