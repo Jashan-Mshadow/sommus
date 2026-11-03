@@ -49,6 +49,8 @@ EXPECTED_TIERS = {
     "open_url": "reversible",
     "media_control": "reversible",
     "notify": "reversible",
+    "announce": "reversible",
+    "set_quiet": "reversible",
     "lock_screen": "reversible",
     "sleep_display": "reversible",
     "quit_app": "destructive",
