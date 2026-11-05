@@ -19,6 +19,7 @@ from mcp.client.stdio import get_default_environment
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
+from sommus.brain.later import Later
 from sommus.brain.permissions import Policy, Tier
 from sommus.config import ROOT, NodeConfig
 
@@ -111,8 +112,21 @@ class NodeTool:
     tier: Tier
 
 
+def asleep(tool_name: str) -> ToolOutput:
+    return ToolOutput.failure(
+        f"{tool_name} runs on Jashan's MacBook, which isn't reachable right now (asleep, lid closed or "
+        "offline). Tell him it'll work once the laptop is awake; don't try another tool for it."
+    )
+
+
 class NodeHub:
-    def __init__(self, nodes: tuple[NodeConfig, ...], policy: Policy, cache_dir: Path | None = None):
+    def __init__(
+        self,
+        nodes: tuple[NodeConfig, ...],
+        policy: Policy,
+        cache_dir: Path | None = None,
+        later: Later | None = None,
+    ):
         self._node_configs = nodes
         self._policy = policy
         self._clients: dict[str, Client] = {}
@@ -121,6 +135,7 @@ class NodeHub:
         self._tasks: list[asyncio.Task] = []
         self._cache_dir = cache_dir or ROOT / "data" / "nodes"
         self.unreachable: dict[str, str] = {}  # node name → why
+        self.later = later  # on the server: small Mac actions wait for the Mac instead of failing (later.py)
         self._stack = AsyncExitStack()
 
     async def __aenter__(self) -> NodeHub:
@@ -181,18 +196,14 @@ class NodeHub:
         if remote is None:
             return ToolOutput.failure(f"No remote node '{node}'.")
         result = await self._call_remote(remote, tool_name, arguments)
-        if isinstance(result, ToolOutput):
-            return result
+        if result is None:
+            return asleep(tool_name)
         text = "\n".join(b.text for b in result.content if isinstance(b, types.TextContent))
         return ToolOutput([{"type": "text", "text": text}], text, bool(result.is_error))
 
     def reachable(self, node: str) -> bool:
         remote = self._remote.get(node)
         return remote is None or remote.client is not None
-
-    def node_of(self, tool_name: str) -> str | None:
-        found = self._tools.get(tool_name)
-        return found.node if found else None
 
     async def add(self, name: str, client: Client) -> None:
         """Connect a node. Public so tests can attach in-process servers."""
@@ -241,8 +252,8 @@ class NodeHub:
             return ToolOutput.failure(f"Unknown tool '{tool_name}'.")
         if found.node in self._remote:
             result = await self._call_remote(self._remote[found.node], tool_name, arguments)
-            if isinstance(result, ToolOutput):
-                return result
+            if result is None:
+                return self._wait_or_fail(found, arguments)
         else:
             try:
                 result = await self._clients[found.node].call_tool(tool_name, arguments)
@@ -270,18 +281,60 @@ class NodeHub:
             blocks.insert(0, {"type": "text", "text": text})
         return ToolOutput(blocks, text, bool(result.is_error))
 
-    async def _call_remote(self, remote: RemoteNode, tool_name: str, arguments: dict[str, Any]):
-        asleep = ToolOutput.failure(
-            f"{tool_name} runs on Jashan's MacBook, which isn't reachable right now (asleep, lid closed or "
-            "offline). Tell him it'll work once the laptop is awake; don't try another tool for it."
-        )
+    async def _call_remote(
+        self, remote: RemoteNode, tool_name: str, arguments: dict[str, Any]
+    ) -> types.CallToolResult | None:
+        """The tool's result, or None when the Mac can't be reached."""
         for _ in range(2):
             client = await remote.connected()
             if client is None:
-                return asleep
+                return None
             try:
                 return await client.call_tool(tool_name, arguments)
             except Exception as e:
                 remote.drop()  # the Mac slept or its node server restarted: reconnect, then try once more
                 remote.error = f"{type(e).__name__}: {e}"
-        return asleep
+        return None
+
+    def _wait_or_fail(self, found: NodeTool, arguments: dict[str, Any]) -> ToolOutput:
+        """The Mac is asleep: queue the call if it's a small reversible one that can happen later."""
+        name = found.tool.name
+        if self.later is None or found.tier is not Tier.REVERSIBLE or not self.later.can_wait(name):
+            return asleep(name)
+        self.later.add(found.node, name, arguments)
+        hours = self.later.max_age.total_seconds() / 3600
+        text = (
+            f"Jashan's MacBook is asleep, so {name} is queued: it runs as soon as the laptop wakes (if that's "
+            f"within {hours:g} hours), and he gets a Telegram message when it has. Tell him it's queued; don't "
+            "try another tool for it."
+        )
+        return ToolOutput([{"type": "text", "text": text}], text, False)
+
+    async def run_waiting(self) -> list[str]:
+        """Run what waited for a Mac node that's reachable again. Returns what to tell Jashan."""
+        if self.later is None:
+            return []
+        told = []
+        for node in sorted(self.later.nodes()):
+            remote = self._remote.get(node)
+            if remote is None or remote.client is None:
+                continue
+            fresh, stale = self.later.take(node)
+            done, failed = [], []
+            for i, waiting in enumerate(fresh):
+                result = await self._call_remote(remote, waiting.tool, waiting.args)
+                if result is None:  # asleep again: the rest waits for next time
+                    self.later.put_back(fresh[i:])
+                    break
+                if result.is_error:
+                    reason = " ".join(b.text for b in result.content if isinstance(b, types.TextContent))
+                    failed.append(f"{waiting.describe()}: {reason[:120]}")
+                else:
+                    done.append(waiting.describe())
+            if done:
+                told.append("Your MacBook woke up, so I did what was waiting: " + "; ".join(done) + ".")
+            if failed:
+                told.append("Waited for the MacBook but failed: " + "; ".join(failed))
+            if stale:
+                told.append("Dropped, the MacBook was asleep too long: " + "; ".join(w.describe() for w in stale) + ".")
+        return told

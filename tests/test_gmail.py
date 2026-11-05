@@ -99,3 +99,15 @@ def test_send_sets_the_headers_and_hands_the_message_to_smtp(monkeypatch):
     assert sent["login"] == ("me@gmail.com", "abcdefghijklmnop")
     assert sent["message"]["From"] == "me@gmail.com"
     assert sent["message"]["Message-ID"] and sent["message"]["Date"]
+
+
+def test_a_search_with_quotes_in_it_stays_one_imap_string():
+    sent = []
+
+    class Connection:
+        def uid(self, *args):
+            sent.append(args)
+            return "OK", [b"3 4"]
+
+    assert mail._uids(Connection(), 'subject:"ECE 190" from:d\\x', 10) == [b"4", b"3"]
+    assert sent == [("SEARCH", "X-GM-RAW", '"subject:\\"ECE 190\\" from:d\\\\x"')]
