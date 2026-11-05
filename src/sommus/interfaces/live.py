@@ -47,6 +47,10 @@ HOLDING_NUDGE = (
     "[Sommus: the lookup is still running. Say one short, natural holding line in character, like "
     "'one sec, sir', and nothing else.]"
 )
+ANSWER_NUDGE = (
+    "[Sommus: the lookup you were waiting on has finished. Now tell him the answer in short, natural spoken "
+    "sentences, in character, without mentioning the lookup. The answer: {answer}]"
+)
 # Gemini's voices and Google's one-word description of each. Hear them: sommus voices --gemini
 VOICES = {
     "Zephyr": "bright", "Puck": "upbeat", "Charon": "informative", "Kore": "firm", "Fenrir": "excitable",
@@ -246,6 +250,8 @@ class LiveConversation:
         self.dismissed = False  # "that's all": close once the reply has played
         self.tasks: set[asyncio.Task] = set()
         self.cancelled: set[str] = set()
+        self.nudged: dict[str, float] = {}  # call id -> when its holding line went out
+        self.last_interrupt = 0.0  # when he last talked over Sommus
 
     async def send_audio(self, chunks: list[np.ndarray]) -> None:
         from google.genai import types
@@ -287,6 +293,7 @@ class LiveConversation:
         if content.interrupted:
             self.player.flush()  # he started talking: stop at once, like a person would
             self.last_activity = time.monotonic()
+            self.last_interrupt = self.last_activity
         if content.input_transcription and content.input_transcription.text:
             self.exchange.heard.append(content.input_transcription.text)
             self.last_heard = self.exchange.heard_text
@@ -340,7 +347,19 @@ class LiveConversation:
             self.on_pin()
             reply = LOCKED
         self.show(f"    [dim]{escape(reply[:200])}[/]")
-        if call.id in self.cancelled:  # he talked over it and Gemini moved on
+        if call.id in self.cancelled:
+            # Our own holding line is a new turn, and Gemini can cancel the pending call when one arrives: the
+            # answer was then printed here but never spoken (2026-11-04, "Just a moment, sir." and silence).
+            # Unless he talked over it since, hand the answer back as a new turn so it still gets said.
+            if call.id in self.nudged and self.last_interrupt < self.nudged[call.id]:
+                with contextlib.suppress(Exception):
+                    await self.session.send_client_content(
+                        turns=types.Content(
+                            role="user",
+                            parts=[types.Part(text=ANSWER_NUDGE.format(answer=reply))],
+                        ),
+                        turn_complete=True,
+                    )
             return
         response = types.FunctionResponse(id=call.id, name=name, response={"result": reply})
         if name == "ask_sommus":  # non-blocking: say the answer once any holding line has finished
@@ -354,6 +373,7 @@ class LiveConversation:
         task = asyncio.ensure_future(work)
         done, _ = await asyncio.wait({task}, timeout=HOLD_SECONDS)
         if not done and call_id not in self.cancelled:
+            self.nudged[call_id] = time.monotonic()
             with contextlib.suppress(Exception):  # a missed holding line is not worth failing the lookup
                 await self.session.send_client_content(
                     turns=types.Content(role="user", parts=[types.Part(text=HOLDING_NUDGE)]), turn_complete=True

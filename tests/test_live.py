@@ -212,6 +212,30 @@ async def test_a_tool_gemini_gave_up_on_gets_no_answer(tmp_path):
     await hub.__aexit__(None, None, None)
 
 
+async def test_an_answer_cancelled_by_our_own_holding_line_is_still_said(tmp_path):
+    """The holding line is a new turn and can cancel the pending call: the answer was printed but never spoken."""
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    conv.cancelled.add("c8")
+    conv.nudged["c8"] = 5.0
+    conv.last_interrupt = 1.0  # he last talked over it before the holding line
+    await conv.run_tool(SimpleNamespace(id="c8", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses == []
+    assert len(conv.session.sent_text) == 1
+    assert conv.session.sent_text[0].startswith("[Sommus: the lookup you were waiting on has finished")
+    assert not conv.session.sent_text[0].endswith("The answer: ]")  # the answer rode along
+    await hub.__aexit__(None, None, None)
+
+
+async def test_an_answer_he_talked_over_after_the_holding_line_is_dropped(tmp_path):
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    conv.cancelled.add("c9")
+    conv.nudged["c9"] = 5.0
+    conv.last_interrupt = 6.0  # he spoke after the holding line
+    await conv.run_tool(SimpleNamespace(id="c9", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses == [] and conv.session.sent_text == []
+    await hub.__aexit__(None, None, None)
+
+
 async def test_the_resume_handle_and_goodbye_are_remembered(tmp_path):
     conv, hub, *_ = await conversation(tmp_path)
     msg = message()
