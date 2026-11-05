@@ -315,3 +315,12 @@ def test_an_ended_weekly_plan_is_not_read_out_as_todays(tmp_path):
     assert campus.plan_ended(todo, date(2026, 9, 27)) is None  # still this week
     todo.write_text("# TODO\n\n## This week\n- [ ] gym\n")
     assert campus.plan_ended(todo, date(2026, 9, 28)) is None  # no dates: can't tell, read it
+
+
+def test_the_instructions_give_the_date_and_say_to_stay_quiet_when_not_addressed():
+    from datetime import datetime
+
+    text = live.instructions("Sommus", "Jashan", now=datetime(2026, 11, 4, 21, 43))
+    assert "Wednesday, November 4, 2026, 9:43 PM" in text
+    assert "already over" in text and "Jarvis" in text
+    assert "Only reply when he is talking to you" in text
