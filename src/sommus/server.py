@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,7 @@ class Phone:
     def __init__(self) -> None:
         self.present = False  # true only while a request from the iPhone is being handled
         self.action: dict[str, Any] = {}
+        self.telegram: Callable[[str], Awaitable[None]] | None = None  # set by Server: sends to his Telegram chat
 
     def node(self):
         from mcp.server.mcpserver import MCPServer
@@ -88,6 +90,21 @@ class Phone:
                 label: Optional alarm name.
             """
             return queue({"action": "alarm", "time": time_24h, "label": label}, f"Alarm set for {time_24h}.")
+
+        @server.tool(annotations=quick, structured_output=False)
+        async def send_telegram_message(text: str) -> str:
+            """Send a message to Jashan's own Telegram chat, so long text (a routine, a list, a summary) lands
+            on his phone. Use this instead of a reminder with no time.
+
+            Args:
+                text: The message, written as it should read on the phone. Long text is split automatically.
+            """
+            if self.telegram is None:
+                return "Telegram isn't connected on this brain."
+            if not text.strip():
+                return "Nothing to send."
+            await self.telegram(text)
+            return "Sent to his Telegram."
 
         return server
 
@@ -141,6 +158,7 @@ class Server:
         contacts: ContactBook | None = None,
     ):
         self.cfg, self.hub, self.store, self.phone, self.log = cfg, hub, store, phone, log
+        phone.telegram = self.tell
         self.reminders, self.contacts = reminders, contacts
         # One Sommus: Telegram (written replies), the iPhone (spoken) and the Mac's live mode (relayed through
         # Gemini) each get the system prompt that fits, but share one conversation, one PIN lock and one lock

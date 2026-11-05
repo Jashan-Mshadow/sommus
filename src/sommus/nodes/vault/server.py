@@ -273,11 +273,11 @@ def with_inbox_item(text: str, item: str) -> str:
 
 
 @tool(REVERSIBLE)
-def commit_vault(message: str) -> str:
+def commit_vault(message: str = "Update notes") -> str:
     """Save the vault's changes to git. Do this after writing notes so nothing is lost.
 
     Args:
-        message: Short summary of what changed.
+        message: Short summary of what changed (optional: "Update notes" if left out).
     """
     if not (VAULT / ".git").is_dir():
         raise VaultError("The vault isn't a git repository.")
