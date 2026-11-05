@@ -65,12 +65,17 @@ def say(events: list[Event], first: date, days: int, now: datetime) -> str:
     for offset in range(days):
         day = first + timedelta(days=offset)
         today = [e for e in events if e.start.date() == day]
+        finished = 0
+        if day == now.date():  # what's over is over: don't read out this morning's classes at night
+            left = [e for e in today if e.all_day or (e.end or e.start) > now]
+            finished, today = len(today) - len(left), left
         if not today and days > 1:
             continue
         label = campus.say_day(day, now.date())
         label = label[0].upper() + label[1:]
         if not today:
-            lines.append(f"{label}: nothing on your calendar.")
+            over = f" ({finished} already finished)" if finished else ""
+            lines.append(f"{label}: nothing left{over}." if finished else f"{label}: nothing on your calendar.")
             continue
         parts = []
         for e in today:
