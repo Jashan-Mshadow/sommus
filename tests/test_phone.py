@@ -100,3 +100,51 @@ def test_the_servers_clock_is_pinned_to_jashans_zone(monkeypatch):
     finally:
         monkeypatch.undo()
         time.tzset()
+
+
+async def test_music_and_focus_are_queued_for_the_shortcut_and_refused_away_from_the_phone():
+    phone = Phone(ZONE, clock=lambda: MORNING)
+    async with Client(phone.node()) as client:
+        away = await client.call_tool("phone_music", {"what": "Lofi Study"})
+        assert "iPhone" in away.content[0].text and phone.action == {}
+        phone.present = True
+        await client.call_tool("phone_music", {"what": " Lofi Study "})
+        assert phone.action == {"action": "music", "control": "play", "what": "Lofi Study"}
+        phone.action = {}
+        bad = await client.call_tool("phone_music", {"control": "explode"})
+        assert "must be" in bad.content[0].text and phone.action == {}
+        await client.call_tool("phone_focus", {"mode": "Sleep", "on": False})
+        assert phone.action == {"action": "focus_off", "mode": "Sleep"}
+
+
+def test_a_clashing_note_is_merged_not_retried_forever(tmp_path):
+    import subprocess
+
+    from sommus.server import sync_vault
+
+    def git(cwd, *args):
+        subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+
+    origin, mac, srv = tmp_path / "origin.git", tmp_path / "mac", tmp_path / "srv"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(mac)], check=True, capture_output=True)
+    for repo in (mac,):
+        git(repo, "config", "user.email", "t@t")
+        git(repo, "config", "user.name", "t")
+    (mac / ".gitattributes").write_text("*.md merge=union\n")
+    (mac / "note.md").write_text("a\n")
+    git(mac, "add", "-A")
+    git(mac, "commit", "-qm", "start")
+    git(mac, "push", "-q", "origin", "main")
+    subprocess.run(["git", "clone", "-q", str(origin), str(srv)], check=True, capture_output=True)
+    git(srv, "config", "user.email", "t@t")
+    git(srv, "config", "user.name", "t")
+    (mac / "note.md").write_text("a\nfrom the mac\n")
+    git(mac, "commit", "-qam", "mac edit")
+    git(mac, "push", "-q", "origin", "main")
+    (srv / "note.md").write_text("a\nfrom the server\n")  # the same spot: a plain rebase would stop here
+    lines: list[str] = []
+    sync_vault(srv, lines.append)
+    text = (srv / "note.md").read_text()
+    assert "from the mac" in text and "from the server" in text and "<<<<" not in text
+    assert lines == []

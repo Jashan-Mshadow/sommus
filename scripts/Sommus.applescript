@@ -1,0 +1,2 @@
+-- Double-click to open the Sommus app window (starts its small local server if it isn't running).
+do shell script "cd '/Users/jashandeepsinghmultani/Documents/03_Technical_and_Projects/Active_Repos/sommus' && (curl -s -m 1 http://127.0.0.1:8790/api/status >/dev/null && open -na 'Google Chrome' --args --app=http://127.0.0.1:8790 --window-size=1100,760 || nohup /opt/homebrew/bin/uv run --no-sync sommus ui >/tmp/sommus-ui.log 2>&1 &)"

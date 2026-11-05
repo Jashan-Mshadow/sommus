@@ -1507,6 +1507,7 @@ def main() -> None:
             "node",
             "voiceprint",
             "diary",
+            "ui",
         ],
         default="chat",
     )
@@ -1556,6 +1557,10 @@ def main() -> None:
             from sommus import server
 
             asyncio.run(server.serve(lambda line: print(f"{datetime.now():%H:%M:%S} {line}", flush=True)))
+        elif args.command == "ui":
+            from sommus.interfaces import ui
+
+            ui.run()
         elif args.command == "node":
             from sommus import remote
 

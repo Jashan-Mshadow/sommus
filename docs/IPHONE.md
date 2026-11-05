@@ -23,7 +23,7 @@ Shortcuts app → **+** → name it **Sommus**. Add these actions in order (sear
    - **Get Dictionary Value** — key `message` in **Contents of URL**
    - **Get Dictionary Value** — key `to` in **Contents of URL**
    - **Send Message** — Message: the `message` value · Recipients: the `to` value
-     (leave *Show When Run* on at first, so you see the text before it goes)
+     (tap the arrow on the action and turn **Show When Run OFF**, or it waits for you to press Send; if it still asks, open the Shortcut's ⓘ settings and allow it to run while the phone is locked)
    - **End If**
 7. **If** — *Dictionary Value* (the `action` one from step 3) **is** `alarm` → inside:
    - **Get Dictionary Value** — key `time` in **Contents of URL** (always 24-hour, like `13:05`)
@@ -39,6 +39,18 @@ When a step picks a variable, tap it and choose the exact action it came from: w
 Value* steps, "Dictionary Value" otherwise means the most recent one, and the `If` checks compare the wrong value.
 
 Then **Settings → Action Button → Shortcut → Sommus**.
+
+### Music and Focus
+
+Two more branches, same pattern as `alarm` (add them after the alarm's **End If**, before *Get Dictionary Value → reply*):
+
+- **If** `action` is `music` → **Get Dictionary Value** keys `control` and `what`. Then: `control` is `pause` → **Play/Pause**;
+  `next` → **Skip Forward**; `previous` → **Skip Back**; `play` with a `what` → **Find Playlists** (Name contains `what`)
+  → **Play Music** (use **Find Music** for a song or artist); `play` with nothing → **Play/Pause**.
+- **If** `action` is `focus_on` (and another for `focus_off`) → **Get Dictionary Value** key `mode`. Then one **If** per
+  Focus you use (`Do Not Disturb`, `Sleep`, `Study`...) → **Set Focus** for that Focus, On or Off.
+
+Say "play my Lofi playlist" or "turn on Do Not Disturb" through the Action Button to try them.
 
 ### If you built it before November 2026: add the alarm
 

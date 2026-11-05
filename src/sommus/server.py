@@ -28,7 +28,7 @@ from zoneinfo import ZoneInfo
 from sommus import brief, config
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
-from sommus.brain.loop import Brain, Notice, TextDelta, TurnDone
+from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
@@ -113,6 +113,39 @@ class Phone:
                 "label": label.strip() or "Sommus",
             }
             return queue(action, f"Setting an alarm on your phone for {spoken_time(when, self.clock())}.")
+
+        @server.tool(annotations=quick, structured_output=False)
+        def phone_music(what: str = "", control: str = "play") -> str:
+            """Play music on the iPhone through Apple Music, or pause/skip. Only when the request came from the
+            iPhone.
+
+            Args:
+                what: A playlist, album, song or artist name to play ("Lofi Study"); empty to just resume.
+                control: "play" (default, with `what` to pick something), "pause", "next" or "previous".
+            """
+            control = control.strip().lower()
+            if control not in {"play", "pause", "next", "previous"}:
+                return "control must be play, pause, next or previous."
+            return queue(
+                {"action": "music", "control": control, "what": what.strip()},
+                f"Playing {what.strip()} on the phone." if control == "play" and what.strip() else f"Music: {control}.",
+            )
+
+        @server.tool(annotations=quick, structured_output=False)
+        def phone_focus(mode: str, on: bool = True) -> str:
+            """Turn an iPhone Focus on or off (Do Not Disturb, Sleep, Study, Work...). Only when the request came
+            from the iPhone.
+
+            Args:
+                mode: The Focus's name as it appears in Settings, e.g. "Do Not Disturb", "Sleep", "Study".
+                on: True to turn it on (default), False to turn it off.
+            """
+            if not mode.strip():
+                return "Which Focus?"
+            return queue(
+                {"action": "focus_on" if on else "focus_off", "mode": mode.strip()},
+                f"{mode.strip()} Focus {'on' if on else 'off'}.",
+            )
 
         @server.tool(annotations=quick, structured_output=False)
         async def send_telegram_message(text: str) -> str:
@@ -360,6 +393,7 @@ class Server:
 
     async def live_ask(self, body: dict) -> dict[str, Any]:
         parts: list[str] = []
+        tools: list[dict[str, Any]] = []  # what ran, for the app's activity feed
 
         async def allow(name: str, args: dict) -> bool:
             return True
@@ -370,7 +404,11 @@ class Server:
                     parts.append(event.text)
                 elif isinstance(event, Notice):
                     parts.append(f" ({event.text})")
-        return {"reply": "".join(parts).strip(), **self.gate_state()}
+                elif isinstance(event, ToolStarted):
+                    tools.append({"name": event.name, "input": event.input})
+                elif isinstance(event, ToolFinished) and tools:
+                    tools[-1].update(ok=not event.is_error, output=event.output[:200])
+        return {"reply": "".join(parts).strip(), "tools": tools, **self.gate_state()}
 
     async def live_tool(self, body: dict) -> dict[str, Any]:
         result = await self.relay_brain.call_tool(str(body["name"]), dict(body.get("args") or {}), str(body["asked"]))
@@ -583,8 +621,13 @@ def sync_vault(vault: Path, log=print) -> None:
     pulled = git("pull", "--rebase", "--autostash", "-q")
     if pulled.returncode != 0:
         git("rebase", "--abort")
-        log(f"Vault pull failed, left as is: {pulled.stderr.strip()[:200]}")
-        return
+        # A rebase stops at the first clashing note and retries forever (the phone couldn't write the vault for
+        # hours on 2026-11-05). A merge with `*.md merge=union` (.gitattributes) keeps both sides' lines instead.
+        pulled = git("pull", "--no-rebase", "--no-edit", "-q")
+        if pulled.returncode != 0:
+            git("merge", "--abort")
+            log(f"Vault pull failed, left as is: {(pulled.stderr or pulled.stdout).strip()[:200]}")
+            return
     branch = git("status", "-sb").stdout.splitlines()
     if branch and "ahead" in branch[0]:
         pushed = git("push", "-q")
