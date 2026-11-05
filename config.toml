@@ -111,6 +111,13 @@ pin_tools = [
     "run_shell", "type_text", "press_keys", "click", "screenshot",
 ]
 
+[mac_queue]
+# On the server, while the Mac sleeps: these wait there and run when it wakes, with a Telegram message once done.
+# Only small things that can as well happen later. Code refuses anything personal ([security] pin_tools) or not
+# in the reversible tier, whatever this list says; anything older than `hours` is dropped, not run.
+tools = ["create_reminder", "open_url", "open_app", "notify"]
+hours = 24
+
 [voice]
 # Spoken, course codes become subjects: "ECE105 LEC 001" -> "physics lecture". The screen keeps the codes.
 say_as = { "ECE 150" = "programming", "ECE 105" = "physics", "ECE 190" = "engineering profession", "ECE 198" = "project studio", "MATH 115" = "linear algebra", "MATH 117" = "calculus", "COMMST 192" = "communications", "GENE 119" = "engineering seminar" }
@@ -124,7 +131,12 @@ say_rate = 190                                  # words per minute
 stt_model = "mlx-community/whisper-small.en-mlx"  # runs on the M1, ~0.35s per command
 silence_seconds = 0.7                           # how long a pause ends what you're saying
 hold_seconds = 2.0                              # ...unless it stopped mid-thought ("remind me to"): wait this long for the rest
-wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus"]  # at the start or end of what's said
+wake_phrases = ["sommus", "hey sommus", "what's up sommus", "yo sommus", "hey jarvis"]  # at the start or end of what's said
+# Live mode also listens with a wake-word model (openWakeWord, on the Mac, ~1 ms per 80 ms of audio). It hears the
+# sound, not Whisper's spelling, so it doesn't miss. Pretrained phrase: "Hey Jarvis". "" turns it off; a custom
+# "Hey Sommus" model goes here once trained. Raise wake_threshold toward 0.7 if it wakes by itself.
+wake_model = "hey_jarvis_v0.1.onnx"
+wake_threshold = 0.5
 awake_seconds = 30                              # after a reply, how long it keeps listening without the wake phrase
                                                 # (10 was too short mid-conversation: he had to say the name again)
 awake_after_question = 90                       # ...and this long when Sommus ended its reply with a question
@@ -172,7 +184,8 @@ model = "gemini-3.8-live"
 voice = ""                           # "" = Google's default voice (Jashan's pick) · or one of ~30: sommus voices --gemini
 persona = "butler"                   # "butler": dry, sarcastic, Alfred-style · "teen": sarcastic teenager · or write your own
 style = ""                                    # how it speaks; "" for the voice's natural style
-awake_seconds = 30                   # the session closes (and stops sending audio) after this long quiet
+awake_seconds = 60                   # the session closes (and stops sending audio) after this long quiet
+                                     # (30 meant saying the wake word again mid-conversation; 2026-11-03)
 interrupt_sensitivity = "low"        # "high": any sound cuts it off · "low": it takes clear speech
 
 [deploy]

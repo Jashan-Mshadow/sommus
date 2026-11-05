@@ -83,7 +83,9 @@ def _decode(value: str | None) -> str:
 
 def _uids(connection, query: str, limit: int) -> list[bytes]:
     # X-GM-RAW is Gmail's own search syntax over IMAP: is:unread, from:x, newer_than:2d...
-    status, data = connection.uid("SEARCH", "X-GM-RAW", f'"{query}"')
+    # It goes as one IMAP quoted string: a quote inside it (subject:"ECE 190") ended the string early.
+    quoted = query.replace("\\", "\\\\").replace('"', '\\"')
+    status, data = connection.uid("SEARCH", "X-GM-RAW", f'"{quoted}"')
     if status != "OK":
         raise MailError(f"Gmail couldn't run that search: {query}")
     return data[0].split()[::-1][:limit]  # newest first

@@ -273,19 +273,27 @@ def with_inbox_item(text: str, item: str) -> str:
 
 
 @tool(REVERSIBLE)
-def commit_vault(message: str) -> str:
+def commit_vault(message: str = "Update notes") -> str:
     """Save the vault's changes to git. Do this after writing notes so nothing is lost.
 
     Args:
-        message: Short summary of what changed.
+        message: Short summary of what changed (optional: "Update notes" if left out).
     """
     if not (VAULT / ".git").is_dir():
         raise VaultError("The vault isn't a git repository.")
-    status = subprocess.run(["git", "-C", str(VAULT), "status", "--porcelain"], capture_output=True, text=True)
-    if not status.stdout.strip():
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        # A timeout: a git stuck on a hook, a signing or credential prompt used to hang this node, and every
+        # vault tool with it.
+        try:
+            return subprocess.run(["git", "-C", str(VAULT), *args], capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            raise VaultError(f"git {args[0]} took over 30 s and was stopped; try again in a minute.") from None
+
+    if not git("status", "--porcelain").stdout.strip():
         return "Nothing to commit — the vault is already up to date."
     for args in (["add", "-A"], ["commit", "-m", message]):
-        result = subprocess.run(["git", "-C", str(VAULT), *args], capture_output=True, text=True)
+        result = git(*args)
         if result.returncode != 0:
             raise VaultError(f"git {args[0]} failed: {result.stderr.strip()}")
     return f"Committed: {message}"

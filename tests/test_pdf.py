@@ -1,10 +1,11 @@
 """PDF reading: page ranges, text extraction, and the OCR fallback."""
 
-import pymupdf
 import pytest
 
-from sommus.nodes.laptop import pdf
-from sommus.nodes.laptop.macos import ActionError
+pymupdf = pytest.importorskip("pymupdf")  # a Mac-only dependency: the Linux server has no PDF reading
+
+from sommus.nodes.laptop import pdf  # noqa: E402
+from sommus.nodes.laptop.macos import ActionError  # noqa: E402
 
 
 @pytest.fixture

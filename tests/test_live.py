@@ -28,6 +28,9 @@ class FakeSession:
     async def send_tool_response(self, function_responses):
         self.responses.extend(function_responses)
 
+    async def send_client_content(self, turns, turn_complete=True):
+        self.sent_text.append(turns.parts[0].text)
+
     async def close(self):
         pass
 
@@ -154,6 +157,40 @@ async def test_ask_sommus_hands_the_request_to_claude(tmp_path):
     await hub.__aexit__(None, None, None)
 
 
+async def test_a_slow_lookup_gets_a_holding_line_and_a_quick_one_does_not(tmp_path, monkeypatch):
+    """Gemini never fills a slow lookup by itself: Sommus nudges it to say "one sec" so there's no dead air."""
+    import asyncio
+
+    monkeypatch.setattr(live, "HOLD_SECONDS", 0.01)
+    conv, hub, *_ = await conversation(tmp_path)
+
+    async def slow():
+        await asyncio.sleep(0.05)
+        return "Physics at 2:30.", False
+
+    assert await conv.hold_while("c5", slow()) == ("Physics at 2:30.", False)
+    assert conv.session.sent_text == [live.HOLDING_NUDGE]
+
+    async def quick():
+        return "Done.", False
+
+    conv.session.sent_text.clear()
+    monkeypatch.setattr(live, "HOLD_SECONDS", 1.0)
+    await conv.hold_while("c6", quick())
+    assert conv.session.sent_text == []
+    await hub.__aexit__(None, None, None)
+
+
+async def test_ask_sommus_is_non_blocking_and_answers_when_gemini_is_idle(tmp_path):
+    from google.genai import types
+
+    assert live.ASK_SOMMUS["behavior"] == "NON_BLOCKING"
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    await conv.run_tool(SimpleNamespace(id="c7", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses[0].scheduling == types.FunctionResponseScheduling.WHEN_IDLE
+    await hub.__aexit__(None, None, None)
+
+
 async def test_a_locked_tool_switches_to_listening_for_the_pin_on_the_mac(tmp_path):
     """The PIN must never be said to Google: Gemini is told to ask for it, and the mic goes local."""
     pin.set_pin(tmp_path, "5173")
@@ -172,6 +209,30 @@ async def test_a_tool_gemini_gave_up_on_gets_no_answer(tmp_path):
     conv.cancelled.add("c4")
     await conv.run_tool(SimpleNamespace(id="c4", name="peek", args={}))
     assert calls == ["peek"] and conv.session.responses == []
+    await hub.__aexit__(None, None, None)
+
+
+async def test_an_answer_cancelled_by_our_own_holding_line_is_still_said(tmp_path):
+    """The holding line is a new turn and can cancel the pending call: the answer was printed but never spoken."""
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    conv.cancelled.add("c8")
+    conv.nudged["c8"] = 5.0
+    conv.last_interrupt = 1.0  # he last talked over it before the holding line
+    await conv.run_tool(SimpleNamespace(id="c8", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses == []
+    assert len(conv.session.sent_text) == 1
+    assert conv.session.sent_text[0].startswith("[Sommus: the lookup you were waiting on has finished")
+    assert not conv.session.sent_text[0].endswith("The answer: ]")  # the answer rode along
+    await hub.__aexit__(None, None, None)
+
+
+async def test_an_answer_he_talked_over_after_the_holding_line_is_dropped(tmp_path):
+    conv, hub, *_ = await conversation(tmp_path, text_reply("Physics at 2:30."))
+    conv.cancelled.add("c9")
+    conv.nudged["c9"] = 5.0
+    conv.last_interrupt = 6.0  # he spoke after the holding line
+    await conv.run_tool(SimpleNamespace(id="c9", name="ask_sommus", args={"request": "next class"}))
+    assert conv.session.responses == [] and conv.session.sent_text == []
     await hub.__aexit__(None, None, None)
 
 
@@ -254,3 +315,12 @@ def test_an_ended_weekly_plan_is_not_read_out_as_todays(tmp_path):
     assert campus.plan_ended(todo, date(2026, 9, 27)) is None  # still this week
     todo.write_text("# TODO\n\n## This week\n- [ ] gym\n")
     assert campus.plan_ended(todo, date(2026, 9, 28)) is None  # no dates: can't tell, read it
+
+
+def test_the_instructions_give_the_date_and_say_to_stay_quiet_when_not_addressed():
+    from datetime import datetime
+
+    text = live.instructions("Sommus", "Jashan", now=datetime(2026, 11, 4, 21, 43))
+    assert "Wednesday, November 4, 2026, 9:43 PM" in text
+    assert "already over" in text and "Jarvis" in text
+    assert "Only reply when he is talking to you" in text

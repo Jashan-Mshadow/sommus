@@ -42,7 +42,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/brain/store.py` | SQLite log of turns, tool calls, cost |
 | `src/sommus/brain/pin.py` · `permissions.py` | PIN gate for personal tools · permission tiers |
 | `src/sommus/nodes/<node>/server.py` | MCP servers: laptop, vault, gmail, web, claude |
-| `src/sommus/interfaces/` | cli (incl. the voice and live loops), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), duplex (echo-cancelled audio), live (Gemini Live session, tools, PIN handoff) |
+| `src/sommus/interfaces/` | cli (incl. the voice and live loops), telegram, voice (route, detector, Whisper, Kokoro), turn (Smart Turn), wakeword (openWakeWord models on onnxruntime), duplex (echo-cancelled audio), live (Gemini Live session, tools, PIN handoff) |
 | `src/sommus/server.py` | `sommus serve` on the Oracle server: brain, Telegram, /ask for the iPhone, brief + nudges, vault git sync |
 | `src/sommus/remote.py` | `sommus node` on the Mac: laptop/claude/bridge nodes over MCP streamable HTTP, tailnet only, bearer token |
 | `src/sommus/client.py` | `RemoteBrain`: live mode as a client of the server's /live/* routes (one conversation) |
@@ -51,6 +51,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/herald.py` | where a nudge goes: said on the awake Mac (`announce`) outside quiet hours, else Telegram |
 | `src/sommus/nodes/laptop/speak.py` | `announce` / `set_quiet` on the Mac: Kokoro, else `say`; silent when muted or quiet |
 | `src/sommus/interfaces/speaker.py` | voice ID: WeSpeaker embeddings, voiceprint, check; `Gate.vouch` in brain/pin.py |
+| `scripts/autostart.sh` | `install`/`uninstall`: `sommus live` opens in Terminal at login |
 | `docs/IPHONE.md` | building the Action Button Shortcut |
 | `data/voice.log` | one JSON line per utterance: loudness, scores, transcript, outcome — read this first when voice misbehaves |
 | `src/sommus/evals/runner.py` + `evals/commands.toml` | scored eval |

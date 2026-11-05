@@ -65,12 +65,17 @@ def say(events: list[Event], first: date, days: int, now: datetime) -> str:
     for offset in range(days):
         day = first + timedelta(days=offset)
         today = [e for e in events if e.start.date() == day]
+        finished = 0
+        if day == now.date():  # what's over is over: don't read out this morning's classes at night
+            left = [e for e in today if e.all_day or (e.end or e.start) > now]
+            finished, today = len(today) - len(left), left
         if not today and days > 1:
             continue
         label = campus.say_day(day, now.date())
         label = label[0].upper() + label[1:]
         if not today:
-            lines.append(f"{label}: nothing on your calendar.")
+            over = f" ({finished} already finished)" if finished else ""
+            lines.append(f"{label}: nothing left{over}." if finished else f"{label}: nothing on your calendar.")
             continue
         parts = []
         for e in today:
@@ -84,6 +89,7 @@ class Calendars:
     def __init__(self, links: list[str]):
         self.links = links
         self._cache: dict[str, tuple[float, bytes]] = {}
+        self.unread: list[str] = []  # links the last events() couldn't read, named without the secret URL
 
     def _fetch(self, link: str) -> bytes:
         import httpx2
@@ -101,8 +107,15 @@ class Calendars:
         start = datetime(first.year, first.month, first.day, tzinfo=zone)
         end = start + timedelta(days=days)
         found: list[Event] = []
-        for link in self.links:
-            found += parse(self._fetch(link), start, end, zone)
+        self.unread = []
+        for number, link in enumerate(self.links, 1):
+            try:
+                found += parse(self._fetch(link), start, end, zone)
+            except Exception as e:
+                # One broken link mustn't hide the other calendars, and the reason must not quote the link:
+                # httpx's message carries the URL, and an iCal link is a secret (it'd reach the model and the log).
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                self.unread.append(f"calendar {number} ({f'HTTP {status}' if status else type(e).__name__})")
         with contextlib.suppress(Exception):  # no schedule file: keep everything
             breaks = campus.cached(campus.schedule_path()).breaks
             found = [e for e in found if not (CLASS_EVENT.match(e.title) and campus._in(e.start.date(), breaks))]
@@ -130,7 +143,11 @@ class Calendars:
                 except ValueError:
                     return f"Couldn't read the date '{start}'. Use today, tomorrow or 2026-10-09."
             days = max(1, min(int(days), 31))
-            return say(self.events(first, days), first, days, now)
+            found = self.events(first, days)
+            if self.unread and len(self.unread) == len(self.links):
+                return f"Couldn't read the calendars right now: {', '.join(self.unread)}."
+            said = say(found, first, days, now)
+            return said + (f" (Couldn't read {', '.join(self.unread)}.)" if self.unread else "")
 
         return server
 

@@ -109,3 +109,17 @@ def test_forget_reaches_the_diary_when_no_fact_matches_and_recall_reads_it(tmp_p
     assert "Amazon" not in vault.recall_diary("")
     with pytest.raises(vault.VaultError, match="Nothing remembered"):
         vault.forget("skydiving")
+
+
+def test_a_git_that_hangs_is_stopped_with_a_message(notes, monkeypatch):
+    import subprocess
+
+    (notes / ".git").mkdir()
+
+    def hang(*args, **kwargs):
+        assert kwargs.get("timeout"), "every git call needs a timeout"
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(vault.subprocess, "run", hang)
+    with pytest.raises(vault.VaultError, match="took over 30 s"):
+        vault.commit_vault("notes")
