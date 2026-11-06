@@ -71,6 +71,7 @@ def asked_for(request: str, wanted: set[str]) -> bool:
     )
 
 
+PLUG_WORDS = {"turn", "switch", "on", "off", "fan", "lamp", "light", "lights", "plug", "power", "start", "stop"}
 OUTWARD_TOOLS = {
     "send_email": SEND_WORDS, "reply_to_email": SEND_WORDS, "send_message": SEND_WORDS, "compose_email": SEND_WORDS,
     "run_shell": {
@@ -78,6 +79,7 @@ OUTWARD_TOOLS = {
         "pip", "unzip", "zip", "move", "copy", "delete", "remove", "rename", "convert", "compile", "build", "download",
         "save", "file", "files", "folder", "clean", "update",
     },
+    "plug_on": PLUG_WORDS, "plug_off": PLUG_WORDS,
     "ask_claude": {
         "calendar", "event", "events", "schedule", "drive", "notion", "goodnotes", "claude", "add", "book", "move",
         "create", "plan", "class", "classes", "meeting",

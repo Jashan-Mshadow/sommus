@@ -71,6 +71,13 @@ name = "bridge"
 where = "mac"
 module = "sommus.nodes.bridge.server"
 
+# Smart plugs through the SwitchBot cloud (fan, lamp): works from anywhere, no hub, no Mac. Needs SWITCHBOT_TOKEN
+# and SWITCHBOT_SECRET in .env, on the server too. Until then its tools just explain the setup.
+[[nodes]]
+name = "home"
+module = "sommus.nodes.home.server"
+env = { SWITCHBOT_TOKEN = "${SWITCHBOT_TOKEN}", SWITCHBOT_SECRET = "${SWITCHBOT_SECRET}" }
+
 [[nodes]]
 name = "vault"
 module = "sommus.nodes.vault.server"
