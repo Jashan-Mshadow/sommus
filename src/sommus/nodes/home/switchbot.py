@@ -28,15 +28,16 @@ class HomeError(Exception):
     """Something the model should hear about in plain words."""
 
 
+def _env(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    return "" if value.startswith("${") else value  # an unset .env key reaches the node as the literal "${NAME}"
+
+
 def credentials() -> tuple[str, str]:
-    token, secret = os.environ.get("SWITCHBOT_TOKEN", "").strip(), os.environ.get("SWITCHBOT_SECRET", "").strip()
+    token, secret = _env("SWITCHBOT_TOKEN"), _env("SWITCHBOT_SECRET")
     if not token or not secret:
         raise HomeError(SETUP)
     return token, secret
-
-
-def configured() -> bool:
-    return bool(os.environ.get("SWITCHBOT_TOKEN") and os.environ.get("SWITCHBOT_SECRET"))
 
 
 def headers(token: str, secret: str, now_ms: int | None = None, nonce: str | None = None) -> dict[str, str]:

@@ -51,6 +51,13 @@ def test_missing_credentials_explain_the_setup(monkeypatch):
         switchbot.credentials()
 
 
+def test_an_unset_env_key_counts_as_missing(monkeypatch):
+    monkeypatch.setenv("SWITCHBOT_TOKEN", "${SWITCHBOT_TOKEN}")
+    monkeypatch.setenv("SWITCHBOT_SECRET", "${SWITCHBOT_SECRET}")
+    with pytest.raises(switchbot.HomeError, match="Developer Options"):
+        switchbot.credentials()
+
+
 def test_one_plug_needs_no_name_and_the_hub_is_not_a_plug(cloud):
     assert switchbot.turn("", True) == "Fan told to turn on."
     method, path, body = cloud.calls[-1]
