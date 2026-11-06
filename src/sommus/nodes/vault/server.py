@@ -217,8 +217,9 @@ def list_notes(folder: str = "") -> str:
     Args:
         folder: Optional folder, e.g. "Career" or "Portfolio/Projects".
     """
-    root = _resolve(folder) if folder else VAULT
-    notes = [p for p in _notes() if str(p).startswith(str(root))]
+    root = _resolve(folder) if folder else VAULT.resolve()
+    # Compare path parts, not a string prefix: "Career" must not match "Career Fair/" (issue #5).
+    notes = [p for p in _notes() if p.resolve().is_relative_to(root)]
     return f"{len(notes)} notes:\n" + "\n".join(str(p.relative_to(VAULT)) for p in notes[:120])
 
 

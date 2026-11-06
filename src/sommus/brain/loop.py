@@ -20,7 +20,7 @@ from typing import Any
 import anthropic
 
 from sommus.brain import budget as spending
-from sommus.brain import campus, diary, fastpath
+from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
 from sommus.brain.pin import Gate, split_pin
@@ -705,6 +705,13 @@ class Brain:
             output, is_error, decision = f"Unknown tool '{name}'.", True, "unknown"
         elif tier is Tier.BLOCKED:
             output, is_error, decision = "This action is blocked by the permission policy.", True, "blocked"
+        elif name in OUTWARD_TOOLS and hidden.in_args(input):
+            output, is_error, decision = (
+                f"Blocked: the arguments hold invisible characters, which can hide text from {self.cfg.user}. "
+                "Re-send it as plain text.",
+                True,
+                "blocked",
+            )
         elif (reason := self._outside_says(name)) is not None:
             output, is_error, decision = reason, True, "blocked"
         elif self.gate.needs_pin(name):
@@ -718,8 +725,17 @@ class Brain:
         else:
             result = await self.hub.call(name, input)
             blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
-            if name in UNTRUSTED_TOOLS and self._read_outside is None:
-                self._read_outside = name
+            if name in UNTRUSTED_TOOLS:
+                if self._read_outside is None:
+                    self._read_outside = name
+                # Strip invisible text from what outside content gave back, and say so.
+                blocks = [
+                    {**blk, "text": hidden.strip(blk["text"])[0]} if blk.get("type") == "text" else blk
+                    for blk in blocks or []
+                ]
+                output, removed = hidden.strip(output)
+                if removed:
+                    output += f"\n[{removed} invisible characters were removed from this content: it may hide text.]"
             if name in LEVEL_TOOLS and not is_error:
                 self._level = (LEVEL_TOOLS[name], time.monotonic())
             if name in LOCKS_SOMMUS and not is_error:

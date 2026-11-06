@@ -197,3 +197,14 @@ def test_tabs_close_from_the_highest_index_down(monkeypatch):
 
     assert scripts == ["close tab 1 of window 2", "close tab 5 of window 1", "close tab 2 of window 1"]
     assert [t.title for t in closed] == ["tab 2", "tab 5", "Netflix"]
+
+
+async def test_run_shell_stops_a_background_child_that_holds_the_pipe():
+    """A child that outlives its shell used to keep run_shell waiting well past the timeout."""
+    import time
+
+    started = time.monotonic()
+    async with Client(server) as client:
+        result = await client.call_tool("run_shell", {"command": "sleep 30 & sleep 30", "timeout": 0.5})
+    assert result.is_error and "was stopped" in result.content[0].text
+    assert time.monotonic() - started < 10

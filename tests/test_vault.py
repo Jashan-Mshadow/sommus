@@ -123,3 +123,14 @@ def test_a_git_that_hangs_is_stopped_with_a_message(notes, monkeypatch):
     monkeypatch.setattr(vault.subprocess, "run", hang)
     with pytest.raises(vault.VaultError, match="took over 30 s"):
         vault.commit_vault("notes")
+
+
+def test_list_notes_for_a_folder_skips_siblings_that_share_its_name_prefix(notes):
+    """Issue #5: "Career" also listed "Career Fair/" and "Career2/" because the check was a string prefix."""
+    for folder in ("Career", "Career Fair", "Career2"):
+        (notes / folder).mkdir()
+        (notes / folder / "a.md").write_text("# a\n")
+    out = vault.list_notes("Career")
+    assert out.startswith("1 notes:") and "Career/a.md" in out
+    assert "Career Fair" not in out and "Career2" not in out
+    assert vault.list_notes().startswith("5 notes:")  # whole vault: TODO, Short and one note per folder

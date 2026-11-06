@@ -7,8 +7,10 @@ text through `argv`, never by string formatting.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -477,14 +479,25 @@ def run_shell(command: str, timeout: float = 60) -> tuple[str, int]:
     """Run a shell command and return its combined output and exit code."""
     if any(command.strip().startswith(blocked) for blocked in BLOCKED_COMMANDS):
         raise ActionError("Commands needing sudo can't run here — they'd wait forever for a password.")
+    # Own process group: on a timeout the whole group dies, so a background child holding the output pipe can't
+    # keep us waiting past the timeout (pattern from mattabate/life-distributable add-0062).
+    proc = subprocess.Popen(
+        ["/bin/zsh", "-lc", command],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=Path.home(),
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            ["/bin/zsh", "-lc", command], capture_output=True, text=True, timeout=timeout, cwd=Path.home()
-        )
+        out, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as e:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.communicate(timeout=2)  # reap; a child that escaped the group is dropped, not waited for
         raise ActionError(f"'{command}' was still running after {timeout:g}s and was stopped.") from e
-    output = (proc.stdout + proc.stderr).strip()
-    return output, proc.returncode
+    return (out or "").strip(), proc.returncode
 
 
 # ---------------------------------------------------------------- power
