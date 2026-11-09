@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import brief, config
+from sommus import brief, config, supplements
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -495,6 +495,31 @@ class Server:
             spoken = brief.spoken_class_nudge(session, now, self.say_as, self.phrases)
             await self.herald.deliver(brief.class_nudge(session, now), spoken, now)
         self.state["nudged"] = [list(k) for k in sorted(sent)][-50:]
+        self._save_state()
+        await self.supplement_nudges(now)
+
+    async def supplement_nudges(self, now: datetime) -> None:
+        """At each supplement slot, nudge only about what today's rows in the vault's Supplement Log lack."""
+        settings = config.section("supplements")
+        if not settings.get("enabled") or not settings.get("slots"):
+            return
+        done = set(self.state.get("supplements", []))
+        due = supplements.slots_due(settings["slots"], now, int(settings.get("window_minutes", 120)), done)
+        if not due:
+            return
+        vault = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
+        try:
+            text = (vault / settings.get("log", "Nutrition/Supplement Log.md")).read_text()
+        except OSError as e:
+            self.log(f"Supplements: can't read the log ({e.__class__.__name__}); will retry")
+            return  # not marked done: the next tick tries again, inside the window
+        taken = supplements.taken_on(text, now.date())
+        for slot in due:
+            done.add(supplements.key_for(slot, now))
+            if lacking := supplements.missing(slot["items"], taken):
+                spoken = supplements.spoken(slot, lacking, self.phrases)
+                await self.herald.deliver(supplements.written(slot, lacking, now), spoken, now)
+        self.state["supplements"] = sorted(done)[-40:]
         self._save_state()
 
     async def greet(self, schedule: campus.Schedule, now: datetime, morning: datetime) -> None:

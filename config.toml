@@ -213,3 +213,18 @@ nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"
 # "be quiet" (set_quiet). speak = false: Telegram only.
 speak = true
 quiet_hours = ["23:00", "07:30"]
+
+[supplements]
+# Nudges for supplements, from the vault's Nutrition/Supplement Log.md. At each slot's time, Sommus reads today's rows
+# and speaks up (Mac when awake, else Telegram) only if something due in that slot has no row. Once per slot per day,
+# and only within window_minutes of the slot's time. Item names: multivitamin, hair gummies, fish oil, k2+d3,
+# creatine, magnesium, bodyarmor. Schedule confirmed with Jashan 2026-11-09; the clock times are defaults.
+enabled = true
+log = "Nutrition/Supplement Log.md"
+window_minutes = 120
+slots = [
+  { name = "morning", at = "10:00", say = "morning", items = ["multivitamin", "hair gummies"] },
+  { name = "bodyarmor", at = "17:00", say = "before the gym or with a meal", items = ["bodyarmor"] },
+  { name = "dinner", at = "18:00", say = "around dinner", items = ["fish oil", "k2+d3"] },
+  { name = "sleep", at = "22:30", say = "before bed", items = ["creatine", "magnesium"] },
+]
