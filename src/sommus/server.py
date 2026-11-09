@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import brief, config, supplements
+from sommus import activity, brief, config, supplements
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -38,6 +38,7 @@ from sommus.reminders import Reminders
 
 VAULT_SYNC_SECONDS = 300
 TICK_SECONDS = 30
+ACTIVITY_EVERY_SECONDS = 600  # today's activity note in the vault; the vault sync pushes it
 CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
 GREET_RETRY_SECONDS = 600  # the Mac was awake but didn't say good morning (muted): try again this much later
 
@@ -253,10 +254,11 @@ class Server:
         log=print,
         reminders: Reminders | None = None,
         contacts: ContactBook | None = None,
+        calendar=None,
     ):
         self.cfg, self.hub, self.store, self.phone, self.log = cfg, hub, store, phone, log
         phone.telegram = self.tell
-        self.reminders, self.contacts = reminders, contacts
+        self.reminders, self.contacts, self.calendar = reminders, contacts, calendar
         # One Sommus: Telegram (written replies), the iPhone (spoken) and the Mac's live mode (relayed through
         # Gemini) each get the system prompt that fits, but share one conversation, one PIN lock and one lock
         # on turns. Ask on the phone, follow up on the laptop.
@@ -272,10 +274,28 @@ class Server:
         self.state_path = cfg.data_dir / "brief_state.json"
         self.state = self._load_state()
         # Nudges speak on the Mac when it's awake and it isn't quiet hours; otherwise Telegram, as before.
-        self.herald = Herald(hub, self.tell, config.section("brief"), log)
+        self.said_path = cfg.data_dir / "said.jsonl"
+        self.herald = Herald(hub, self.tell, config.section("brief"), log, busy=self.busy, record=self.record_said)
         self.phrases = brief.Phrasebook()
         self.say_as = config.section("voice").get("say_as", {})
         self._greet_tried = -GREET_RETRY_SECONDS
+        self._activity_at = -ACTIVITY_EVERY_SECONDS
+
+    def record_said(self, kind: str, text: str, route: str) -> None:
+        activity.record_said(self.said_path, kind, text, route)
+
+    def write_activity(self, now: datetime) -> None:
+        """Rewrite today's (and, just after midnight, yesterday's) activity note in the vault."""
+        vault = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
+        if not vault.is_dir():
+            return
+        days = {now.date().isoformat()}
+        if now.hour == 0:
+            days.add((now - timedelta(days=1)).date().isoformat())
+        for day in sorted(days):
+            turns, said = self.store.day_turns(day), activity.said_on(self.said_path, day)
+            if turns or said:
+                activity.write_day(vault, day, turns, said)
 
     def _load_state(self) -> dict:
         with contextlib.suppress(OSError, ValueError):
@@ -460,11 +480,44 @@ class Server:
             return self.brain._weather(["weather", "today"], None)  # home, from [fastpath], as the brain reads it
         return ""
 
+    async def _calendar_today(self, now: datetime) -> list:
+        """Today's calendar events, classes left out (the schedule file already covers those)."""
+        if not self.calendar:
+            return []
+        from sommus import calendars
+
+        with contextlib.suppress(Exception):
+            found = await asyncio.to_thread(self.calendar.events, now.date(), 1)
+            return [e for e in found if not calendars.CLASS_EVENT.match(e.title)]
+        return []
+
+    async def busy(self, now: datetime) -> str:
+        """What he's in the middle of (a class, a calendar event), or ''. Nudges aren't said out loud then."""
+        with contextlib.suppress(Exception):
+            schedule = campus.cached(campus.schedule_path())
+            local = now.astimezone(schedule.zone) if now.tzinfo else now.replace(tzinfo=schedule.zone)
+            for session in schedule.on(local.date()):
+                end = session.end or session.start + timedelta(minutes=50)
+                if session.start <= local < end:
+                    return session.label
+        for event in await self._calendar_today(now if now.tzinfo else now.astimezone()):
+            if not event.all_day and event.start <= (now if now.tzinfo else now.astimezone()) < (
+                event.end or event.start + timedelta(hours=1)
+            ):
+                return event.title
+        return ""
+
     async def morning_brief(self, now: datetime) -> str:
         schedule = campus.cached(campus.schedule_path())
         weather = await asyncio.to_thread(self._weather)
         ranked, _added = campus.task_sections(campus.todo_path())
-        text = brief.morning(schedule, now, weather, await self._mail(), ranked)
+        gym = brief.gym_today(config.section("gym"), now.date())
+        events = [
+            f"{e.title} (all day)" if e.all_day else f"{campus.clock(e.start)} {e.title}"
+            for e in await self._calendar_today(now)
+        ]
+        quip = brief.morning_quip(gym, len(schedule.due_within(now, 3)), self.phrases)
+        text = brief.morning(schedule, now, weather, await self._mail(), ranked, gym, events, quip)
         if self.reminders and (today := brief.reminders_today(self.reminders.open(), now)):
             text += "\n" + today
         return text
@@ -481,7 +534,9 @@ class Server:
         if now >= morning and self.state.get("brief") != today and (now - morning).total_seconds() < 3 * 3600:
             self.state["brief"] = today
             self._save_state()
-            await self.tell(await self.morning_brief(now))
+            text = await self.morning_brief(now)
+            await self.tell(text)
+            self.record_said("morning brief", text, "telegram")
         await self.greet(schedule, now, morning)
         evening = brief.due_at(settings.get("evening", "20:00"), now.date(), schedule.zone)
         if now >= evening and self.state.get("evening") != today and (now - evening).total_seconds() < 3600:
@@ -489,12 +544,14 @@ class Server:
             self._save_state()
             if heads_up := brief.due_tomorrow(schedule, now):
                 spoken = brief.spoken_due_tomorrow(schedule, now, self.say_as, self.phrases)
-                await self.herald.deliver(heads_up, spoken, now)
+                await self.herald.deliver(heads_up, spoken, now, kind="due tomorrow")
         sent = {tuple(k) for k in self.state.get("nudged", [])}
         for session in brief.classes_starting(schedule, now, int(settings.get("nudge_minutes", 15)), sent):
             spoken = brief.spoken_class_nudge(session, now, self.say_as, self.phrases)
-            await self.herald.deliver(brief.class_nudge(session, now), spoken, now)
-        self.state["nudged"] = [list(k) for k in sorted(sent)][-50:]
+            await self.herald.deliver(brief.class_nudge(session, now), spoken, now, kind="class nudge")
+        # Keep what can still matter (classes from the last day on). Trimming a sorted list to its last 50 used
+        # to drop the newest keys whenever their course sorted early (COMMST, ECE 105), so those nudged every tick.
+        self.state["nudged"] = brief.recent_nudges(sent, now)
         self._save_state()
         await self.supplement_nudges(now)
 
@@ -518,7 +575,7 @@ class Server:
             done.add(supplements.key_for(slot, now))
             if lacking := supplements.missing(slot["items"], taken):
                 spoken = supplements.spoken(slot, lacking, self.phrases)
-                await self.herald.deliver(supplements.written(slot, lacking, now), spoken, now)
+                await self.herald.deliver(supplements.written(slot, lacking, now), spoken, now, kind="supplements")
         self.state["supplements"] = sorted(done)[-40:]
         self._save_state()
 
@@ -532,8 +589,10 @@ class Server:
             return  # muted or in quiet mode: ask again in a while, not every tick
         self._greet_tried = time.monotonic()
         weather = await asyncio.to_thread(self._weather)
-        line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather)
+        gym = brief.gym_today(config.section("gym"), now.date())
+        line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather, gym)
         if await self.herald.say(line, now):
+            self.record_said("greeting", line, "spoken")
             self.state["greeted"] = today
             self._save_state()
 
@@ -544,7 +603,7 @@ class Server:
             note = f" (meant for {reminder.when():%-I:%M %p})" if late else ""
             spoken = brief.spoken_reminder(reminder.title, self.phrases, reminder.when() if late else None)
             # Telegram always: the phone keeps it, and he may not be at the awake Mac. Spoken too when it can be.
-            await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True)
+            await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True, kind="reminder")
             self.log(f"Reminder sent: {reminder.title}")
 
     async def copy_contacts(self) -> None:
@@ -613,6 +672,9 @@ class Server:
                 await self.run_waiting()
                 if time.time() - self.state.get("contacts_at", 0) > CONTACTS_EVERY_SECONDS:
                     await self.copy_contacts()
+                if time.monotonic() - self._activity_at > ACTIVITY_EVERY_SECONDS:
+                    self._activity_at = time.monotonic()
+                    await asyncio.to_thread(self.write_activity, now.replace(tzinfo=None))
             except Exception as e:
                 self.log(f"Scheduler: {type(e).__name__}: {e}")
             try:  # apart from the rest: a failed model call mustn't hold up reminders
@@ -699,11 +761,13 @@ async def serve(log=print) -> None:
         await hub.add("contacts", Client(contacts.node()))
         from sommus import calendars
 
+        calendar = None
         if links := calendars.urls():  # CALENDAR_ICS_URLS in .env: Google's secret iCal addresses
-            await hub.add("calendar", Client(calendars.Calendars(links).node()))
+            calendar = calendars.Calendars(links)
+            await hub.add("calendar", Client(calendar.node()))
         for name, why in hub.unreachable.items():
             log(f"Node '{name}': {why}")
-        server = Server(cfg, hub, store, phone, log, reminders, contacts)
+        server = Server(cfg, hub, store, phone, log, reminders, contacts, calendar)
         tasks = [asyncio.create_task(server.scheduler()), asyncio.create_task(server.vault_sync())]
         # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":

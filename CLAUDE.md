@@ -23,6 +23,7 @@ sommus live                           # Mac, the one window to keep open: uses t
 sommus node                           # Mac: only the Mac's tools for the server, without live mode (Terminal.app)
 sommus voiceprint                     # Mac: learn Jashan's voice (voice ID replaces the PIN for his voice)
 ssh sommus-brain 'journalctl -u sommus -f'   # the always-on brain (systemd unit `sommus`, SOMMUS_ROLE=server)
+scripts/deploy.sh                     # after pushing: pull on the server, restart, health check, auto rollback
 ```
 
 Decisions and their reasons: `docs/decisions/`. Add one when a choice is measured or hard to reverse.
@@ -47,6 +48,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/remote.py` | `sommus node` on the Mac: laptop/claude/bridge nodes over MCP streamable HTTP, tailnet only, bearer token |
 | `src/sommus/client.py` | `RemoteBrain`: live mode as a client of the server's /live/* routes (one conversation) |
 | `src/sommus/reminders.py` · `contacts.py` · `calendars.py` | server-side reminders (Telegram pings), contacts copied from the Mac, Google Calendar via iCal links |
+| `src/sommus/activity.py` | daily activity log: `Sommus Log/YYYY-MM-DD.md` in the vault (requests, tools, replies, cost, what was said first and where), rewritten every 10 min ($0) |
 | `src/sommus/supplements.py` | supplement nudges: reads the vault's `Nutrition/Supplement Log.md`, speaks up at each `[supplements]` slot only about what today's rows lack |
 | `src/sommus/brief.py` | $0 morning brief, due-tomorrow heads-up, class-in-15 nudges; their spoken, varied versions |
 | `src/sommus/herald.py` | where a nudge goes: said on the awake Mac (`announce`) outside quiet hours, else Telegram |
@@ -70,3 +72,5 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 - This Python has no CA certificates: use `curl` or `httpx2`, not `urllib`, for HTTPS.
 - Secrets live in `.env`; never print or commit them. Jashan does account setup and pastes secrets himself.
 - Commit messages explain *why*; push after each meaningful change.
+- **Sommus runs 24/7** (Jashan, 2026-11-09): never stop the server. Deploy only with `scripts/deploy.sh` (it rolls
+  back on a failed import or health check). Nudges are never said out loud during a class or calendar event.

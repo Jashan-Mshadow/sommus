@@ -143,6 +143,25 @@ class Store:
             (since, until),
         ).fetchall()
 
+    def day_turns(self, day: str) -> list[dict]:
+        """Every turn started on `day` (YYYY-MM-DD), with its tool calls: the daily activity log's input."""
+        turns = self._db.execute(
+            "SELECT id, started_at, user_text, COALESCE(reply, ''), COALESCE(status, ''), COALESCE(model, ''),"
+            " COALESCE(cost_usd, 0) FROM turns WHERE started_at >= ? AND started_at < ? ORDER BY id",
+            (day, day + "~"),
+        ).fetchall()
+        out = []
+        for turn_id, at, text, reply, status, model, cost in turns:
+            calls = self._db.execute(
+                "SELECT tool, decision, is_error, COALESCE(output, '') FROM tool_calls WHERE turn_id = ? ORDER BY id",
+                (turn_id,),
+            ).fetchall()
+            out.append(
+                {"at": at, "text": text, "reply": reply, "status": status, "model": model, "cost": cost or 0.0,
+                 "tools": [{"tool": t, "decision": d, "error": bool(e), "output": o} for t, d, e, o in calls]}
+            )  # fmt: skip
+        return out
+
     def cost_month(self) -> float:
         """Spend since the 1st, the window Anthropic's monthly limit counts."""
         row = self._db.execute(

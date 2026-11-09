@@ -17,7 +17,7 @@ web_search = false
 core_tools = [
     "get_battery", "get_volume", "set_volume", "set_mute", "set_brightness", "list_apps", "open_app",
     "quit_app", "open_url", "media_control", "notify", "set_reminder", "create_reminder", "find_contact", "send_message",
-    "send_email", "search_email", "search_vault", "read_note", "add_todo", "web_search", "ask_claude",
+    "send_email", "search_email", "search_vault", "read_note", "add_todo", "complete_todo", "web_search", "ask_claude",
     # quick spoken requests: deferred, each first cost a tool search (~2 s before the tool ran)
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",
     "close_browser_tabs",
@@ -109,7 +109,7 @@ pin_tools = [
     "send_message", "compose_email", "find_contact", "list_contacts",
     # notes: reading his own notes is unlocked (Jashan, 2026-09-19) — the PIN prompt interrupted
     # "what's on my to-do list" mid-conversation. Writing them still waits for the PIN.
-    "append_to_note", "add_todo", "commit_vault",
+    "append_to_note", "add_todo", "complete_todo", "commit_vault",
     # files, clipboard, browser contents
     "read_file", "find_files", "append_to_file", "open_file", "read_pdf", "download_url", "get_clipboard",
     "list_browser_tabs", "read_browser_tab", "list_page_links", "click_page_link", "list_embedded_files",
@@ -213,6 +213,11 @@ nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"
 # "be quiet" (set_quiet). speak = false: Telegram only.
 speak = true
 quiet_hours = ["23:00", "07:30"]
+
+[gym]
+# Which split day is on which weekday; the morning brief says "Gym today: Day 1." (no exercise list: that lives in the
+# vault's Training/Training Hub.md). Days not listed are rest days. Split confirmed by Jashan 2026-11-09.
+days = { Tue = "Day 1", Wed = "Day 2", Sat = "Day 1", Sun = "Day 2" }
 
 [supplements]
 # Nudges for supplements, from the vault's Nutrition/Supplement Log.md. At each slot's time, Sommus reads today's rows

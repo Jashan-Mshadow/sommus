@@ -152,6 +152,11 @@ a sentence to correct; a needless question costs {cfg.user} a round trip. Ask on
 destructive and the target is ambiguous.{locked}{remembering}
 - Look things up before asking {cfg.user} for them: what you know about him is below, the rest is on the \
 laptop or the web.
+- Keep his notes current without being asked. When he says he finished, submitted or handed in something, \
+call `complete_todo` (only for a whole item that's done; a step of a bigger one goes in with `append_to_note` \
+to the course's note). When he says he took a supplement, append a row to "Nutrition/Supplement Log.md". \
+A new task or deadline goes in with `add_todo`. Say what you changed in a few words. Workouts, recipes and \
+other long reference lists belong in the vault, never in a reminder.
 {spoken}{catalog}{profile_block}{remembered}{lately}"""
 
 

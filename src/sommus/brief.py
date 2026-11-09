@@ -28,12 +28,20 @@ def unread_summary(listing: str, shown: int = 3) -> str:
     return f"{count}: " + "; ".join(parts) + more + "."
 
 
-def morning(schedule: campus.Schedule, now: datetime, weather: str = "", mail: str = "", tasks: list[str] = ()) -> str:
+def morning(
+    schedule: campus.Schedule, now: datetime, weather: str = "", mail: str = "", tasks: list[str] = (),
+    gym: str = "", events: Sequence[str] = (), quip: str = "",
+) -> str:  # fmt: skip
+    """The written brief: classes, what's due soon, the gym, today's other events, weather, mail, the top of the
+    to-do list, and one line of personality. The workout itself isn't here: it's in the vault's Training Hub."""
     lines = [f"Morning. {now:%A, %B %-d}."]
     lines.append(campus.day_summary(schedule, now.date(), now))
     due = schedule.due_within(now, 3)
     if due:
         lines.append(campus.due_summary(schedule, now, 3))
+    if events:
+        lines.append("Also today: " + "; ".join(events) + ".")
+    lines.append(f"Gym today: {gym}." if gym else "Rest day, no gym.")
     if weather:
         lines.append(weather)
     if mail:
@@ -41,7 +49,38 @@ def morning(schedule: campus.Schedule, now: datetime, weather: str = "", mail: s
     if tasks:
         plain = [re.sub(r"[*_`~]", "", t).strip() for t in tasks[:3]]  # the vault's Markdown reads as clutter here
         lines.append("Top of your list: " + "; ".join(plain) + ".")
+    if quip:
+        lines.append(quip)
     return "\n".join(lines)
+
+
+DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def gym_today(settings: dict, day: date) -> str:
+    """'Day 1' on a gym day from [gym] days in config.toml, '' on a rest day."""
+    return str(settings.get("days", {}).get(DAYS[day.weekday()], ""))
+
+
+GYM_QUIPS = (
+    "Chest first, excuses never.",
+    "The lateral raises won't raise themselves.",
+    "Go make the cable station regret it.",
+    "Eat your protein, then go earn it.",
+)
+REST_QUIPS = (
+    "Recover like it's your job. Which, today, it is.",
+    "The only thing getting a pump today is your problem set.",
+    "Walk, eat, study. Riveting, I know.",
+    "Muscles grow on rest days. Allegedly. Don't test it on the couch all day.",
+)
+BUSY_QUIPS = ("Big day. Pace yourself.", "Plenty due, so maybe skip the second episode tonight.")
+
+
+def morning_quip(gym: str, due_count: int, book: Phrasebook) -> str:
+    if due_count >= 2:
+        return book.pick("quip-busy", BUSY_QUIPS)
+    return book.pick("quip-gym", GYM_QUIPS) if gym else book.pick("quip-rest", REST_QUIPS)
 
 
 def due_tomorrow(schedule: campus.Schedule, now: datetime) -> str:
@@ -67,6 +106,20 @@ def classes_starting(
             sent.add(key)
             out.append(session)
     return out
+
+
+def recent_nudges(sent: set[tuple[str, str]], now: datetime, keep_hours: int = 24) -> list[list[str]]:
+    """The nudge keys still worth remembering: classes that started within `keep_hours`, or haven't yet."""
+    cutoff = now - timedelta(hours=keep_hours)
+    kept = []
+    for label, start in sent:
+        try:
+            when = datetime.fromisoformat(start)
+        except ValueError:
+            continue
+        if when.tzinfo is None or when >= cutoff:
+            kept.append([label, start])
+    return sorted(kept, key=lambda k: k[1])
 
 
 def class_nudge(session: campus.Session, now: datetime) -> str:
@@ -210,7 +263,7 @@ HELLO = ("Good morning{name}.", "Morning{name}.", "Morning{name}, hope you slept
 
 def spoken_morning(
     schedule: campus.Schedule, now: datetime, say_as: dict[str, str], book: Phrasebook, name: str = "",
-    weather: str = "",
+    weather: str = "", gym: str = "",
 ) -> str:  # fmt: skip
     """The greeting when the Mac first wakes in the morning: the first class and what's due today. The full
     brief is on Telegram; this is the part worth hearing."""
@@ -228,6 +281,8 @@ def spoken_morning(
     due = [say_courses(d.what, say_as) for d in schedule.due_within(now, 1) if d.due.date() == now.date()]
     if due:
         parts.append(f"{_cap(' and '.join(due))} {'is' if len(due) == 1 else 'are'} due today.")
+    if gym:
+        parts.append(f"Gym today, {gym}.")
     if weather:
         parts.append(weather)
     return " ".join(parts)

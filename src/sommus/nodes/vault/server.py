@@ -256,6 +256,101 @@ def add_todo(text: str) -> str:
     return f"Added to {TODO}: {text.strip()}"
 
 
+@tool(REVERSIBLE)
+def complete_todo(words: str, note: str = "") -> str:
+    """Mark a to-do done when Jashan says he finished, submitted or handed in something ("I'm done project 3
+    for ECE 150"). Ticks the matching open item and adds it to today's row of the Done table. If nothing on the
+    list matches, it still records the win in the Done table.
+
+    Args:
+        words: A few words that pick out the item, e.g. "ECE 150 project 3".
+        note: Optional detail to keep, e.g. "public tests 8/8".
+    """
+    path = _resolve(TODO)
+    if not path.exists():
+        raise VaultError(f"{TODO} doesn't exist in the vault.")
+    text, today = path.read_text(), datetime.now().strftime("%Y-%m-%d")
+    updated, done, matches = finish_item(text, words, note, today)
+    if len(matches) > 1:
+        options = "; ".join(matches[:5])
+        raise VaultError(f"{len(matches)} open items match '{words}': {options}. Use more specific words.")
+    path.write_text(updated)
+    if matches:
+        return f"Ticked off in {TODO}: {done}"
+    return f"Nothing open matched '{words}', so it's recorded in the Done table: {done}"
+
+
+OPEN_ITEM = re.compile(r"^(\s*[-*] )\[ \] (.*)$")
+
+
+def _plain(item: str) -> str:
+    item = re.sub(r"\[\[([^]|]+)(\|[^]]+)?]]", r"\1", item)
+    item = re.sub(r"\s*\*\(added [\d-]+\)\*", "", item)
+    return re.sub(r"[*_`~]", "", item).strip()
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+FILLER = {"for", "the", "a", "an", "my", "i", "im", "done", "finished", "with", "of", "and", "submitted", "it"}
+
+
+def _short_names(text: str) -> str:
+    """'project 3' -> 'P3', 'assignment 2' -> 'A2': how course work is written in his notes."""
+    text = re.sub(r"\bproject\s*#?\s*(\d+)", r"P\1", text, flags=re.I)
+    return re.sub(r"\bassignment\s*#?\s*(\d+)", r"A\1", text, flags=re.I)
+
+
+def finish_item(text: str, words: str, note: str, today: str) -> tuple[str, str, list[str]]:
+    """(new text, what was recorded, the open items that matched). Every word must appear in the item; numbers
+    like "3" also match "P3". Nothing changes when several items match."""
+    wanted = [w for w in _words(_short_names(words)) if w not in FILLER]
+    lines = text.rstrip("\n").split("\n")
+    found = []
+    for i, line in enumerate(lines):
+        if m := OPEN_ITEM.match(line):
+            have = _words(_plain(m.group(2)))
+            joined = " ".join(have)
+            if wanted and all(
+                w in have or any(h.endswith(w) and h[: -len(w)].isalpha() for h in have) or (len(w) > 3 and w in joined)
+                for w in wanted
+            ):
+                found.append((i, m))
+    if len(found) > 1:
+        return text, "", [_plain(m.group(2)) for _, m in found]
+    extra = f" ({note.strip()})" if note.strip() else ""
+    if found:
+        i, m = found[0]
+        lines[i] = f"{m.group(1)}[x] {m.group(2)} *(done {today}{extra and ': ' + note.strip()})*"
+        done = _plain(m.group(2))
+    else:
+        done = words.strip()
+    done_text = (done[:90].rstrip() + "…" if len(done) > 90 else done) + extra
+    lines = _with_done_row(lines, today, done_text)
+    return "\n".join(lines) + "\n", done_text, [_plain(m.group(2)) for _, m in found]
+
+
+def _with_done_row(lines: list[str], today: str, what: str) -> list[str]:
+    """Add `what` to today's row of the "## Done" table (newest row first), making the row or table if needed."""
+    what = what.replace("|", "/")
+    start = next((i for i, line in enumerate(lines) if line.strip().startswith("## Done")), None)
+    if start is None:
+        return [*lines, "", "## Done (recent)", "| Date | What |", "|---|---|", f"| {today} | {what} |"]
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith(f"| {today} |"):
+            lines[i] = lines[i].rstrip().rstrip("|").rstrip() + f" · {what} |"
+            return lines
+        if lines[i].startswith("## "):
+            break
+    header = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("|---")), None)
+    if header is None:
+        lines[start + 1 : start + 1] = ["| Date | What |", "|---|---|", f"| {today} | {what} |"]
+    else:
+        lines.insert(header + 1, f"| {today} | {what} |")
+    return lines
+
+
 def with_inbox_item(text: str, item: str) -> str:
     """The note with `item` at the end of its inbox section, made above "## Done" if it's missing.
     Appending to the end of the file put new items under the Done table, where nothing read them."""
