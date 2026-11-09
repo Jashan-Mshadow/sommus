@@ -21,6 +21,7 @@ import anthropic
 
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
+from sommus.brain import nodes as nodes_mod
 from sommus.brain.nodes import NodeHub
 from sommus.brain.permissions import Tier
 from sommus.brain.pin import Gate, split_pin
@@ -513,7 +514,7 @@ class Brain:
             if result.decision == "needs_pin":
                 reply = "That needs your PIN." if self.gate.pin_set else "That needs a PIN. Run sommus pin to set one."
             elif result.is_error:
-                reply = result.text
+                reply = nodes_mod.plain_error(result.text)
             elif quick.phrase:
                 reply = quick.phrase(result.text)
             elif quick.intent in ("brightness", "volume") and (level := fastpath.level_from(result.text)) is not None:

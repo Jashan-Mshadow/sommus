@@ -184,3 +184,10 @@ def test_a_done_deadline_is_not_due_soon(tmp_path):
     )
     s = campus.Schedule.load(path)
     assert [d.what for d in s.due_within(datetime(2026, 11, 9, 9, 0, tzinfo=ZONE), 3)] == ["P4"]
+
+
+def test_the_asleep_mac_message_is_reworded_for_him():
+    from sommus.brain.nodes import MAC_DOWN, asleep, plain_error
+
+    assert plain_error(asleep("get_battery").text) == MAC_DOWN
+    assert plain_error("Volume is 40%.") == "Volume is 40%."
