@@ -674,7 +674,7 @@ class Server:
                     await self.copy_contacts()
                 if time.monotonic() - self._activity_at > ACTIVITY_EVERY_SECONDS:
                     self._activity_at = time.monotonic()
-                    await asyncio.to_thread(self.write_activity, now.replace(tzinfo=None))
+                    self.write_activity(now.replace(tzinfo=None))  # same thread: SQLite refuses another
             except Exception as e:
                 self.log(f"Scheduler: {type(e).__name__}: {e}")
             try:  # apart from the rest: a failed model call mustn't hold up reminders

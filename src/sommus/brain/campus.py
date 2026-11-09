@@ -68,6 +68,7 @@ class Schedule:
             (
                 Deadline(d["what"], d["due"].replace(tzinfo=self.zone), d.get("where", ""))
                 for d in raw.get("deadlines", [])
+                if not d.get("done")  # finished early (complete_todo sets it): not "due soon" anymore
             ),
             key=lambda d: d.due,
         )

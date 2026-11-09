@@ -159,3 +159,28 @@ async def test_nudges_land_in_the_said_log(server, tmp_path):  # noqa: F811
 @pytest.fixture(autouse=True)
 def _campus_cached(monkeypatch, tmp_path):
     monkeypatch.setattr(campus, "cached", lambda _path: schedule(tmp_path))
+
+
+def test_finishing_also_closes_the_one_matching_deadline():
+    from sommus.nodes.vault.server import finish_deadline
+
+    toml = (
+        "deadlines = [\n"
+        '  { what = "ECE 150 Project 3", due = 2026-11-10T22:00:00, where = "Marmoset" },\n'
+        '  { what = "ECE 150 Project 4", due = 2026-11-24T22:00:00, where = "Marmoset" },\n]'
+    )
+    text, name = finish_deadline(toml, "done project 3 for 150")
+    assert name == "ECE 150 Project 3"
+    assert '{ what = "ECE 150 Project 3", due = 2026-11-10T22:00:00, where = "Marmoset", done = true },' in text
+    assert finish_deadline(toml, "ECE 150") == (toml, "")  # two match: close neither
+
+
+def test_a_done_deadline_is_not_due_soon(tmp_path):
+    path = tmp_path / "schedule.toml"
+    path.write_text(
+        'timezone = "America/Toronto"\nterm_start = 2026-09-08\nterm_end = 2026-12-08\nweekly = []\n'
+        'deadlines = [\n  { what = "P3", due = 2026-11-10T22:00:00, done = true },\n'
+        '  { what = "P4", due = 2026-11-11T22:00:00 },\n]\n'
+    )
+    s = campus.Schedule.load(path)
+    assert [d.what for d in s.due_within(datetime(2026, 11, 9, 9, 0, tzinfo=ZONE), 3)] == ["P4"]

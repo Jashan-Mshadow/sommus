@@ -275,9 +275,38 @@ def complete_todo(words: str, note: str = "") -> str:
         options = "; ".join(matches[:5])
         raise VaultError(f"{len(matches)} open items match '{words}': {options}. Use more specific words.")
     path.write_text(updated)
+    closed = ""
+    schedule = _resolve(SCHEDULE)
+    if schedule.exists():
+        text, deadline = finish_deadline(schedule.read_text(), words)
+        if deadline:
+            schedule.write_text(text)
+            closed = f" The deadline '{deadline}' is marked done, so it's off the 'due soon' list."
     if matches:
-        return f"Ticked off in {TODO}: {done}"
-    return f"Nothing open matched '{words}', so it's recorded in the Done table: {done}"
+        return f"Ticked off in {TODO}: {done}.{closed}"
+    return f"Nothing open matched '{words}', so it's recorded in the Done table: {done}.{closed}"
+
+
+SCHEDULE = "Courses/schedule.toml"
+DEADLINE = re.compile(r'^(\s*\{\s*what\s*=\s*"([^"]+)".*?)(\s*\},?\s*)$')
+
+
+def finish_deadline(text: str, words: str) -> tuple[str, str]:
+    """Mark the one upcoming-or-recent deadline whose name has every word as done = true. ('', '') when none
+    or several match, so a vague phrase never closes the wrong one."""
+    wanted = [w for w in _words(_short_names(words)) if w not in FILLER]
+    lines, hits = text.split("\n"), []
+    for i, line in enumerate(lines):
+        m = DEADLINE.match(line)
+        if m and "done" not in line:
+            name = _words(_short_names(m.group(2)))
+            if wanted and all(w in name for w in wanted):
+                hits.append((i, m))
+    if len(hits) != 1:
+        return text, ""
+    i, m = hits[0]
+    lines[i] = f"{m.group(1)}, done = true{m.group(3)}"
+    return "\n".join(lines), m.group(2)
 
 
 OPEN_ITEM = re.compile(r"^(\s*[-*] )\[ \] (.*)$")
