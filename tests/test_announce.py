@@ -189,7 +189,7 @@ class FakeHub:
             await asyncio.sleep(5)
         if self.refuse:
             return ToolOutput.failure(self.refuse)
-        return ToolOutput([], f"Said: {args['text']}", False)
+        return ToolOutput([], f"Said: {args.get('text', '')}", False)
 
 
 def make_herald(hub, settings=None):

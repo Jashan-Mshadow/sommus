@@ -72,6 +72,14 @@ def get_volume() -> str:
     return _describe_volume(macos.volume())
 
 
+@tool(READ)
+def get_audio_output() -> str:
+    """Which device the Mac's sound is playing through right now (AirPods, speakers...), and whether that's
+    private headphones."""
+    name, private = macos.audio_output()
+    return f"{name} ({'headphones' if private else 'speakers'})"
+
+
 @tool(REVERSIBLE)
 def set_volume(level: int) -> str:
     """Set the output volume and unmute.

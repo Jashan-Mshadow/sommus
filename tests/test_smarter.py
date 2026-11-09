@@ -76,7 +76,7 @@ async def test_nothing_is_said_aloud_while_busy_but_telegram_still_gets_it():
     hub = FakeHub()
     h = herald.Herald(hub, tell, {"quiet_hours": ["23:00", "07:30"]}, log=lambda _: None, busy=busy)
     assert not await h.deliver("Written.", "Spoken.", datetime(2026, 10, 6, 12, 0, tzinfo=ZONE))
-    assert told == ["Written."] and hub.calls == []
+    assert told == ["Written."] and not any(tool == "announce" for _n, tool, _a in hub.calls)
 
 
 async def test_the_server_knows_when_a_class_is_on(server, monkeypatch):  # noqa: F811
@@ -191,3 +191,48 @@ def test_the_asleep_mac_message_is_reworded_for_him():
 
     assert plain_error(asleep("get_battery").text) == MAC_DOWN
     assert plain_error("Volume is 40%.") == "Volume is 40%."
+
+
+class HeadphoneHub(FakeHub):
+    def __init__(self, output):
+        super().__init__()
+        self.output = output
+
+    async def call_on(self, node, tool, args):
+        from sommus.brain.nodes import ToolOutput
+
+        if tool == "get_audio_output":
+            return ToolOutput([], self.output, False)
+        return await super().call_on(node, tool, args)
+
+
+@pytest.mark.parametrize(
+    ("output", "spoken"), [("AirPods (headphones)", True), ("MacBook Air Speakers (speakers)", False)]
+)
+async def test_in_class_it_speaks_only_into_headphones(output, spoken):
+    told = []
+
+    async def tell(text):
+        told.append(text)
+
+    async def busy(_now):
+        return "ECE 105 lecture"
+
+    hub = HeadphoneHub(output)
+    h = herald.Herald(hub, tell, {"quiet_hours": ["23:00", "07:30"]}, log=lambda _: None, busy=busy)
+    said = await h.deliver("Written.", "Spoken.", datetime(2026, 10, 6, 12, 0, tzinfo=ZONE))
+    assert said is spoken and (told == []) is spoken
+    assert any(tool == "announce" for _n, tool, _a in hub.calls) is spoken
+
+
+def test_the_default_output_device_is_read_from_system_profiler():
+    from sommus.nodes.laptop.macos import parse_audio_output
+
+    raw = json.dumps({"SPAudioDataType": [{"_items": [
+        {"_name": "MacBook Air Speakers", "coreaudio_device_transport": "coreaudio_device_type_builtin"},
+        {"_name": "AirPods", "coreaudio_default_audio_output_device": "spaudio_yes",
+         "coreaudio_device_transport": "coreaudio_device_type_bluetooth"},
+    ]}]})  # fmt: skip
+    assert parse_audio_output(raw) == ("AirPods", True)
+    speakers = raw.replace('"AirPods", "coreaudio_default', '"X", "coreaudio_default').replace("bluetooth", "builtin")
+    assert parse_audio_output(speakers) == ("X", False)

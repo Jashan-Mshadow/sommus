@@ -509,3 +509,31 @@ def sleep_display() -> None:
 
 def sleep_computer() -> None:
     _run(["pmset", "sleepnow"])
+
+
+HEADPHONE_WORDS = ("airpods", "headphone", "headset", "earbuds", "buds", "beats")
+
+
+def parse_audio_output(raw: str) -> tuple[str, bool]:
+    """(device name, private?) for the default output device from `system_profiler SPAudioDataType -json`.
+    Private = Bluetooth or anything named like headphones: what's said there only he hears."""
+    import json
+
+    for group in json.loads(raw or "{}").get("SPAudioDataType", []):
+        for item in group.get("_items", []):
+            if item.get("coreaudio_default_audio_output_device") == "spaudio_yes":
+                name = item.get("_name", "unknown")
+                transport = item.get("coreaudio_device_transport", "")
+                source = str(item.get("coreaudio_output_source", "")).lower()
+                private = (
+                    transport.endswith("bluetooth")
+                    or any(w in name.lower() for w in HEADPHONE_WORDS)
+                    or "headphone" in source
+                )
+                return name, private
+    return "unknown", False
+
+
+def audio_output() -> tuple[str, bool]:
+    result = subprocess.run(["system_profiler", "SPAudioDataType", "-json"], capture_output=True, text=True, timeout=10)
+    return parse_audio_output(result.stdout)

@@ -61,8 +61,8 @@ class Herald:
         """Say it on the Mac; False when it wasn't said (asleep, muted, quiet hours or quiet mode)."""
         if not spoken or not self.can_speak(now):
             return False
-        if self.busy and (doing := await self.busy(now)):
-            self.log(f"Not said aloud (busy: {doing}): {spoken[:80]}")
+        if self.busy and (doing := await self.busy(now)) and not await self.private_audio():
+            self.log(f"Not said aloud (busy: {doing}, sound on speakers): {spoken[:80]}")
             return False
         try:
             result = await asyncio.wait_for(self.hub.call_on(self.node, "announce", {"text": spoken}), SAY_TIMEOUT)
@@ -74,6 +74,15 @@ class Herald:
             return False
         self.log(f"Said on the Mac: {spoken}")
         return True
+
+    async def private_audio(self) -> bool:
+        """True when the Mac's sound goes to AirPods or other headphones: then only he hears it, so a nudge may be
+        spoken even in a class or an event."""
+        try:
+            result = await asyncio.wait_for(self.hub.call_on(self.node, "get_audio_output", {}), SAY_TIMEOUT)
+        except TimeoutError:
+            return False
+        return not result.is_error and "(headphones)" in result.text
 
     async def deliver(
         self, text: str, spoken: str, now: datetime, telegram_too: bool = False, kind: str = "nudge"

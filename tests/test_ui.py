@@ -21,7 +21,11 @@ def test_what_a_line_says_about_the_orb():
     assert mood("something unrelated") is None
 
 
-def test_the_page_and_status_load_and_a_down_brain_is_reported_not_crashed():
+def test_the_page_and_status_load_and_a_down_brain_is_reported_not_crashed(monkeypatch):
+    from sommus.interfaces import ui
+
+    monkeypatch.setattr(ui, "live_running", lambda: False)
+
     def refuse(_request):
         raise httpx2.ConnectError("down")
 
@@ -50,3 +54,18 @@ def test_a_reply_and_its_tools_reach_the_feed():
     kinds = [k for k, _ in seen]
     assert ("line", {"text": "$ get_battery() ✓", "source": "tool"}) in seen
     assert ("sommus", {"text": "Done."}) in seen and "you" in kinds
+
+
+def test_the_app_starts_live_only_when_it_is_off(monkeypatch, tmp_path):
+    from sommus.interfaces import ui
+
+    opened = []
+    monkeypatch.setattr(ui.subprocess, "Popen", lambda args: opened.append(args))
+    monkeypatch.setattr(ui, "LIVE_COMMAND", tmp_path / "sommus-live.command")
+    monkeypatch.setattr(ui, "live_running", lambda: True)
+    assert "already running" in ui.start_live() and opened == []
+    monkeypatch.setattr(ui, "live_running", lambda: False)
+    assert "autostart.sh install" in ui.start_live() and opened == []
+    (tmp_path / "sommus-live.command").write_text("#!/bin/zsh\n")
+    assert "Starting Sommus live" in ui.start_live()
+    assert opened == [["open", "-a", "Terminal", str(tmp_path / "sommus-live.command")]]

@@ -12,9 +12,7 @@ import contextlib
 import json
 import os
 import re
-import shutil
 import subprocess
-import sys
 import webbrowser
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -28,7 +26,7 @@ from starlette.routing import Route
 
 from sommus import client, config
 
-PORT = int(os.environ.get("SOMMUS_UI_PORT", "8790"))
+PORT = int(os.environ.get("SOMMUS_UI_PORT", "8791"))  # 8790 is the Mac nodes' port (`sommus live`/`node`)
 STATIC = Path(__file__).parent / "ui_static"
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07")
 NOISE = re.compile(r"^[\s⠀-⣿|/\\\-·.]*$")  # spinner frames and blank lines
@@ -56,13 +54,36 @@ def mood(line: str) -> str | None:
     return None
 
 
-class Hub:
-    """Fan-out of events to every open window, plus the voice process."""
+LIVE_COMMAND = config.ROOT / "scripts" / "sommus-live.command"  # written by scripts/autostart.sh install
+LIVE_LOG = config.ROOT / "data" / "live.log"  # what the 24/7 `sommus live` window prints (via `script`)
+LIVE_PROCESS = r"bin/sommus live|sommus-live.command"  # the 24/7 window's loop or its Python process
 
-    def __init__(self) -> None:
+
+def live_running() -> bool:
+    found = subprocess.run(["pgrep", "-f", LIVE_PROCESS], capture_output=True, text=True)
+    return bool(found.stdout.strip())
+
+
+def start_live() -> str:
+    """Start the one 24/7 mode in Terminal (it holds the microphone, Accessibility and Automation permissions;
+    an app-launched background process would have none). Returns what happened, for the feed."""
+    if live_running():
+        return "Sommus live is already running."
+    if not LIVE_COMMAND.exists():
+        return "Sommus live isn't set up to run on its own yet: run scripts/autostart.sh install once."
+    subprocess.Popen(["open", "-a", "Terminal", str(LIVE_COMMAND)])
+    return "Starting Sommus live in Terminal (voice, wake word and the Mac's tools)…"
+
+
+class Hub:
+    """Fan-out of events to every open window. Voice isn't run from here any more: the 24/7 `sommus live`
+    window does it, and the app follows its log."""
+
+    def __init__(self, log: Path = LIVE_LOG) -> None:
         self.listeners: set[asyncio.Queue] = set()
-        self.voice: asyncio.subprocess.Process | None = None
         self.state = "idle"
+        self.log = log
+        self.follower: asyncio.Task | None = None
 
     def emit(self, kind: str, **data: Any) -> None:
         for queue in list(self.listeners):
@@ -75,51 +96,43 @@ class Hub:
 
     @property
     def voice_on(self) -> bool:
-        return self.voice is not None and self.voice.returncode is None
-
-    def command(self) -> list[str]:
-        exe = shutil.which("sommus")
-        return (
-            [exe, "live"] if exe else [sys.executable, "-c", "from sommus.interfaces.cli import main; main()", "live"]
-        )
+        return live_running()
 
     async def start_voice(self) -> None:
-        if self.voice_on:
-            return
-        env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "PYTHONUNBUFFERED": "1"}
-        self.voice = await asyncio.create_subprocess_exec(
-            *self.command(),
-            cwd=config.ROOT,
-            env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.DEVNULL,
-        )
-        self.emit("voice", on=True)
-        self.emit("line", text="voice mode starting (loading the microphone and wake word)…", source="system")
-        asyncio.create_task(self.pump(self.voice))
-
-    async def pump(self, process: asyncio.subprocess.Process) -> None:
-        assert process.stdout is not None
-        while chunk := await process.stdout.read(4096):
-            for line in clean(chunk.decode("utf-8", "replace")):
-                self.emit("line", text=line, source="voice")
-                if (felt := mood(line)) is not None:
-                    self.set_state(felt)
-        await process.wait()
-        self.emit("voice", on=False)
-        self.emit("line", text=f"voice mode stopped (exit {process.returncode}).", source="system")
-        self.set_state("idle")
+        note = await asyncio.to_thread(start_live)
+        self.emit("line", text=note, source="system")
+        self.follow()
 
     async def stop_voice(self) -> None:
-        if not self.voice_on:
-            return
-        assert self.voice is not None
-        self.voice.terminate()
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self.voice.wait(), 8)
-        if self.voice.returncode is None:
-            self.voice.kill()
+        self.emit("line", text="Sommus live runs 24/7. To stop it, close its Terminal window.", source="system")
+
+    def follow(self) -> None:
+        if self.follower is None or self.follower.done():
+            self.follower = asyncio.create_task(self.tail())
+
+    async def tail(self) -> None:
+        """New lines of the live window's log go to the feed and move the orb."""
+        position = self.log.stat().st_size if self.log.exists() else 0
+        was_on = None
+        while True:
+            on = await asyncio.to_thread(live_running)
+            if on != was_on:
+                self.emit("voice", on=on)
+                was_on = on
+            with contextlib.suppress(OSError):
+                size = self.log.stat().st_size
+                if size < position:  # the window restarted and the log was trimmed
+                    position = 0
+                if size > position:
+                    with self.log.open("rb") as f:
+                        f.seek(position)
+                        chunk = f.read(size - position)
+                    position = size
+                    for line in clean(chunk.decode("utf-8", "replace")):
+                        self.emit("line", text=line, source="voice")
+                        if (felt := mood(line)) is not None:
+                            self.set_state(felt)
+            await asyncio.sleep(1.0)
 
 
 def make_app(hub: Hub | None = None, http: httpx2.AsyncClient | None = None) -> Starlette:
@@ -187,8 +200,10 @@ def make_app(hub: Hub | None = None, http: httpx2.AsyncClient | None = None) -> 
 
     @contextlib.asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
+        hub.follow()
         yield
-        await hub.stop_voice()
+        if hub.follower:
+            hub.follower.cancel()
 
     return Starlette(
         routes=[
@@ -215,6 +230,7 @@ def run() -> None:
 
     url = f"http://127.0.0.1:{PORT}"
     app = make_app()
+    print(start_live(), flush=True)  # opening the app turns Sommus on if it was off
 
     async def main() -> None:
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning"))

@@ -6,6 +6,7 @@ from sommus.nodes.laptop.server import server
 
 EXPECTED_TIERS = {
     "get_battery": "read",
+    "get_audio_output": "read",
     "list_embedded_files": "read",
     "find_contact": "read",
     "list_contacts": "read",

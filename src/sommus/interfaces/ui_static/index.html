@@ -96,7 +96,7 @@
       <div class="log" id="log"></div>
     </div>
     <form id="form" autocomplete="off">
-      <button type="button" class="mic" id="mic" title="Voice mode (runs the wake word and microphone)">MIC</button>
+      <button type="button" class="mic" id="mic" title="Sommus live (voice, wake word, the Mac's tools) runs 24/7. Press to start it if it's off.">START</button>
       <input id="text" placeholder="Talk to Sommus…" autofocus>
       <button type="submit">SEND</button>
     </form>
@@ -164,7 +164,7 @@ draw();
 
 // ---------- ui ----------
 function setState(s) { state = s; const el = $("stateLabel"); el.textContent = s; el.className = "statelabel " + s; }
-function setVoice(on) { voice = on; $("mic").classList.toggle("on", on); $("chipVoice").className = "chip" + (on ? " on" : ""); $("mic").textContent = on ? "STOP" : "MIC"; }
+function setVoice(on) { voice = on; $("mic").classList.toggle("on", on); $("chipVoice").className = "chip" + (on ? " on" : ""); $("mic").textContent = on ? "LIVE" : "START"; }
 function addMsg(who, text) {
   const d = document.createElement("div"); d.className = "msg " + who;
   const s = document.createElement("small"); s.textContent = who === "you" ? "you" : "sommus";
@@ -186,7 +186,7 @@ $("form").addEventListener("submit", async (e) => {
     .catch(() => addLine("could not reach the app server", "system"));
 });
 $("mic").addEventListener("click", () => {
-  fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: !voice }) })
+  fetch("/api/voice", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: true }) })
     .then((r) => r.json()).then((j) => setVoice(j.voice));
 });
 
@@ -210,7 +210,7 @@ async function poll() {
   } catch { $("chipBrain").className = "chip bad"; }
 }
 poll(); setInterval(poll, 8000);
-addLine("Sommus app ready. Type below, or press MIC for voice.", "system");
+addLine("Sommus app ready. Sommus live runs 24/7: type below, or say \"Hey Sommus\".", "system");
 </script>
 </body>
 </html>
