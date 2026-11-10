@@ -50,6 +50,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/reminders.py` · `contacts.py` · `calendars.py` | server-side reminders (Telegram pings), contacts copied from the Mac, Google Calendar via iCal links |
 | `src/sommus/activity.py` | daily activity log: `Sommus Log/YYYY-MM-DD.md` in the vault (requests, tools, replies, cost, what was said first and where), rewritten every 10 min ($0) |
 | `src/sommus/supplements.py` | supplement nudges: reads the vault's `Nutrition/Supplement Log.md`, speaks up at each `[supplements]` slot only about what today's rows lack |
+| `src/sommus/nodes/home/` · `nodes/laptop/bluetooth_plug.py` | the fan's SwitchBot plug: cloud API on the server (needs `scripts/switchbot-setup.sh`), else the Mac's Bluetooth (`ble_plug_*`, Terminal holds the permission; ~4 s). The fast path tries the cloud, then Bluetooth |
 | `src/sommus/brief.py` | $0 morning brief, due-tomorrow heads-up, class-in-15 nudges; their spoken, varied versions |
 | `src/sommus/herald.py` | where a nudge goes: said on the awake Mac (`announce`) outside quiet hours, else Telegram |
 | `src/sommus/nodes/laptop/speak.py` | `announce` / `set_quiet` on the Mac: Kokoro, else `say`; silent when muted or quiet |
