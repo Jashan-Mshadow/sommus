@@ -51,6 +51,8 @@ def parse(service_data: dict[str, bytes], manufacturer: dict[int, bytes]) -> See
 def say(on: bool | None, watts: float | None = None) -> str:
     if on is None:
         return "The fan's plug answered, but didn't say whether it's on."
+    if on and watts == 0:  # power on, motor still: an electronic fan waits in standby for its own button
+        return "The plug's on, but the fan isn't running (0 W): it's waiting for its own power button."
     if on:
         return "Fan's on" + (f", drawing {watts:g} W." if watts else ".")
     return "Fan's off."

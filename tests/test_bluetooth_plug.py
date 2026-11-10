@@ -26,3 +26,7 @@ def test_other_switchbot_devices_are_ignored():
 
 def test_the_on_and_off_commands():
     assert bp.COMMANDS[True].hex() == "570f50010180" and bp.COMMANDS[False].hex() == "570f50010100"
+
+
+def test_power_on_with_the_motor_still_is_said_plainly():
+    assert "isn't running" in bp.say(True, 0.0)
