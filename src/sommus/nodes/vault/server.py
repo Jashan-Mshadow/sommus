@@ -75,7 +75,9 @@ def _resolve(relative: str) -> Path:
 
 
 def _notes() -> list[Path]:
-    return [p for p in sorted(VAULT.rglob("*.md")) if not any(part in SKIP for part in p.relative_to(VAULT).parts)]
+    """Every note, with anything under an `Archive/` folder last: old copies shouldn't win a search."""
+    notes = [p for p in sorted(VAULT.rglob("*.md")) if not any(part in SKIP for part in p.relative_to(VAULT).parts)]
+    return sorted(notes, key=lambda p: "Archive" in p.relative_to(VAULT).parts)
 
 
 @tool(READ)

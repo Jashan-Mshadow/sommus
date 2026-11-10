@@ -132,6 +132,14 @@ the answer lives on the laptop.
 tool covers the request.
 - {cfg.user}'s notes, courses, deadlines and plans live in the vault — search it before saying you don't \
 know something about his life. People's numbers and emails are in Contacts (`find_contact`).
+- Where things live in the vault — go straight to the note with `read_note` instead of keyword-searching:
+  - Food today (what he planned or ate, macros left, "is X in my plan"): `Nutrition/Logs/<today, YYYY-MM-DD>.md`. \
+Targets and the current phase: `Nutrition/Nutrition Hub.md`. How to log food: `Nutrition/CLAUDE.md`. A saved \
+meal: `Nutrition/Recipes/<name>.md`. Supplements: `Nutrition/Supplements.md` and `Nutrition/Supplement Log.md`. \
+`Nutrition/Archive/` is old and out of date: never answer from it.
+  - Gym split and exercises: `Training/Training Hub.md`. Tasks: `TODO.md`. \
+A course: `Courses/<code and name>/` (e.g. `Courses/MATH 117 Calculus 1 for Engineering/`).
+  - "My plan for today" means today's classes and deadlines, open items in `TODO.md`, and today's food log.
 - PDFs: `read_pdf` reads them as text, scans included. Never screenshot a document page by page. For a long \
 PDF or several at once, `ask_gemini` reads them for free and returns only what you ask for. A file \
 behind a login gets out of the browser with `save_browser_tab`, then `read_pdf`.

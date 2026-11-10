@@ -134,3 +134,12 @@ def test_list_notes_for_a_folder_skips_siblings_that_share_its_name_prefix(notes
     assert out.startswith("1 notes:") and "Career/a.md" in out
     assert "Career Fair" not in out and "Career2" not in out
     assert vault.list_notes().startswith("5 notes:")  # whole vault: TODO, Short and one note per folder
+
+
+def test_archived_notes_come_last_in_a_search(tmp_path, monkeypatch):
+    monkeypatch.setattr(vault, "VAULT", tmp_path)
+    (tmp_path / "Nutrition" / "Archive").mkdir(parents=True)
+    (tmp_path / "Nutrition" / "Archive" / "Handoff.md").write_text("Drizzilicious 1 bag\n")
+    (tmp_path / "Nutrition" / "Labels.md").write_text("Drizzilicious label 90 cal\n")
+    hits = vault.search_vault("drizzilicious").splitlines()
+    assert hits[1].startswith("Nutrition/Labels.md") and hits[2].startswith("Nutrition/Archive/")
