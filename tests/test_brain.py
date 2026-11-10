@@ -441,3 +441,31 @@ async def test_history_is_trimmed_in_steps_so_its_cache_survives(tmp_path):
             await run(brain, f"message {i}", never_confirm)
             sizes.append(sum(1 for m in brain.messages if m["role"] == "user"))
     assert sizes == [1, 2, 3, 4, 5, 3, 4, 5]  # dropped to half the window at once, not one per turn
+
+
+async def test_the_fan_falls_back_to_bluetooth_when_the_cloud_fails(tmp_path):
+    """No Wi-Fi for the plug (eduroam): plug_on errors, so the Mac's ble_plug_on does it, still with no model."""
+    from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
+    from mcp.types import ToolAnnotations
+
+    home, mac, said = MCPServer("home"), MCPServer("mac"), []
+    reversible = ToolAnnotations(read_only_hint=False, destructive_hint=False)
+
+    @home.tool(annotations=reversible, structured_output=False)
+    def plug_on(plug: str = "") -> str:
+        raise ToolError("SwitchBot isn't set up.")
+
+    @mac.tool(annotations=reversible, structured_output=False)
+    def ble_plug_on() -> str:
+        said.append("ble")
+        return "Fan's on."
+
+    async with NodeHub((), Policy({})) as hub:
+        await hub.add("home", Client(home))
+        await hub.add("mac", Client(mac))
+        model = FakeModel()
+        brain = Brain(config(tmp_path), hub, Store(tmp_path / "t.db"), client=model)
+        events = await run(brain, "turn on the fan", never_confirm)
+    reply = "".join(e.text for e in events if isinstance(e, TextDelta))
+    assert reply == "Fan's on." and said == ["ble"] and not model.requests

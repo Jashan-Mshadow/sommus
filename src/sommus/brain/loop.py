@@ -511,6 +511,13 @@ class Brain:
             yield ToolStarted(tool, args, self.hub.tier(tool))
             result = await self._run_tool(turn_id, tool, args, confirm)
             yield ToolFinished(tool, result.text, result.is_error, result.decision)
+            if result.is_error and quick.fallback and tool == quick.tool and self.hub.tier(quick.fallback) is not None:
+                # The first way failed (the fan's plug has no Wi-Fi, so the cloud can't reach it): try the other.
+                tool, args = quick.fallback, dict(quick.fallback_args or quick.args)
+                quick = dataclasses.replace(quick, phrase=None)
+                yield ToolStarted(tool, args, self.hub.tier(tool))
+                result = await self._run_tool(turn_id, tool, args, confirm)
+                yield ToolFinished(tool, result.text, result.is_error, result.decision)
             if result.decision == "needs_pin":
                 reply = "That needs your PIN." if self.gate.pin_set else "That needs a PIN. Run sommus pin to set one."
             elif result.is_error:

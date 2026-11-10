@@ -66,7 +66,7 @@ VOICES = {
 DIRECT_TOOLS = (
     "get_battery", "get_volume", "set_volume", "set_mute", "get_brightness", "set_brightness", "media_control",
     "get_now_playing", "open_app", "quit_app", "list_apps", "open_url", "lock_screen", "sleep_display", "get_wifi",
-    "plug_on", "plug_off", "plug_status",  # the fan (home node, on the server)
+    "plug_on", "plug_off", "plug_status", "ble_plug_on", "ble_plug_off", "ble_plug_status",  # the fan
 )  # fmt: skip
 ASK_SOMMUS = {
     "name": "ask_sommus",

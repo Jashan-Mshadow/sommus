@@ -225,12 +225,14 @@ def match(
     if _claims("fan", tokens) and present & {"fan", "plug"}:
         if tokens[0] in {"is", "are", "whats", "what", "check"} or present & {"status", "running"} - {"on", "off"}:
             if not present & {"start", "stop", "kill", "switch"}:
-                return Match("fan", "plug_status", {"plug": "fan"})
+                return Match("fan", "plug_status", {"plug": "fan"}, fallback="ble_plug_status", fallback_args={})
         on = bool(present & {"on", "start"}) and not present & {"off", "kill", "stop"}
         off = bool(present & {"off", "kill", "stop"}) and not present & {"on", "start"}
         if on or off:
+            # No Wi-Fi for the plug yet (eduroam): the Mac's Bluetooth does it instead (loop.py `fallback`).
             return Match("fan", "plug_on" if on else "plug_off", {"plug": "fan"},
-                         phrase=lambda _, on=on: "Fan's on." if on else "Fan's off.")  # fmt: skip
+                         phrase=lambda _, on=on: "Fan's on." if on else "Fan's off.",
+                         fallback="ble_plug_on" if on else "ble_plug_off", fallback_args={})  # fmt: skip
     if _claims("flashlight", tokens) and present & {"flashlight", "torch"} and switch:
         on = "on" in present and not present & {"off", "kill"}
         return Match("flashlight", "phone_flashlight", {"on": on}, phrase=lambda result: result)

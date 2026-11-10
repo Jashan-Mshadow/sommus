@@ -22,7 +22,7 @@ core_tools = [
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",
     "close_browser_tabs",
     # the fan on the SwitchBot plug: "turn the fan off when I leave" goes to the model, no tool search first
-    "plug_on", "plug_off", "plug_status",
+    "plug_on", "plug_off", "plug_status", "ble_plug_on", "ble_plug_off", "ble_plug_status",
     # long-term memory: offered on every turn so a fact gets saved without a tool search first
     "remember",
 ]

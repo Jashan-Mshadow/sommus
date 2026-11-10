@@ -22,7 +22,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, browser, files, macos, pdf, speak
+from sommus.nodes.laptop import apps, bluetooth_plug, browser, files, macos, pdf, speak
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -78,6 +78,32 @@ def get_audio_output() -> str:
     private headphones."""
     name, private = macos.audio_output()
     return f"{name} ({'headphones' if private else 'speakers'})"
+
+
+def _plug(fn: Callable[[], str]) -> str:
+    try:
+        return fn()
+    except bluetooth_plug.PlugError as e:
+        raise macos.ActionError(str(e)) from e
+
+
+@tool(REVERSIBLE)
+def ble_plug_on() -> str:
+    """Turn the fan on through its SwitchBot plug, over the Mac's Bluetooth (the Mac must be near it, ~10 m).
+    Prefer `plug_on` when it's set up; this is for while the plug has no Wi-Fi."""
+    return _plug(lambda: bluetooth_plug.turn(True))
+
+
+@tool(REVERSIBLE)
+def ble_plug_off() -> str:
+    """Turn the fan off through its SwitchBot plug, over the Mac's Bluetooth (the Mac must be near it)."""
+    return _plug(lambda: bluetooth_plug.turn(False))
+
+
+@tool(READ)
+def ble_plug_status() -> str:
+    """Is the fan on, and how much power is it drawing? Read from its SwitchBot plug over the Mac's Bluetooth."""
+    return _plug(bluetooth_plug.status)
 
 
 @tool(REVERSIBLE)
