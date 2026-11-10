@@ -69,3 +69,16 @@ def test_the_app_starts_live_only_when_it_is_off(monkeypatch, tmp_path):
     (tmp_path / "sommus-live.command").write_text("#!/bin/zsh\n")
     assert "Starting Sommus live" in ui.start_live()
     assert opened == [["open", "-a", "Terminal", str(tmp_path / "sommus-live.command")]]
+
+
+def test_live_running_reads_the_pid_file(tmp_path):
+    import os
+
+    from sommus.interfaces import ui
+
+    pidfile = tmp_path / "live.pid"
+    assert not ui.live_running(pidfile)  # no file
+    pidfile.write_text(str(os.getpid()))
+    assert ui.live_running(pidfile)
+    pidfile.write_text("999999")
+    assert not ui.live_running(pidfile)  # a stale pid from a crash

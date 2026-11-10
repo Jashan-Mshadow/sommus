@@ -24,11 +24,14 @@ install)
 # Sommus live, the one Mac mode, kept on 24/7. Opened by Terminal at login (scripts/autostart.sh) and by the
 # Sommus app when it's off. If it stops or crashes it starts again in 5 s. Closing this window stops it.
 cd "$repo"
-others=\$(pgrep -f "sommus-live.command" | grep -vx "\$\$" | wc -l | tr -d ' ')
-if pgrep -f "bin/sommus live" >/dev/null || [ "\$others" -gt 0 ]; then
+# One copy only. A pid file, not pgrep: the shells that launch this file have its name in their command line.
+pidfile="$repo/data/live.pid"
+if [ -f "\$pidfile" ] && kill -0 "\$(cat "\$pidfile")" 2>/dev/null; then
   echo "Sommus live is already running in another window."
   exit 0
 fi
+echo \$\$ >"\$pidfile"
+trap 'rm -f "\$pidfile"' EXIT
 log="$repo/data/live.log"
 while true; do
   # The app follows this log; keep it small.

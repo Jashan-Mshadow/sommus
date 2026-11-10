@@ -56,12 +56,17 @@ def mood(line: str) -> str | None:
 
 LIVE_COMMAND = config.ROOT / "scripts" / "sommus-live.command"  # written by scripts/autostart.sh install
 LIVE_LOG = config.ROOT / "data" / "live.log"  # what the 24/7 `sommus live` window prints (via `script`)
-LIVE_PROCESS = r"bin/sommus live|sommus-live.command"  # the 24/7 window's loop or its Python process
+LIVE_PID = config.ROOT / "data" / "live.pid"  # the 24/7 window's loop writes its pid here (scripts/autostart.sh)
 
 
-def live_running() -> bool:
-    found = subprocess.run(["pgrep", "-f", LIVE_PROCESS], capture_output=True, text=True)
-    return bool(found.stdout.strip())
+def live_running(pidfile: Path = LIVE_PID) -> bool:
+    """A pid file, not pgrep: every shell that launches the .command has its name in its own command line,
+    so matching by name always found "a copy" (2026-11-09)."""
+    try:
+        os.kill(int(pidfile.read_text().strip()), 0)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def start_live() -> str:
