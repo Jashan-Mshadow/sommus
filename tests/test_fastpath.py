@@ -542,3 +542,31 @@ def test_saying_youre_done_ends_the_conversation(said):
 )
 def test_requests_that_sound_like_goodbyes_are_not(said):
     assert not fastpath.DISMISS.match(said)
+
+
+@pytest.mark.parametrize(
+    ("text", "tool"),
+    [
+        ("turn on the fan", "plug_on"),
+        ("fan on", "plug_on"),
+        ("switch my fan off", "plug_off"),
+        ("kill the fan", "plug_off"),
+        ("stop the fan", "plug_off"),
+        ("turn the plug on", "plug_on"),
+        ("is the fan on", "plug_status"),
+        ("is my fan running", "plug_status"),
+    ],
+)
+def test_the_fan_skips_the_model(text, tool):
+    found = fastpath.match(text, WEATHER)
+    assert found is not None and (found.intent, found.tool, found.args) == ("fan", tool, {"plug": "fan"}), text
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["turn on the fan and the lights", "fan", "turn on the fan in 10 minutes", "why is the fan so loud",
+     "buy a new fan", "turn the fan on off"],
+)  # fmt: skip
+def test_fan_requests_with_more_in_them_go_to_the_model(text):
+    found = fastpath.match(text, WEATHER)
+    assert found is None or found.intent != "fan" or found.tool is None, text

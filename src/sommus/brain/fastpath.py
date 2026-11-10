@@ -59,6 +59,9 @@ VOCAB = {
     "next": {"skip", "next", "song", "track", "this"},
     "previous": {"previous", "back", "go", "last", "song", "track"},
     "lock": {"lock", "screen"},
+    # The fan on the SwitchBot plug (home node, on the server). "plug" alone works too: there's only one.
+    "fan": {"fan", "plug", "on", "off", "switch", "kill", "start", "stop", "room", "bedroom", "desk", "is", "are",
+            "whats", "what", "running", "status", "check"},
     "flashlight": {"flashlight", "torch", "on", "off", "phone", "phones", "iphone", "light", "switch", "kill"},
     "screen_off": {"off", "screen", "display", "sleep", "monitor"},
     "weather": WEATHER_TRIGGERS
@@ -219,6 +222,15 @@ def match(
     if _claims("screen_off", tokens) and present & {"off", "sleep"} and present & {"screen", "display", "monitor"}:
         return Match("screen_off", "sleep_display", phrase=lambda _: "Screen's off.")
     switch = present & {"on", "off", "kill"} and tokens[0] not in {"is", "are", "whats", "what"}  # not "is it on?"
+    if _claims("fan", tokens) and present & {"fan", "plug"}:
+        if tokens[0] in {"is", "are", "whats", "what", "check"} or present & {"status", "running"} - {"on", "off"}:
+            if not present & {"start", "stop", "kill", "switch"}:
+                return Match("fan", "plug_status", {"plug": "fan"})
+        on = bool(present & {"on", "start"}) and not present & {"off", "kill", "stop"}
+        off = bool(present & {"off", "kill", "stop"}) and not present & {"on", "start"}
+        if on or off:
+            return Match("fan", "plug_on" if on else "plug_off", {"plug": "fan"},
+                         phrase=lambda _, on=on: "Fan's on." if on else "Fan's off.")  # fmt: skip
     if _claims("flashlight", tokens) and present & {"flashlight", "torch"} and switch:
         on = "on" in present and not present & {"off", "kill"}
         return Match("flashlight", "phone_flashlight", {"on": on}, phrase=lambda result: result)
