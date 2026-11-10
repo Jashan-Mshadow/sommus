@@ -27,6 +27,9 @@ MAX_RESULT_CHARS = 10_000
 REMOTE_WAIT_SECONDS = 4.0  # how long a tool call waits for an asleep Mac before saying so
 
 
+RECHECK_SECONDS = 60.0  # how often a connected Mac's tool list is looked at again
+
+
 class RemoteNode:
     """A node on another machine — the Mac's tools, seen from the server — over MCP on the tailnet.
 
@@ -57,14 +60,20 @@ class RemoteNode:
                 http = create_mcp_http_client(headers=headers, timeout=httpx2.Timeout(8.0, read=300.0))
                 async with http, Client(streamable_http_client(self.url, http_client=http)) as client:
                     tools = (await client.list_tools()).tools
-                    with contextlib.suppress(OSError):
-                        self.cache.parent.mkdir(parents=True, exist_ok=True)
-                        self.cache.write_text(json.dumps([t.model_dump(mode="json") for t in tools]))
-                    on_tools(self.name, tools)
+                    self._keep(tools, on_tools)
                     self.client, self.error, delay = client, "", 5.0
                     self._lost.clear()
                     self._ready.set()
-                    await self._lost.wait()
+                    while not self._lost.is_set():
+                        # Look again every minute: a restarted `sommus live` adds tools the old list lacks
+                        # (the fan's Bluetooth tools went unseen, 2026-11-09), and a dead link shows up here.
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(self._lost.wait(), RECHECK_SECONDS)
+                            break
+                        fresh = (await asyncio.wait_for(client.list_tools(), 15)).tools
+                        if [t.name for t in fresh] != [t.name for t in tools]:
+                            tools = fresh
+                            self._keep(tools, on_tools)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -76,6 +85,12 @@ class RemoteNode:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._retry.wait(), delay)
             delay = min(delay * 2, 60.0)
+
+    def _keep(self, tools: list[types.Tool], on_tools: Callable[[str, list[types.Tool]], None]) -> None:
+        with contextlib.suppress(OSError):
+            self.cache.parent.mkdir(parents=True, exist_ok=True)
+            self.cache.write_text(json.dumps([t.model_dump(mode="json") for t in tools]))
+        on_tools(self.name, tools)
 
     async def connected(self, wait: float = REMOTE_WAIT_SECONDS) -> Client | None:
         if self.client:
