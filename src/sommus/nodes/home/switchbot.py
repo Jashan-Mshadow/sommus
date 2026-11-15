@@ -33,6 +33,10 @@ def _env(name: str) -> str:
     return "" if value.startswith("${") else value  # an unset .env key reaches the node as the literal "${NAME}"
 
 
+def configured() -> bool:
+    return bool(_env("SWITCHBOT_TOKEN") and _env("SWITCHBOT_SECRET"))
+
+
 def credentials() -> tuple[str, str]:
     token, secret = _env("SWITCHBOT_TOKEN"), _env("SWITCHBOT_SECRET")
     if not token or not secret:
@@ -105,7 +109,10 @@ def pick(name: str, available: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def turn(name: str, on: bool) -> str:
-    plug = pick(name, plugs())
+    return turn_plug(pick(name, plugs()), on)
+
+
+def turn_plug(plug: dict[str, Any], on: bool) -> str:
     request("POST", f"/devices/{plug['deviceId']}/commands", {
         "command": "turnOn" if on else "turnOff", "parameter": "default", "commandType": "command",
     })  # fmt: skip
@@ -113,7 +120,10 @@ def turn(name: str, on: bool) -> str:
 
 
 def status(name: str) -> str:
-    plug = pick(name, plugs())
+    return status_plug(pick(name, plugs()))
+
+
+def status_plug(plug: dict[str, Any]) -> str:
     s = request("GET", f"/devices/{plug['deviceId']}/status")
     line = f"{plug['deviceName']} is {s.get('power', 'unknown')}"
     watts = s.get("weight")  # the Plug Mini reports watts as "weight"

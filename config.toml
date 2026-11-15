@@ -73,12 +73,12 @@ name = "bridge"
 where = "mac"
 module = "sommus.nodes.bridge.server"
 
-# Smart plugs through the SwitchBot cloud (fan, lamp): works from anywhere, no hub, no Mac. Needs SWITCHBOT_TOKEN
-# and SWITCHBOT_SECRET in .env, on the server too. Until then its tools just explain the setup.
+# Smart plugs through the SwitchBot or Tuya (Merkury, Geeni, Smart Life) cloud (fan, lamp): works from anywhere, no hub, no Mac. Needs SWITCHBOT_TOKEN + SWITCHBOT_SECRET,
+# or TUYA_ACCESS_ID + TUYA_ACCESS_SECRET (+ TUYA_REGION), in .env, on the server too. Until then its tools just explain the setup.
 [[nodes]]
 name = "home"
 module = "sommus.nodes.home.server"
-env = { SWITCHBOT_TOKEN = "${SWITCHBOT_TOKEN}", SWITCHBOT_SECRET = "${SWITCHBOT_SECRET}" }
+env = { SWITCHBOT_TOKEN = "${SWITCHBOT_TOKEN}", SWITCHBOT_SECRET = "${SWITCHBOT_SECRET}", TUYA_ACCESS_ID = "${TUYA_ACCESS_ID}", TUYA_ACCESS_SECRET = "${TUYA_ACCESS_SECRET}", TUYA_REGION = "${TUYA_REGION}" }
 
 [[nodes]]
 name = "vault"
