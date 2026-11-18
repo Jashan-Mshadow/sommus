@@ -511,25 +511,33 @@ def sleep_computer() -> None:
     _run(["pmset", "sleepnow"])
 
 
-HEADPHONE_WORDS = ("airpods", "headphone", "headset", "earbuds", "buds", "beats")
+HEADPHONE_WORDS = (
+    "airpods",
+    "headphone",
+    "headset",
+    "earbud",
+    "earphone",
+    "buds",
+    "beats",
+    "pods",
+    "wh-1000",
+    "wf-1000",
+)
 
 
 def parse_audio_output(raw: str) -> tuple[str, bool]:
     """(device name, private?) for the default output device from `system_profiler SPAudioDataType -json`.
-    Private = Bluetooth or anything named like headphones: what's said there only he hears."""
+    Private = something named like headphones: what's said there only he hears. Bluetooth alone is NOT enough:
+    his Logi Z207 is a Bluetooth speaker, and counting it as headphones had Sommus speak nudges aloud in lectures
+    (2026-11-17 log). An unknown Bluetooth device is treated as a speaker: a nudge goes to Telegram, not the room."""
     import json
 
     for group in json.loads(raw or "{}").get("SPAudioDataType", []):
         for item in group.get("_items", []):
             if item.get("coreaudio_default_audio_output_device") == "spaudio_yes":
                 name = item.get("_name", "unknown")
-                transport = item.get("coreaudio_device_transport", "")
                 source = str(item.get("coreaudio_output_source", "")).lower()
-                private = (
-                    transport.endswith("bluetooth")
-                    or any(w in name.lower() for w in HEADPHONE_WORDS)
-                    or "headphone" in source
-                )
+                private = any(w in name.lower() for w in HEADPHONE_WORDS) or "headphone" in source
                 return name, private
     return "unknown", False
 

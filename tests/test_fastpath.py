@@ -570,3 +570,38 @@ def test_the_fan_skips_the_model(text, tool):
 def test_fan_requests_with_more_in_them_go_to_the_model(text):
     found = fastpath.match(text, WEATHER)
     assert found is None or found.intent != "fan" or found.tool is None, text
+
+
+@pytest.mark.parametrize(
+    ("said", "tool", "args"),
+    [
+        ("Check which Bluetooth audio device the MacBook is currently connected to.", "get_audio_output", {}),
+        ("what bluetooth device am I connected to", "get_audio_output", {}),
+        ("Do I have any unread messages in the Messages app?", "read_messages", {"limit": 10}),
+        ("check my new texts", "read_messages", {"limit": 10}),
+    ],
+)
+def test_audio_device_and_unread_messages_questions_skip_the_model(said, tool, args):
+    found = fastpath.match(said)
+    assert found is not None and found.tool == tool and found.args == args
+
+
+@pytest.mark.parametrize(
+    "said", ["text mom that I'm late", "send a message to Didi", "connect to the wifi", "play music on my speaker"]
+)
+def test_similar_looking_requests_are_left_to_the_model(said):
+    found = fastpath.match(said)
+    assert found is None or found.tool not in {"get_audio_output", "read_messages"}
+
+
+def test_a_reminder_with_no_task_still_sets_a_reminder():
+    from datetime import datetime
+
+    found = fastpath.reminder("Remind me again at 11:15.", now=datetime(2026, 11, 17, 22, 30))
+    assert found is not None and found.tool == "set_reminder"
+    assert found.args == {"title": "Reminder", "due": "2026-11-17 23:15"}
+
+
+def test_the_audio_device_is_said_like_a_person():
+    assert fastpath.say_audio_output("Logi Z207 (speakers)") == "Sound is going to Logi Z207, a speaker."
+    assert fastpath.say_audio_output("AirPods (headphones)") == "Sound is going to AirPods, headphones."

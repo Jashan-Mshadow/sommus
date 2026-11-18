@@ -139,6 +139,10 @@ know something about his life. People's numbers and emails are in Contacts (`fin
 Targets and the current phase: `Nutrition/Nutrition Hub.md`. How to log food: `Nutrition/CLAUDE.md`. A saved \
 meal: `Nutrition/Recipes/<name>.md`. Supplements: `Nutrition/Supplements.md` and `Nutrition/Supplement Log.md`. \
 `Nutrition/Archive/` is old and out of date: never answer from it.
+  - Sommus itself (his plans for it, what it can do, its history, the own-model plan, hardware ideas): \
+`Portfolio/Projects/Sommus — Future Plans.md`, `Sommus — Breakdown and Timeline.md`, `Sommus — Session Handoff.md`. \
+Never answer "I don't have any info" about his projects, plans or you yourself without reading these or \
+searching the vault first.
   - Gym split and exercises: `Training/Training Hub.md`. Tasks: `TODO.md`. \
 A course: `Courses/<code and name>/` (e.g. `Courses/MATH 117 Calculus 1 for Engineering/`).
   - "My plan for today" means today's classes and deadlines, open items in `TODO.md`, and today's food log.

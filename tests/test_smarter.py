@@ -236,3 +236,19 @@ def test_the_default_output_device_is_read_from_system_profiler():
     assert parse_audio_output(raw) == ("AirPods", True)
     speakers = raw.replace('"AirPods", "coreaudio_default', '"X", "coreaudio_default').replace("bluetooth", "builtin")
     assert parse_audio_output(speakers) == ("X", False)
+
+
+def test_a_bluetooth_speaker_is_not_private_headphones():
+    # 2026-11-17 log: the Logi Z207 (a Bluetooth speaker) counted as headphones: nudges were spoken in lectures.
+    from sommus.nodes.laptop.macos import parse_audio_output
+
+    def raw(name):
+        return json.dumps({"SPAudioDataType": [{"_items": [
+            {"_name": name, "coreaudio_default_audio_output_device": "spaudio_yes",
+             "coreaudio_device_transport": "coreaudio_device_type_bluetooth"},
+        ]}]})  # fmt: skip
+
+    assert parse_audio_output(raw("Logi Z207")) == ("Logi Z207", False)
+    assert parse_audio_output(raw("JBL Flip 6")) == ("JBL Flip 6", False)
+    assert parse_audio_output(raw("Jashan's AirPods Pro")) == ("Jashan's AirPods Pro", True)
+    assert parse_audio_output(raw("Sony WH-1000XM5")) == ("Sony WH-1000XM5", True)

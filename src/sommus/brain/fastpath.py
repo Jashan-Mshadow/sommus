@@ -49,6 +49,10 @@ VOCAB = {
     "volume": SOUND_WORDS | {"too"} | UP | DOWN | MAX | MIN,
     "list_apps": {"apps", "app", "applications", "programs", "open", "running", "do", "i", "have", "are", "which"},
     "clipboard": {"clipboard", "on", "in", "do", "i", "have", "whats"},
+    "audio_output": {"which", "bluetooth", "audio", "sound", "output", "device", "connected", "to", "check", "am", "i",
+                     "playing", "through", "using", "speaker", "speakers", "headphones", "what", "is", "are", "on"},
+    "messages": {"do", "i", "have", "any", "unread", "new", "messages", "message", "texts", "imessages", "imessage",
+                 "in", "the", "app", "check", "read", "my", "are", "there", "whats", "what", "on", "of"},
     "now_playing": {"playing", "song", "track", "this", "music", "listening", "called", "name", "which", "am", "i",
                     "spotify", "on"},
     "wifi": {"wifi", "wi", "fi", "network", "internet", "connected", "on", "am", "i", "which", "whats", "using"},
@@ -213,6 +217,18 @@ def match(
         and (present & {"open", "running"})
     ):
         return Match("list_apps", "list_apps")
+    if (
+        _claims("audio_output", tokens)
+        and present & {"bluetooth", "audio", "output", "device", "speaker", "speakers", "headphones"}
+        and present & {"connected", "playing", "through", "using", "device", "output", "which"}
+    ):
+        return Match("audio_output", "get_audio_output", phrase=say_audio_output)
+    if (
+        _claims("messages", tokens)
+        and present & {"messages", "texts", "imessages", "imessage", "message"}
+        and present & {"unread", "new"}
+    ):
+        return Match("messages", "read_messages", {"limit": 10}, phrase=lambda result: result)
     if _claims("clipboard", tokens) and "clipboard" in present:
         return Match("clipboard", "get_clipboard")
     if _claims("wifi", tokens) and present & {"wifi", "wi", "network", "internet"}:
@@ -345,6 +361,7 @@ _WHEN = rf"(?:{_IN}|{_AT}|(?P<only>tonight|tomorrow))"
 _LEAD = r"^(?:(?:hey|yo|ok|okay)\s+)?(?:sommus|somis|sommis)?[,\s]*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?"
 _REMIND_A = re.compile(_LEAD + rf"remind\s+me\s+to\s+(?P<task>.+?)(?:\s+(?:at\s+)?{_WHEN})?[.!?\s]*$", re.I)
 _REMIND_B = re.compile(_LEAD + rf"remind\s+me\s+{_WHEN}\s+to\s+(?P<task>.+?)[.!?\s]*$", re.I)
+_REMIND_C = re.compile(_LEAD + rf"remind\s+me\s+(?:again\s+)?{_WHEN}[.!?\s]*$", re.I)  # no task: "remind me at 11:15"
 _TIMER = re.compile(
     _LEAD + rf"(?:set\s+(?:a\s+|me\s+a\s+)?)?(?:(?P<n1>\d{{1,3}})[\s-]+(?P<u1>{_UNIT})\s+timer"
     rf"|timer\s+(?:for\s+)?(?P<n2>{_COUNT})\s+(?P<u2>{_UNIT}))(?:\s+please)?[.!?\s]*$",
@@ -431,10 +448,10 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
             phrase=lambda _: f"Timer set for {label}, it ends {say_when(when, now)}.",
             fallback="create_reminder",
         )
-    m = _REMIND_B.match(raw) or _REMIND_A.match(raw)
+    m = _REMIND_B.match(raw) or _REMIND_A.match(raw) or _REMIND_C.match(raw)
     if not m:
         return None
-    task = m["task"].strip(" ,.")
+    task = (m.groupdict().get("task") or "Reminder").strip(" ,.")
     task_words = set(words(task))
     if not task or len(task) > 120 or task_words & _TASK_STOP or task_words <= {"me", "it", "this", "that"}:
         return None
@@ -535,6 +552,15 @@ def installed_apps() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------- replies that sound like a person
+
+
+def say_audio_output(raw: str) -> str:
+    """'Logi Z207 (speakers)' -> 'Sound is going to the Logi Z207, a speaker.'"""
+    found = re.match(r"(.*) \((headphones|speakers)\)\s*$", raw.strip())
+    if not found:
+        return raw
+    kind = "headphones" if found[2] == "headphones" else "a speaker"
+    return f"Sound is going to {found[1]}, {kind}."
 
 
 def say_battery(raw: str) -> str:
