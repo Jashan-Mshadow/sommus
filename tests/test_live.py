@@ -324,3 +324,14 @@ def test_the_instructions_give_the_date_and_say_to_stay_quiet_when_not_addressed
     assert "Wednesday, November 4, 2026, 9:43 PM" in text
     assert "already over" in text and "Jarvis" in text
     assert "Only reply when he is talking to you" in text
+
+
+def test_a_dropped_connection_says_why_not_just_its_type():
+    class Closed(Exception):
+        code = 1011
+        message = "Internal error occurred."
+
+    assert live.reason(Closed()) == "Closed 1011: Internal error occurred."
+    assert live.reason(TimeoutError("timed out during opening handshake")) == (
+        "TimeoutError: timed out during opening handshake"
+    )

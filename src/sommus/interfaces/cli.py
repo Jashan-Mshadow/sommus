@@ -10,6 +10,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 import time
 from datetime import datetime, timedelta
 from typing import Any
@@ -717,7 +718,43 @@ async def live_chat() -> None:
         "context": None,
         "receiver": None,
         "pin_until": 0.0,
+        "drops": 0,  # abrupt drops in a row: reconnect quietly a couple of times, then give up
+        "opened_at": 0.0,
     }
+    local_voice: dict[str, Any] = {"engine": None}
+
+    async def answer_locally(request: str) -> None:
+        """Failsafe: Gemini Live is down, so this one request is answered the local way (Claude through the
+        brain, spoken by Kokoro on this Mac) instead of with silence. Only runs for something he just said."""
+        from sommus.interfaces import voice as voice_module
+
+        console.print("[dim]  Live is unavailable: answering this one with the local voice.[/]")
+
+        async def allow(name: str, args: dict[str, Any]) -> bool:
+            return True
+
+        parts: list[str] = []
+        async with brain.lock:
+            async for event in brain.handle(request, allow):
+                if isinstance(event, TextDelta):
+                    parts.append(event.text)
+                elif isinstance(event, Notice):
+                    parts.append(f" ({event.text})")
+        reply = "".join(parts).strip()
+        if not reply:
+            return
+        console.print(f"[bold magenta]sommus ›[/] {escape(reply)}")
+        try:
+            if local_voice["engine"] is None:
+                local_voice["engine"] = voice_module.make_voice(voice_settings)
+            engine = local_voice["engine"]
+            audio = await asyncio.to_thread(
+                engine.synthesize, voice.say_courses(reply, voice_settings.get("say_as", {}))
+            )
+            if isinstance(audio, np.ndarray):
+                await asyncio.to_thread(engine_io.play, audio, threading.Event())
+        except Exception as e:  # the text is on screen and in the log; a broken voice must not take Sommus down
+            console.print(f"[yellow]! Local voice failed ({escape(f'{type(e).__name__}: {e}'[:120])}).[/]")
 
     def show(line: str) -> None:
         console.print(line)
@@ -754,32 +791,44 @@ async def live_chat() -> None:
                 f"[red]! Gemini Live didn't connect ({escape(f'{type(failure).__name__}: {failure}'[:200])}), "
                 f"after {attempt} {'try' if attempt == 1 else 'tries'}. `sommus voice` works without it.[/]"
             )
-            log(text="", outcome=f"live did not connect: {type(failure).__name__}")
+            log(text="", outcome=f"live did not connect: {live.reason(failure)}")
             state["mode"] = "asleep"
-            voice.chime(voice.CHIME_SLEEP)
+            if first:
+                await answer_locally(first)
             return
         detector.reset()  # its speech score carries state: start the live session's clean
         conversation = live.LiveConversation(live_session, brain, engine_io, show, log, listen_for_pin)
         conversation.handle = handle
-        state.update(mode="awake", conversation=conversation, context=context)
+        state.update(mode="awake", conversation=conversation, context=context, opened_at=time.monotonic())
         state["receiver"] = asyncio.create_task(receive(conversation, context))
         if first:
             await conversation.send_text(first)
         console.print("[dim]  live — talk normally; it stops when you talk over it[/]")
 
     async def receive(conversation, context) -> None:
+        dropped = None
         try:
             await conversation.receive()
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            dropped = e
             if state["conversation"] is conversation:
-                console.print(f"[yellow]! Live connection dropped ({escape(type(e).__name__)}).[/]")
+                why = live.reason(e)
+                console.print(f"[yellow]! Live connection dropped ({escape(why)}).[/]")
+                log(text="", outcome=f"live dropped: {why}")
         if state["conversation"] is not conversation:
             return
+        if time.monotonic() - state["opened_at"] > 60:
+            state["drops"] = 0  # it ran for a while first: this is a fresh problem, not a loop
         handle = conversation.handle if conversation.going_away else None
+        if dropped is not None and conversation.handle and state["drops"] < 2:
+            # An abrupt drop in the middle of a conversation: pick up where it was (session resumption), quietly,
+            # instead of going to sleep and making him say the wake word again. Not after 2 in a row.
+            state["drops"] += 1
+            handle = conversation.handle
         await close_conversation(quiet=bool(handle))
-        if handle:  # Google closes connections every ~10 minutes: carry on where it left off
+        if handle:  # Google closes connections every ~10 minutes, or it dropped: carry on where it left off
             await open_conversation(handle=handle)
 
     async def close_conversation(quiet: bool = False) -> None:

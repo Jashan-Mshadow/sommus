@@ -217,6 +217,14 @@ def live_config(system: str, tools: list[dict[str, Any]], voice: str, sensitivit
     )
 
 
+def reason(error: BaseException) -> str:
+    """Why a Live connection ended, in a line: the close code and Google's words when there are some. Before
+    2026-11-17 only the exception's type was printed ("APIError"), which made the drops impossible to diagnose."""
+    code = getattr(error, "code", None) or getattr(error, "status", None)
+    words = (getattr(error, "message", None) or str(error)).replace("\n", " ").strip()
+    return f"{type(error).__name__}{f' {code}' if code else ''}: {words}"[:180]
+
+
 @dataclass
 class Exchange:
     """One back-and-forth, for the screen and the log."""
