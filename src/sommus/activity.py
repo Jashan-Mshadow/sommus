@@ -81,14 +81,15 @@ def day_note(day: str, turns: list[dict], said: list[dict]) -> str:
                          f"{_clip(item.get('text', ''))}")  # fmt: skip
             continue
         flag = "" if item["status"] in ("ok", "") else f" ⚠️ {item['status']}"
-        lines.append(f"- **{_clock(at)} asked:** {_clip(item['text'], 200)}{flag}")
+        via = f" ({item['source']})" if item.get("source") else ""
+        lines.append(f"- **{_clock(at)} asked{via}:** {_clip(item['text'], 200)}{flag}")
         for call in item["tools"]:
             mark = "✗" if call["error"] else "✓"
             held = "" if call["decision"] in RAN else f" [{call['decision']}]"
             detail = f": {_clip(call['output'], 120)}" if call["error"] else ""
             lines.append(f"  - {mark} `{call['tool']}`{held}{detail}")
         model = f" ({item['model']}, ${item['cost']:.4f})" if item["model"] else ""
-        lines.append(f"  - replied{model}: {_clip(item['reply'])}")
+        lines.append(f"  - replied{model}: {_clip(item['reply']) or '(nothing recorded)'}")
     return "\n".join(lines) + "\n"
 
 

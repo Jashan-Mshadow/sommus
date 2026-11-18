@@ -267,6 +267,7 @@ class Server:
         self.voice_brain.channel = "iPhone (Action Button); the reply is spoken"
         self.relay_brain = Brain(cfg, hub, store, relay=True)
         self.relay_brain.channel = "MacBook (live voice)"
+        self.brain.source, self.voice_brain.source, self.relay_brain.source = "Telegram", "iPhone", "Mac live"
         for other in (self.voice_brain, self.relay_brain):
             other.messages, other.gate, other.lock = self.brain.messages, self.brain.gate, self.brain.lock
         self.bot = None
@@ -573,28 +574,66 @@ class Server:
         taken = supplements.taken_on(text, now.date())
         for slot in due:
             done.add(supplements.key_for(slot, now))
-            if lacking := supplements.missing(slot["items"], taken):
-                spoken = supplements.spoken(slot, lacking, self.phrases)
+            misses = self.state.setdefault("supp_misses", {})
+            lacking = supplements.missing(slot["items"], taken)
+            quiet = supplements.backed_off(misses, lacking, now.date())
+            supplements.update_misses(misses, slot["items"], taken, now.date())
+            if lacking:
+                spoken = "" if quiet else supplements.spoken(slot, lacking, self.phrases)
                 await self.herald.deliver(supplements.written(slot, lacking, now), spoken, now, kind="supplements")
         self.state["supplements"] = sorted(done)[-40:]
         self._save_state()
 
     async def greet(self, schedule: campus.Schedule, now: datetime, morning: datetime) -> None:
         """The first time the Mac is awake on a morning (after quiet hours, before noon), say good morning and
-        what's first. The written brief went to Telegram at its time either way; this is only ever spoken."""
+        what's first. The written brief went to Telegram at its time either way; this is only ever spoken.
+
+        The line is made once a day and kept in the state: a busy or muted Mac retries the same text, never a new
+        one. It is dropped once the first class has started."""
         today = now.date().isoformat()
-        if self.state.get("greeted") == today or now < morning or now.hour >= 12 or not self.herald.can_speak(now):
+        if self.state.get("greeted") == today or now < morning or now.hour >= 12:
+            return
+        starts = [s.start for s in schedule.on(now.date())]
+        if starts and now >= min(starts):
+            self._greeting_done(today, "dropped: the first class has started")
+            return
+        if not self.herald.can_speak(now):
             return
         if time.monotonic() - self._greet_tried < GREET_RETRY_SECONDS:
-            return  # muted or in quiet mode: ask again in a while, not every tick
+            return  # busy or muted: ask again in a while, not every tick
+        greeting = self.state.get("greeting") or {}
+        if greeting.get("day") != today:
+            weather = await asyncio.to_thread(self._weather)
+            gym = brief.gym_today(config.section("gym"), now.date())
+            line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather, gym)
+            greeting = self.state["greeting"] = {"day": today, "text": line}
+            self._save_state()
+        line = greeting["text"]
+        if greeting.get("muted") and await self.herald.is_muted():
+            self._greet_tried = time.monotonic()
+            return  # muted and told Telegram already: wait for the mute state to change
         self._greet_tried = time.monotonic()
-        weather = await asyncio.to_thread(self._weather)
-        gym = brief.gym_today(config.section("gym"), now.date())
-        line = brief.spoken_morning(schedule, now, self.say_as, self.phrases, self.cfg.user, weather, gym)
         if await self.herald.say(line, now):
             self.record_said("greeting", line, "spoken")
-            self.state["greeted"] = today
+            self._greeting_done(today)
+            return
+        why = self.herald.outcome
+        if why == "muted" and not greeting.get("muted"):
+            greeting["muted"] = True
+            await self.tell(line)
+            self.record_said("greeting", line, "telegram (muted)")
             self._save_state()
+        elif why in ("busy", "failed") and greeting.get("last") != why:
+            greeting["last"] = why
+            self.record_said("greeting", line, f"not said ({why}); will retry")
+            self._save_state()
+
+    def _greeting_done(self, today: str, note: str = "") -> None:
+        if note and (text := (self.state.get("greeting") or {}).get("text")):
+            self.record_said("greeting", text, note)
+        self.state["greeted"] = today
+        self.state.pop("greeting", None)
+        self._save_state()
 
     async def fire_reminders(self, now: datetime) -> None:
         if not self.reminders:

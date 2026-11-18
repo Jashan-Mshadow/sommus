@@ -80,9 +80,13 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(path)
         self._db.executescript(SCHEMA)
+        if "source" not in {row[1] for row in self._db.execute("PRAGMA table_info(turns)")}:
+            self._db.execute("ALTER TABLE turns ADD COLUMN source TEXT")  # where the request came from
 
-    def start_turn(self, user_text: str) -> int:
-        cur = self._db.execute("INSERT INTO turns (started_at, user_text) VALUES (?, ?)", (_now(), user_text))
+    def start_turn(self, user_text: str, source: str = "") -> int:
+        cur = self._db.execute(
+            "INSERT INTO turns (started_at, user_text, source) VALUES (?, ?, ?)", (_now(), user_text, source)
+        )
         self._db.commit()
         return cur.lastrowid
 
@@ -147,17 +151,17 @@ class Store:
         """Every turn started on `day` (YYYY-MM-DD), with its tool calls: the daily activity log's input."""
         turns = self._db.execute(
             "SELECT id, started_at, user_text, COALESCE(reply, ''), COALESCE(status, ''), COALESCE(model, ''),"
-            " COALESCE(cost_usd, 0) FROM turns WHERE started_at >= ? AND started_at < ? ORDER BY id",
+            " COALESCE(cost_usd, 0), COALESCE(source, '') FROM turns WHERE started_at >= ? AND started_at < ? ORDER BY id",
             (day, day + "~"),
         ).fetchall()
         out = []
-        for turn_id, at, text, reply, status, model, cost in turns:
+        for turn_id, at, text, reply, status, model, cost, source in turns:
             calls = self._db.execute(
                 "SELECT tool, decision, is_error, COALESCE(output, '') FROM tool_calls WHERE turn_id = ? ORDER BY id",
                 (turn_id,),
             ).fetchall()
             out.append(
-                {"at": at, "text": text, "reply": reply, "status": status, "model": model, "cost": cost or 0.0,
+                {"at": at, "text": text, "reply": reply, "status": status, "model": model, "cost": cost or 0.0, "source": source,
                  "tools": [{"tool": t, "decision": d, "error": bool(e), "output": o} for t, d, e, o in calls]}
             )  # fmt: skip
         return out

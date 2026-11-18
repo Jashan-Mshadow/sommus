@@ -65,6 +65,35 @@ def key_for(slot: dict, now: datetime) -> str:
     return f"{now.date().isoformat()}|{slot['name']}"
 
 
+BACK_OFF_AFTER = 3  # days in a row an item was still unlogged at its nudge, then only the written one
+
+
+def backed_off(misses: dict, lacking: Iterable[str], day: date) -> bool:
+    """True when every lacking item went unlogged at its nudge on each of the last BACK_OFF_AFTER days: the
+    spoken nudge is ignored, so only the written one goes out."""
+    yesterday = (day - timedelta(days=1)).isoformat()
+    lacking = list(lacking)
+    return bool(lacking) and all(
+        misses.get(c, {}).get("day") in (yesterday, day.isoformat()) and misses[c]["streak"] >= BACK_OFF_AFTER
+        for c in lacking
+    )
+
+
+def update_misses(misses: dict, slot_items: Iterable[str], taken: set[str], day: date) -> None:
+    """Count, per item, the days in a row it was unlogged at its nudge (once a day). Logged in time: reset."""
+    today, yesterday = day.isoformat(), (day - timedelta(days=1)).isoformat()
+    for item in slot_items:
+        c = canon(item)
+        if c in taken:
+            misses.pop(c, None)
+            continue
+        last = misses.get(c, {})
+        if last.get("day") == today:
+            continue
+        streak = last["streak"] + 1 if last.get("day") == yesterday else 1
+        misses[c] = {"day": today, "streak": streak}
+
+
 def _join(names: Sequence[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 

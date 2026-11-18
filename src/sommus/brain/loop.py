@@ -205,6 +205,9 @@ class Brain:
         # the phone's own tools (flashlight, texting from the phone) and knows the Mac may be asleep.
         self.channel = ""
 
+    def _start_turn(self, text: str) -> int:
+        return self.store.start_turn(text, getattr(self, "source", ""))  # bare test brains have no source
+
     def _from_channel(self, text: str) -> str:
         channel = getattr(self, "channel", "")  # tests build bare brains without __init__
         return f"{text}\n[Said into his {channel}]" if channel else text
@@ -268,7 +271,7 @@ class Brain:
                 given = None  # a bare number nobody asked a PIN for is an answer: the model gets it
             answer = (self.gate.check(given) if rest else self.gate.attempt(given)) if given else None
             if answer == "":  # the start of a PIN said in pieces: stay quiet and wait for the rest
-                self.store.finish_turn(self.store.start_turn("[PIN entered]"), "", "ok", "pin", Usage())
+                self.store.finish_turn(self._start_turn("[PIN entered]"), "", "ok", "pin", Usage())
                 yield TurnDone(Usage(), 0.0, 0)
                 return
             if answer:
@@ -303,7 +306,7 @@ class Brain:
                 yield event
             if handled:
                 return
-        turn_id = self.store.start_turn(text)
+        turn_id = self._start_turn(text)
         self._refresh_prompt()
         decision = spending.choose(self.budget, self.cfg.model, self.store.cost_month())
         self.model = decision.model
@@ -539,11 +542,12 @@ class Brain:
                 reply = await asyncio.to_thread(quick.local)
             except Exception:
                 return
-            turn_id = self.store.start_turn(text)
+            turn_id = self._start_turn(text)
+            self.store.log_tool(turn_id, quick.intent, {}, Tier.READ.value, "ran", False, reply)
             yield ToolStarted(quick.intent, {}, Tier.READ)
             yield ToolFinished(quick.intent, reply, False, "ran")
         else:
-            turn_id = self.store.start_turn(text)
+            turn_id = self._start_turn(text)
             args = dict(quick.args)
             if quick.read_tool and quick.delta:
                 yield ToolStarted(quick.read_tool, {}, self.hub.tier(quick.read_tool))
@@ -592,7 +596,7 @@ class Brain:
         """A PIN was said or typed, alone or inside a request. The digits stay out of the model, the
         conversation and the log. If it unlocked the gate, the model is told so, and the request —
         the rest of this message, or the one that hit the lock — runs now."""
-        turn_id = self.store.start_turn("[PIN entered]" + (f" {rest}" if rest else ""))
+        turn_id = self._start_turn("[PIN entered]" + (f" {rest}" if rest else ""))
         self.store.finish_turn(turn_id, answer, "ok", "pin", Usage())
         pending, self.gate.pending = self.gate.pending, None
         request = rest or pending
@@ -750,7 +754,7 @@ class Brain:
         said, which the outside-content rule checks against."""
         if asked != self._asked:
             self._asked, self._read_outside = asked, None
-        turn_id = self.store.start_turn(f"[{model}] {asked}")
+        turn_id = self._start_turn(f"[{model}] {asked}")
         result = await self._run_tool(turn_id, name, args, _allow)
         self.store.finish_turn(turn_id, result.text, "error" if result.is_error else "ok", model, Usage())
         return result

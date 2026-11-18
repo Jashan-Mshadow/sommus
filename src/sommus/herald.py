@@ -47,6 +47,7 @@ class Herald:
         # are not nudges and don't come through here.
         self.busy = busy
         self.record = record  # (kind, text, route) -> the daily activity log
+        self.outcome = ""  # why the last say() did or didn't speak: said, off, busy, muted, failed
         self.enabled = bool(settings.get("speak", True))
         start, end = settings.get("quiet_hours", ["23:00", "07:30"])
         self.quiet_from, self.quiet_until = clock_time(start), clock_time(end)
@@ -58,22 +59,38 @@ class Herald:
         return self.enabled and not self.quiet(now) and self.hub.reachable(self.node)
 
     async def say(self, spoken: str, now: datetime) -> bool:
-        """Say it on the Mac; False when it wasn't said (asleep, muted, quiet hours or quiet mode)."""
+        """Say it on the Mac; False when it wasn't said (asleep, muted, quiet hours or quiet mode). `outcome`
+        says which: said, off (asleep, quiet hours, speaking turned off), busy, muted or failed."""
+        self.outcome = "off"
         if not spoken or not self.can_speak(now):
             return False
         if self.busy and (doing := await self.busy(now)) and not await self.private_audio():
+            self.outcome = "busy"
             self.log(f"Not said aloud (busy: {doing}, sound on speakers): {spoken[:80]}")
             return False
+        self.outcome = "failed"
         try:
             result = await asyncio.wait_for(self.hub.call_on(self.node, "announce", {"text": spoken}), SAY_TIMEOUT)
         except TimeoutError:
             self.log("Announce: the Mac didn't answer in time")
             return False
         if result.is_error:
+            if "muted" in result.text.lower():
+                self.outcome = "muted"
             self.log(f"Announce: {result.text[:120]}")
             return False
+        self.outcome = "said"
         self.log(f"Said on the Mac: {spoken}")
         return True
+
+    async def is_muted(self) -> bool:
+        """Whether the Mac's sound is muted right now (a cheap read, so a muted Mac isn't asked to speak over and
+        over to learn it)."""
+        try:
+            result = await asyncio.wait_for(self.hub.call_on(self.node, "get_volume", {}), SAY_TIMEOUT)
+        except TimeoutError:
+            return True
+        return result.is_error or "(muted)" in result.text
 
     async def private_audio(self) -> bool:
         """True when the Mac's sound goes to AirPods or other headphones: then only he hears it, so a nudge may be
@@ -90,10 +107,13 @@ class Herald:
         """Speak `spoken` if it can; Telegram gets `text` when it couldn't (or always, with telegram_too).
         Returns whether it was said."""
         said = await self.say(spoken, now)
+        why = self.outcome
         sent = bool(text and (telegram_too or not said))
         if sent:
             await self.tell(text)
-        if self.record and (said or sent):
-            route = "spoken+telegram" if said and sent else "spoken" if said else "telegram"
-            self.record(kind, spoken if said else text, route)
+        if self.record and (spoken or text):
+            route = "spoken+telegram" if said and sent else "spoken" if said else "telegram" if sent else "not said"
+            if not said and why in ("busy", "muted", "failed"):
+                route += f" ({why})"  # the day note shows why it didn't reach the speakers
+            self.record(kind, spoken if said else text or spoken, route)
         return said
