@@ -151,7 +151,8 @@ class Store:
         """Every turn started on `day` (YYYY-MM-DD), with its tool calls: the daily activity log's input."""
         turns = self._db.execute(
             "SELECT id, started_at, user_text, COALESCE(reply, ''), COALESCE(status, ''), COALESCE(model, ''),"
-            " COALESCE(cost_usd, 0), COALESCE(source, '') FROM turns WHERE started_at >= ? AND started_at < ? ORDER BY id",
+            " COALESCE(cost_usd, 0), COALESCE(source, '') FROM turns"
+            " WHERE started_at >= ? AND started_at < ? ORDER BY id",
             (day, day + "~"),
         ).fetchall()
         out = []
@@ -161,7 +162,8 @@ class Store:
                 (turn_id,),
             ).fetchall()
             out.append(
-                {"at": at, "text": text, "reply": reply, "status": status, "model": model, "cost": cost or 0.0, "source": source,
+                {"at": at, "text": text, "reply": reply, "status": status, "model": model, "cost": cost or 0.0,
+                 "source": source,
                  "tools": [{"tool": t, "decision": d, "error": bool(e), "output": o} for t, d, e, o in calls]}
             )  # fmt: skip
         return out
