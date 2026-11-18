@@ -170,6 +170,15 @@ class Store:
         ).fetchone()
         return row[0]
 
+    def cost_since(self, since: datetime) -> tuple[int, int, float]:
+        """(requests, how many were free fast-path answers, dollars) since a moment, PIN entries left out."""
+        count, fast, spent = self._db.execute(
+            "SELECT COUNT(*), COALESCE(SUM(model = 'fastpath'), 0), COALESCE(SUM(cost_usd), 0) FROM turns"
+            " WHERE started_at >= ? AND status IS NOT NULL AND model != 'pin'",
+            (since.strftime("%Y-%m-%dT%H:%M:%S"),),
+        ).fetchone()
+        return count, fast, spent
+
     def cache_hit_rate(self, since: str) -> float | None:
         """Share of prompt tokens read from cache (billed at 0.1×) since an ISO date. The main
         cost lever: a drop means something in the cached prefix started changing between requests."""

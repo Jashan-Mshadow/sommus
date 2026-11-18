@@ -19,7 +19,7 @@ from typing import Any
 
 import anthropic
 
-from sommus import supplements
+from sommus import costs, supplements
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain import nodes as nodes_mod
@@ -56,7 +56,7 @@ LIVE_SECONDS = 240  # a turn this soon after the last one is a conversation: its
 # request asked for that kind of action. Enforced here, whatever the model decides.
 UNTRUSTED_TOOLS = {
     "read_email", "search_email", "read_browser_tab", "list_page_links", "list_embedded_files", "web_search",
-    "read_pdf", "read_file", "get_clipboard", "screenshot", "ask_gemini", "ask_gpt", "ask_claude",
+    "read_pdf", "read_file", "get_clipboard", "screenshot", "ask_gemini", "ask_gpt", "ask_claude", "read_messages",
 }  # fmt: skip
 SEND_WORDS = {
     "send", "reply", "respond", "answer", "email", "mail", "text", "message", "tell", "forward", "write", "dm",
@@ -281,6 +281,7 @@ class Brain:
         classes = self._campus if campus.schedule_path().exists() else None
         quick = (
             self._supplement_report(text)
+            or self._cost_question(text)
             or fastpath.match(
                 text,
                 self._weather,
@@ -490,7 +491,23 @@ class Brain:
         if tokens and {"today", "tomorrow", "tonight"} & set(tokens) and campus.schedule_path().exists():
             with contextlib.suppress(Exception):
                 said = f"{self._campus('due', tokens)} {said}"
+        updated = campus.todo_updated(path)
+        if (
+            updated and updated < datetime.now().date()
+        ):  # 2026-11-17: a list two days old named a tutorial that was over
+            said = f"Heads up, the list was last updated {updated:%A}, so it may be out of date. {said}"
         return said
+
+    def _cost_question(self, text: str) -> fastpath.Match | None:
+        """ "How much has Sommus cost in the past hour / 10 minutes / 10 days?" answered from the turn log, free.
+        Read right here (not in the fast path's worker thread): SQLite connections stay on their own thread."""
+        found = costs.parse(text, datetime.now())
+        if not found:
+            return None
+        since, window = found
+        requests, fast, dollars = self.store.cost_since(since)
+        said = costs.say(window, requests, fast, dollars)
+        return fastpath.Match("cost", local=lambda: said)
 
     def _supplement_report(self, text: str) -> fastpath.Match | None:
         """ "I took my creatine", "everything except creatine and magnesium": logged by plain code, free, no PIN

@@ -732,16 +732,29 @@ async def live_chat() -> None:
 
     async def open_conversation(first: str | None = None, handle: str | None = None) -> None:
         voice.chime(voice.CHIME_WAKE)
-        try:
-            context = client.aio.live.connect(
-                model=model, config=live.live_config(system, tools, voice_name, sensitivity, handle)
-            )
-            live_session = await context.__aenter__()
-        except Exception as e:  # offline, quota used up, Google down
+        live_session, failure = None, None
+        for attempt in range(1, 4):
+            # A handshake that times out is usually a network blip (it did on 2026-11-17 while the same key
+            # connected in 0.2 s a few minutes later): try again before giving up. A rejected key or a used-up
+            # quota won't get better by waiting, so those stop at once.
+            try:
+                context = client.aio.live.connect(
+                    model=model, config=live.live_config(system, tools, voice_name, sensitivity, handle)
+                )
+                live_session = await asyncio.wait_for(context.__aenter__(), 15)
+                break
+            except Exception as e:  # offline, quota used up, Google down
+                failure = e
+                blip = isinstance(e, (TimeoutError, OSError, ConnectionError)) or "handshake" in str(e).lower()
+                if not blip or attempt == 3:
+                    break
+                await asyncio.sleep(0.7 * attempt)
+        if live_session is None:
             console.print(
-                f"[red]! Gemini Live didn't connect ({escape(f'{type(e).__name__}: {e}'[:200])}). "
-                "`sommus voice` works without it.[/]"
+                f"[red]! Gemini Live didn't connect ({escape(f'{type(failure).__name__}: {failure}'[:200])}), "
+                f"after {attempt} {'try' if attempt == 1 else 'tries'}. `sommus voice` works without it.[/]"
             )
+            log(text="", outcome=f"live did not connect: {type(failure).__name__}")
             state["mode"] = "asleep"
             voice.chime(voice.CHIME_SLEEP)
             return

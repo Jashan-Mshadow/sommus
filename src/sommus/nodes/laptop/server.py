@@ -22,7 +22,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, bluetooth_plug, browser, files, macos, pdf, speak
+from sommus.nodes.laptop import apps, bluetooth_plug, browser, files, macos, messages, pdf, speak
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -652,6 +652,16 @@ def list_contacts() -> str:
     """List everyone in the Contacts app with their numbers and emails."""
     everyone = apps.contacts()
     return f"{len(everyone)} contacts:\n" + "\n".join(str(c) for c in everyone)
+
+
+@tool(READ)
+def read_messages(limit: int = 10) -> str:
+    """Read Jashan's unread iMessages and texts, newest first. Needs Terminal to have Full Disk Access.
+
+    Args:
+        limit: How many to read (default 10).
+    """
+    return messages.say(messages.unread(max(1, min(limit, 30))))
 
 
 @tool(DESTRUCTIVE)

@@ -9,6 +9,7 @@ EXPECTED_TIERS = {
     "get_audio_output": "read",
     "list_embedded_files": "read",
     "find_contact": "read",
+    "read_messages": "read",
     "list_contacts": "read",
     "read_pdf": "read",
     "save_browser_tab": "reversible",

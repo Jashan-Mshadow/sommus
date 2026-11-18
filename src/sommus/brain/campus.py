@@ -247,6 +247,17 @@ MONTHS = {m: i for i, m in enumerate(
 DATED = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})\b", re.I)
 
 
+def todo_updated(todo: Path) -> date | None:
+    """The `updated:` date in the TODO note's front matter, or None."""
+    if not todo.exists():
+        return None
+    found = re.search(r"^updated:\s*(\d{4})-(\d{2})-(\d{2})", todo.read_text(errors="replace")[:600], re.M)
+    try:
+        return date(int(found[1]), int(found[2]), int(found[3])) if found else None
+    except ValueError:
+        return None
+
+
 def plan_ended(todo: Path, today: date) -> str | None:
     """The first section's heading when it's a dated plan that is over ("Week of Mon Sept 21 – Sun Sept 27"
     read on the 28th). Its tasks are last week's, and reading them out as today's list misleads."""

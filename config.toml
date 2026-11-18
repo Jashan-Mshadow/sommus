@@ -108,7 +108,7 @@ unlock_minutes = 10
 pin_tools = [
     # accounts and people
     "ask_claude", "ask_gemini", "ask_gpt", "search_email", "read_email", "send_email", "reply_to_email", "draft_email", "mark_email_read",
-    "send_message", "compose_email", "find_contact", "list_contacts",
+    "send_message", "compose_email", "find_contact", "list_contacts", "read_messages",
     # notes: reading his own notes is unlocked (Jashan, 2026-09-19) — the PIN prompt interrupted
     # "what's on my to-do list" mid-conversation. Writing them still waits for the PIN.
     "append_to_note", "add_todo", "complete_todo", "commit_vault",
