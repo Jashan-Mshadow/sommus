@@ -59,7 +59,14 @@ def export_new(db_path: Path, last_id: int, known_keys: set[str], now: datetime 
     seen = set(known_keys)
     for record in found:
         out.last_id = max(out.last_id, record["id"])
-        if record["request"].startswith(INTERNAL_PREFIXES) or record["status"] is None:
+        if (
+            record["request"].startswith(INTERNAL_PREFIXES)
+            or record["status"] is None
+            # Free fast-path turns log local intents ("todo", "cost") as tool names that are not real tools, a
+            # "repeat" reuses an old reply and a live (Gemini) turn stores no tools: none is a request the small
+            # model would have to answer, so none is training data.
+            or record["model"] in ("fastpath", "repeat", "gemini-live")
+        ):
             out.dropped_internal += 1
             continue
         example = to_example(record)

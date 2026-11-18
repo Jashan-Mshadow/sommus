@@ -450,3 +450,22 @@ def test_summary_text_for_a_trained_candidate():
         "Night 12: 184 real examples (+6), 480 synthetic (+40), test set 61, tools covered 38/87, "
         "training: done on 600 examples, eval: tools 71%, args 64%, score 0.52 vs always-escalate 0.30, cost $0.03"
     )
+
+
+def test_fast_path_repeat_and_live_turns_are_not_training_data(tmp_path):
+    from sommus.brain.store import Store, Usage
+    from sommus.modeltrain import export
+
+    store = Store(tmp_path / "t.db")
+    for text, model in [
+        ("what time is it", "fastpath"),
+        ("what time is it again", "repeat"),
+        ("whats my battery", "gemini-live"),
+        ("remind me to call mom at 6", "claude-sonnet-5"),
+    ]:
+        turn = store.start_turn(text)
+        store.log_tool(turn, "set_reminder", {"title": "call mom"}, "reversible", "ran", False, "ok")
+        store.finish_turn(turn, "Done.", "ok", model, Usage())
+    found = export.export_new(tmp_path / "t.db", 0, set())
+    assert [e["request"] for e in found.train + found.test] == ["remind me to call mom at 6"]
+    assert found.dropped_internal == 3
