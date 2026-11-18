@@ -1567,6 +1567,7 @@ def main() -> None:
             "today",
             "stats",
             "export-training",
+            "model-nightly",
             "live",
             "serve",
             "node",
@@ -1610,6 +1611,10 @@ def main() -> None:
             target = config.ROOT / "data" / "training" / "requests.jsonl"
             count = training.write(config.ROOT / "data" / "sommus.db", target)
             console.print(f"Wrote {count} requests to {target.relative_to(config.ROOT)} (stays on this machine)")
+        elif args.command == "model-nightly":
+            from sommus.modeltrain import nightly
+
+            print(nightly.run_from_config().summary)
         elif args.command == "stats":
             from sommus import stats
 

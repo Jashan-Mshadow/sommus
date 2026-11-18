@@ -18,3 +18,4 @@ The numbers behind them are in [MEASUREMENTS.md](../MEASUREMENTS.md) (regenerate
 | [11](0011-a-nightly-diary-instead-of-mem0.md) | Long-term memory is a nightly diary distilled from the log, not Mem0 |
 | [12](0012-small-mac-actions-wait-for-the-mac.md) | Small Mac actions wait for the Mac to wake; nothing else does |
 | [13](0013-echo-cancellation-steps-aside-for-media.md) | Echo cancellation steps aside while another app plays sound |
+| [14](0014-own-model-nightly.md) | Own small model: nightly data pipeline now, the fine-tune when the hardware exists |
