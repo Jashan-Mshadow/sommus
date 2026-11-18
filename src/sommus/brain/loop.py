@@ -19,6 +19,7 @@ from typing import Any
 
 import anthropic
 
+from sommus import supplements
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain import nodes as nodes_mod
@@ -46,6 +47,8 @@ CACHE = {"type": "ephemeral", "ttl": "1h"}
 # Everything after the system prompt changes turn to turn, so it's only worth caching for a few minutes:
 # the steps of one turn (seconds apart) and a live back-and-forth. A 5-minute write costs 1.25x, an hour 2x.
 SHORT_CACHE = {"type": "ephemeral", "ttl": "5m"}
+PIN_ASK = "That needs your PIN."
+PIN_UNSET = "That needs a PIN. Run sommus pin to set one."
 LIVE_SECONDS = 240  # a turn this soon after the last one is a conversation: its history is worth caching
 
 # Outside content — mail, web pages, PDFs, other models' answers, the screen — can carry instructions
@@ -277,7 +280,8 @@ class Brain:
         # Without a schedule file, class questions keep going to Claude Code's calendar lookup.
         classes = self._campus if campus.schedule_path().exists() else None
         quick = (
-            fastpath.match(
+            self._supplement_report(text)
+            or fastpath.match(
                 text,
                 self._weather,
                 self._place,
@@ -348,6 +352,7 @@ class Brain:
 
                 if response.stop_reason == "tool_use":
                     results = []
+                    locked = False
                     for block in response.content:
                         if block.type != "tool_use":
                             continue
@@ -355,6 +360,7 @@ class Brain:
                         result = await self._run_tool(turn_id, block.name, block.input, confirm)
                         usage.extra_usd += result.extra_usd
                         yield ToolFinished(block.name, result.text, result.is_error, result.decision)
+                        locked = locked or result.decision == "needs_pin"
                         results.append(
                             {
                                 "type": "tool_result",
@@ -363,6 +369,17 @@ class Brain:
                                 "is_error": result.is_error,
                             }
                         )
+                    if locked:
+                        # The PIN prompt is one fixed sentence, so it doesn't need a second model call (that call
+                        # cost ~5 cents each time, 80% of a quiet day's bill, 2026-11-10). The request that hit
+                        # the lock is kept in `gate.pending` and replays by itself once the PIN is given.
+                        said = PIN_ASK if self.gate.pin_set else PIN_UNSET
+                        self.messages.append({"role": "user", "content": results})
+                        self.messages.append({"role": "assistant", "content": [{"type": "text", "text": said}]})
+                        reply.append(said)
+                        yield TextDelta(said)
+                        status = "ok"
+                        break
                     remaining = budget - steps
                     if 0 < remaining <= 3:
                         # Told in-band, so it can wrap up deliberately instead of being cut off.
@@ -475,6 +492,24 @@ class Brain:
                 said = f"{self._campus('due', tokens)} {said}"
         return said
 
+    def _supplement_report(self, text: str) -> fastpath.Match | None:
+        """ "I took my creatine", "everything except creatine and magnesium": logged by plain code, free, no PIN
+        (his own notes, one appended row per item). Only claims a message it fully understands."""
+        from sommus import config as config_module
+
+        with contextlib.suppress(Exception):
+            slots = config_module.section("supplements").get("slots", [])
+            scheduled = [item for slot in slots for item in slot.get("items", [])]
+            found = supplements.parse_report(text, scheduled)
+            if found:
+                return fastpath.Match(
+                    "supplements",
+                    "log_supplements",
+                    {"items": ", ".join(found), "scheduled": ", ".join(scheduled)},
+                    phrase=lambda result: result,
+                )
+        return None
+
     def _fast_ready(self, quick: fastpath.Match) -> bool:
         needed = [t for t in (quick.tool, quick.read_tool) if t]
         return all(self.hub.tier(t) is not None for t in needed)
@@ -519,7 +554,7 @@ class Brain:
                 result = await self._run_tool(turn_id, tool, args, confirm)
                 yield ToolFinished(tool, result.text, result.is_error, result.decision)
             if result.decision == "needs_pin":
-                reply = "That needs your PIN." if self.gate.pin_set else "That needs a PIN. Run sommus pin to set one."
+                reply = PIN_ASK if self.gate.pin_set else PIN_UNSET
             elif result.is_error:
                 reply = nodes_mod.plain_error(result.text)
             elif quick.phrase:

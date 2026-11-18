@@ -94,3 +94,74 @@ async def test_a_missing_log_file_is_retried_not_marked_done(server, vault):  # 
     (vault / "Nutrition" / "Supplement Log.md").write_text(LOG)
     await server.supplement_nudges(datetime(2026, 11, 9, 18, 10, tzinfo=ZONE))
     assert len(server.hub_fake.calls) == 1
+
+
+# ---- "I took my creatine": logged by code, no model, no PIN ----
+
+STACK = ["multivitamin", "hair gummies", "bodyarmor", "fish oil", "k2+d3", "creatine", "magnesium"]
+
+
+@pytest.mark.parametrize(
+    ("said", "expected"),
+    [
+        ("took my creatine", ["creatine"]),
+        ("Hair gummy and multi consumed", ["hair gummies", "multivitamin"]),
+        ("hey sommus i took fish oil and k2", ["fish oil", "k2+d3"]),
+        ("Everything had except creatine and magnesium", STACK[:5]),
+        ("had everything with dinner", STACK),
+        # questions and anything not fully understood are left to the model
+        ("did I take creatine?", None),
+        ("what is creatine", None),
+        ("should I take magnesium tonight", None),
+        ("I had fiber one cereal", None),
+        ("I ate a banana", None),
+        ("play some music", None),
+    ],
+)
+def test_a_report_of_what_he_took_is_understood_only_when_fully_understood(said, expected):
+    assert supplements.parse_report(said, STACK) == expected
+
+
+@pytest.fixture
+def log_note(tmp_path, monkeypatch):
+    from sommus.nodes.vault import server as vault
+
+    monkeypatch.setattr(vault, "VAULT", tmp_path)
+    note = tmp_path / "Nutrition" / "Supplement Log.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(LOG)
+    return vault, note
+
+
+def test_log_supplements_appends_rows_skips_repeats_and_says_what_is_left(log_note):
+    vault, note = log_note
+    today = datetime.now().date().isoformat()
+    said = vault.log_supplements("creatine, magnesium", scheduled="creatine, magnesium, k2+d3")
+    assert said == "Logged creatine and magnesium. Still to take today: K2 and D3."
+    rows = [line for line in note.read_text().splitlines() if line.startswith(f"| {today}")]
+    assert [r.split("|")[3].strip() for r in rows] == ["creatine", "magnesium"]
+    assert note.read_text().endswith("|\n")  # the table stays the last thing in the file
+
+    again = vault.log_supplements("creatine", scheduled="creatine, magnesium, k2+d3")
+    assert again.startswith("Those were already logged today.")
+    assert note.read_text().count("| creatine |") == 1
+
+
+def test_log_supplements_refuses_a_name_it_does_not_know(log_note):
+    vault, note = log_note
+    before = note.read_text()
+    with pytest.raises(vault.VaultError, match="Unknown supplement"):
+        vault.log_supplements("unicorn dust")
+    assert note.read_text() == before
+
+
+def test_log_food_adds_a_line_and_says_the_macros_are_not_totalled(tmp_path, monkeypatch):
+    from sommus.nodes.vault import server as vault
+
+    monkeypatch.setattr(vault, "VAULT", tmp_path)
+    said = vault.log_food("mac and cheese bowl v2, 1 kiwi")
+    assert "macros aren't totalled" in said
+    day = tmp_path / "Nutrition" / "Logs" / f"{datetime.now().date().isoformat()}.md"
+    assert "mac and cheese bowl v2, 1 kiwi" in day.read_text() and day.read_text().startswith("---")
+    vault.log_food("a banana")
+    assert day.read_text().count("ate (noted by Sommus") == 2

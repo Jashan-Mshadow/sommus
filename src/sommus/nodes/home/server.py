@@ -1,4 +1,4 @@
-"""Home node: smart plugs through the SwitchBot and Tuya (Merkury) clouds, so a fan or lamp works from anywhere.
+"""Home node: smart plugs through the SwitchBot cloud, so a fan or lamp works from anywhere.
 
 Runs wherever the brain runs (the always-on server), not on the Mac. On/off is reversible, so it runs without
 asking; the same rules as every other tool still apply: the PIN gate, and the outside-content rule, which
@@ -43,7 +43,7 @@ def tool(annotations: ToolAnnotations) -> Callable:
 
 @tool(READ)
 def list_plugs() -> str:
-    """List Jashan's smart plugs (SwitchBot and Tuya/Merkury), with whether each is on."""
+    """List Jashan's smart plugs (SwitchBot), with whether each is on."""
     found = plugs.all_plugs()
     if not found:
         return "No smart plugs on the account yet."
@@ -80,7 +80,15 @@ def plug_off(plug: str = "") -> str:
     return plugs.turn(plug, False)
 
 
+PLUG_TOOLS = ("list_plugs", "plug_status", "plug_on", "plug_off")
+
+
 def main() -> None:
+    if not switchbot.configured():
+        # No cloud keys: don't offer tools that can only say "not set up". The brain then goes straight to the
+        # Mac's Bluetooth (`ble_plug_*`) with no failed call first, and no setup text is ever spoken to Jashan.
+        for name in PLUG_TOOLS:
+            server.remove_tool(name)
     server.run("stdio")
 
 

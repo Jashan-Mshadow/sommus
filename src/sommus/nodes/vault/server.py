@@ -19,11 +19,14 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from sommus import supplements
 from sommus.brain import diary, memory
 from sommus.brain.campus import INBOX
 
 VAULT = Path(os.environ.get("SOMMUS_VAULT_PATH", "~/Documents/Jashans_Brain")).expanduser()
 TODO = "TODO.md"
+SUPPLEMENT_LOG = "Nutrition/Supplement Log.md"
+FOOD_LOGS = "Nutrition/Logs"
 MEMORY = Path(os.environ.get("SOMMUS_MEMORY_PATH", str(VAULT / "Sommus Memory.md"))).expanduser()
 DIARY = Path(os.environ.get("SOMMUS_DIARY_PATH", str(VAULT / "Sommus Diary.md"))).expanduser()
 MAX_NOTE_CHARS = 20_000
@@ -241,6 +244,65 @@ def append_to_note(path: str, text: str) -> str:
             f.write("\n")
         f.write(text.rstrip() + "\n")
     return f"Added {len(text.splitlines())} line(s) to {path}."
+
+
+@tool(REVERSIBLE)
+def log_supplements(items: str, note: str = "via Sommus", scheduled: str = "") -> str:
+    """Record supplements Jashan has taken just now: one row each in Nutrition/Supplement Log.md.
+    Skips ones already logged today. Use this, not append_to_note, for "I took my creatine".
+
+    Args:
+        items: Comma-separated, e.g. "creatine, magnesium" (also multivitamin, hair gummies, fish oil, k2+d3).
+        note: A short note for the log's last column.
+        scheduled: Comma-separated items still expected today, so the reply can say what is left (optional).
+    """
+    names = [supplements.canon(part) for part in re.split(r"[,;]", items) if part.strip()]
+    unknown = [n for n in names if n not in supplements.ALIASES]
+    if unknown or not names:
+        raise VaultError(
+            f"Unknown supplement: {', '.join(unknown) or 'none given'}. Known: {', '.join(supplements.ALIASES)}."
+        )
+    path = _resolve(SUPPLEMENT_LOG)
+    if not path.exists():
+        raise VaultError(f"{SUPPLEMENT_LOG} doesn't exist in the vault.")
+    now = datetime.now()
+    text = path.read_text()
+    already = supplements.taken_on(text, now.date())
+    fresh = [n for n in dict.fromkeys(names) if n not in already]
+    if fresh:
+        rows = "".join(f"| {now.date().isoformat()} | {now:%H:%M} | {n} | {note.replace('|', '/')} |\n" for n in fresh)
+        path.write_text(text + ("" if text.endswith("\n") else "\n") + rows)
+    said = f"Logged {supplements.say_names(fresh)}." if fresh else "Those were already logged today."
+    if fresh and (dup := [n for n in dict.fromkeys(names) if n in already]):
+        said += f" {supplements.say_names(dup).capitalize()} was already logged."
+    if scheduled.strip():
+        left = supplements.missing([part for part in scheduled.split(",") if part.strip()], already | set(fresh))
+        said += f" Still to take today: {supplements.say_names(left)}." if left else " That's everything for today."
+    return said
+
+
+@tool(REVERSIBLE)
+def log_food(text: str) -> str:
+    """Note something Jashan ate in today's food log (Nutrition/Logs/YYYY-MM-DD.md). It only adds a line:
+    macro totals are NOT updated, so don't claim they are. Use this, not append_to_note, for "I had the X".
+
+    Args:
+        text: What he ate, in his words, e.g. "mac and cheese bowl v2, 1 kiwi".
+    """
+    now = datetime.now()
+    note = _resolve(f"{FOOD_LOGS}/{now.date().isoformat()}.md")
+    line = f"- {now:%H:%M} ate (noted by Sommus, macros not totalled yet): {text.strip()}\n"
+    note.parent.mkdir(parents=True, exist_ok=True)
+    if note.exists():
+        body = note.read_text()
+        note.write_text(body + ("" if body.endswith("\n") else "\n") + line)
+    else:
+        head = (
+            f"---\ndate: {now.date().isoformat()}\nweekday: {now:%A}\nstatus: eaten\ntags: [log]\n---\n"
+            f"# {now:%a} {now.date().isoformat()}\n\n"
+        )
+        note.write_text(head + line)
+    return "Noted in today's food log. The macros aren't totalled yet."
 
 
 @tool(REVERSIBLE)

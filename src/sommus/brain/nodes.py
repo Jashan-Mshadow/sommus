@@ -140,7 +140,13 @@ MAC_DOWN = "I can't reach your MacBook's tools right now. If you're on it, start
 def plain_error(text: str) -> str:
     """A tool error said straight to Jashan (the fast path has no model to reword it): the asleep-Mac message is
     written for the model, so he gets a sentence meant for him instead."""
-    return MAC_DOWN if "isn't reachable right now" in text and "MacBook" in text else text
+    if "isn't reachable right now" in text and "MacBook" in text:
+        return MAC_DOWN
+    if "isn't set up" in text or "Profile > Preferences" in text:
+        return "That isn't set up yet."  # the setup steps are for the screen, never for his ears
+    if text.startswith("Error executing tool"):
+        return "That didn't work."
+    return text
 
 
 class NodeHub:

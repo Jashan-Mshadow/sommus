@@ -1502,6 +1502,7 @@ def main() -> None:
             "pin",
             "today",
             "stats",
+            "export-training",
             "live",
             "serve",
             "node",
@@ -1539,6 +1540,12 @@ def main() -> None:
             show_today()
         elif args.command == "diary":
             asyncio.run(show_diary(args.tool_name, args.tool_args))
+        elif args.command == "export-training":
+            from sommus import training
+
+            target = config.ROOT / "data" / "training" / "requests.jsonl"
+            count = training.write(config.ROOT / "data" / "sommus.db", target)
+            console.print(f"Wrote {count} requests to {target.relative_to(config.ROOT)} (stays on this machine)")
         elif args.command == "stats":
             from sommus import stats
 

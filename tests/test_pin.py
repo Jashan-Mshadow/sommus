@@ -103,13 +103,15 @@ async def test_a_personal_tool_waits_for_the_pin_then_the_request_runs_by_itself
     async with gated_brain(
         tmp_path,
         tool_call("peek", {}),
-        text_reply("That needs your PIN."),
         tool_call("peek", {}, id="toolu_2"),
         text_reply("All quiet in there."),
     ) as (brain, model, calls):
         first = await run(brain, "read my email")
         locked = [e for e in first if isinstance(e, ToolFinished)][0]
         assert calls == [] and locked.is_error and "PIN" in locked.output
+        # the PIN prompt is one fixed sentence: no second model call to produce it (it cost ~5 cents each)
+        assert "".join(e.text for e in first if isinstance(e, TextDelta)) == "That needs your PIN."
+        assert len(model.requests) == 1
 
         second = await run(brain, "five one seven three")
         assert calls == ["peek"]
@@ -125,14 +127,14 @@ async def test_a_personal_tool_waits_for_the_pin_then_the_request_runs_by_itself
 
 
 async def test_a_wrong_pin_runs_nothing_and_costs_nothing(tmp_path):
-    async with gated_brain(tmp_path, tool_call("peek", {}), text_reply("That needs your PIN.")) as (
+    async with gated_brain(tmp_path, tool_call("peek", {})) as (
         brain,
         model,
         calls,
     ):
         await run(brain, "read my email")
         events = await run(brain, "0000")
-        assert calls == [] and len(model.requests) == 2
+        assert calls == [] and len(model.requests) == 1
         assert [e.text for e in events if isinstance(e, TextDelta)] == ["Wrong PIN — I heard 4 digits."]
 
 

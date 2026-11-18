@@ -1,30 +1,18 @@
-"""One list of plugs across every configured brand (SwitchBot, Tuya/Merkury), so "the lamp" finds its plug."""
+"""The smart plugs, through SwitchBot (the only brand Sommus uses since 2026-11-17).
+
+Kept as its own small layer so a second brand could be added later without touching the tools.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from sommus.nodes.home import switchbot, tuya
-from sommus.nodes.home.switchbot import HomeError
-
-
-def providers() -> list:
-    """Configured brands. SwitchBot is the default when nothing is configured, so its setup message shows."""
-    found = [tuya] if tuya.configured() else []
-    if switchbot.configured() or not found:
-        found.append(switchbot)
-    return found
+from sommus.nodes.home import switchbot
+from sommus.nodes.home.switchbot import HomeError  # noqa: F401  (re-exported for callers)
 
 
 def all_plugs() -> list[dict[str, Any]]:
-    return [{**d, "provider": mod} for mod in providers() for d in mod.plugs()]
-
-
-def _pick(name: str) -> dict[str, Any]:
-    found = all_plugs()
-    if not found and tuya.configured() and not switchbot.configured():
-        raise HomeError("No plug is on the linked Tuya account yet. Add it in the Tuya Smart / Smart Life app first.")
-    return switchbot.pick(name, found)
+    return [{**d, "provider": switchbot} for d in switchbot.plugs()]
 
 
 def names() -> list[str]:
@@ -32,10 +20,10 @@ def names() -> list[str]:
 
 
 def turn(name: str, on: bool) -> str:
-    plug = _pick(name)
+    plug = switchbot.pick(name, all_plugs())
     return plug["provider"].turn_plug(plug, on)
 
 
 def status(name: str) -> str:
-    plug = _pick(name)
+    plug = switchbot.pick(name, all_plugs())
     return plug["provider"].status_plug(plug)

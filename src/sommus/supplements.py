@@ -8,6 +8,7 @@ the server's scheduler (server.py) decides when, this decides whether and what.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime, timedelta
 
@@ -86,3 +87,56 @@ def spoken(slot: dict, lacking: Sequence[str], book: brief.Phrasebook) -> str:
     return book.pick("supplements", NUDGES).format(
         label=label, Label=label[:1].upper() + label[1:], items=items, Items=items[:1].upper() + items[1:]
     )
+
+
+# ---- "I took my creatine": a report that is logged by plain code, with no model and no PIN ----
+# (his own notes, an append-only row per item; 2026-11-10 a reply like this cost $0.06 and a PIN and nothing was saved)
+
+_NOT_ALIASES = {"mg"}  # a unit ("500 mg"), not a supplement
+_ALIAS = re.compile(
+    r"(?<![a-z0-9+/])("
+    + "|".join(re.escape(a) for a in sorted(LOOKUP, key=len, reverse=True) if a not in _NOT_ALIASES)
+    + r")(?![a-z0-9+/])"
+)
+_MARKER = re.compile(r"\b(?:except|but|besides|without|apart from|not|no)\b")
+REPORT_VERBS = {"had", "have", "took", "taken", "consumed", "ate", "eaten", "drank", "done", "logged", "log", "add"}
+REPORT_FILLER = {
+    "i", "ive", "id", "just", "my", "the", "a", "an", "and", "with", "some", "also", "then", "all", "everything",
+    "except", "but", "besides", "without", "apart", "from", "not", "no", "yet", "today", "supplements", "supplement",
+    "pills", "before", "after", "gym", "dinner", "lunch", "breakfast", "morning", "tonight", "night", "earlier", "now",
+    "already", "it", "as", "down", "ok", "okay", "hey", "sommus", "please", "pls", "thanks", "this", "mark", "marked",
+    "tick", "had", "took", "ate",
+}  # fmt: skip
+QUESTION_WORDS = {"what", "whats", "when", "why", "how", "should", "do", "does", "did", "is", "are", "can", "could",
+                  "would", "which", "who", "whether"}  # fmt: skip
+
+
+def parse_report(text: str, scheduled: Iterable[str]) -> list[str] | None:
+    """The supplements a message says he took, as canonical names, or None when it isn't such a report.
+
+    Claims only what it fully understands: every word must be a supplement, a "took it" verb or filler, and a
+    question never counts ("did I take creatine?"). 'everything except creatine and magnesium' = the scheduled
+    stack minus those two."""
+    raw = text.lower().replace("\u2019", "").replace("'", "")
+    if "?" in raw:
+        return None
+    tokens = re.findall(r"[a-z]+", raw)
+    if not tokens or tokens[0] in QUESTION_WORDS:
+        return None
+    marker = _MARKER.search(raw)
+    before, after = (raw[: marker.start()], raw[marker.start() :]) if marker else (raw, "")
+    named = [LOOKUP[m.group(1)] for m in _ALIAS.finditer(before)]
+    excluded = {LOOKUP[m.group(1)] for m in _ALIAS.finditer(after)}
+    rest = re.findall(r"[a-z]+", _ALIAS.sub(" ", raw))
+    if not set(rest) <= REPORT_FILLER | REPORT_VERBS or not set(rest) & REPORT_VERBS:
+        return None
+    if {"everything", "all"} & set(rest):
+        stack = [canon(x) for x in scheduled]
+        found = [c for c in dict.fromkeys(stack + named) if c not in excluded]
+    else:
+        found = [c for c in dict.fromkeys(named) if c not in excluded]
+    return found or None
+
+
+def say_names(names: Sequence[str]) -> str:
+    return _join([SPOKEN.get(c, c) for c in names])

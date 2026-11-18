@@ -53,7 +53,8 @@ def day_note(day: str, turns: list[dict], said: list[dict]) -> str:
     """The Markdown note for one day: a summary, then everything in time order."""
     cost = sum(t["cost"] for t in turns)
     failed = [t for t in turns if t["status"] not in ("ok", "")]
-    tool_errors = sum(1 for t in turns for c in t["tools"] if c["error"])
+    # a PIN hold is not an error
+    tool_errors = sum(1 for t in turns for c in t["tools"] if c["error"] and c["decision"] in RAN)
     denied = sum(1 for t in turns for c in t["tools"] if c["decision"] not in RAN)
     fast = sum(1 for t in turns if t["model"] == "fastpath")
     lines = [
