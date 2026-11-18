@@ -31,15 +31,47 @@ if [ -f "\$pidfile" ] && kill -0 "\$(cat "\$pidfile")" 2>/dev/null; then
   exit 0
 fi
 echo \$\$ >"\$pidfile"
-trap 'rm -f "\$pidfile"' EXIT
 log="$repo/data/live.log"
+beat="$repo/data/live.heartbeat"
+# Safety net (2026-11-17): Sommus once sat deaf for 6 days with its process alive, so "restart if it exits" never
+# fired. The audio code touches the heartbeat file while microphone audio flows; if it goes stale for 3 minutes
+# the process is killed and the loop below starts a clean one. A gap in this watcher's own clock means the Mac
+# was asleep, so that round is skipped.
+(
+  last=\$(date +%s)
+  while true; do
+    sleep 30
+    now=\$(date +%s)
+    gap=\$((now - last))
+    last=\$now
+    [ "\$gap" -gt 90 ] && continue
+    age=\$((now - \$(stat -f %m "\$beat" 2>/dev/null || echo "\$now")))
+    if [ "\$age" -gt 180 ]; then
+      echo "No microphone heartbeat for \${age} s (\$(date +%H:%M)): restarting Sommus live."
+      pkill -f ".venv/bin/sommus live"
+      pkill -f "uv run --quiet --no-sync sommus live"
+      touch "\$beat"
+    fi
+  done
+) &
+watchdog=\$!
+trap 'rm -f "\$pidfile"; kill \$watchdog 2>/dev/null' EXIT
 while true; do
   # The app follows this log; keep it small.
   if [ -f "\$log" ] && [ "\$(stat -f %z "\$log")" -gt 5000000 ]; then : >"\$log"; fi
+  touch "\$beat"
   # script keeps a real terminal (colours, prompts) while copying everything to the log for the app.
   script -q -a -t 0 "\$log" "$uv" run --quiet --no-sync sommus live
-  echo "Sommus live stopped (\$(date +%H:%M)). Starting again in 5 s; close this window to stop it."
-  sleep 5
+  code=\$?
+  if [ "\$code" -eq 75 ]; then
+    # The audio engine could not bring the microphone back (lid closed with no external mic, or no input device).
+    # Trying again every few seconds would only burn CPU, so wait longer.
+    echo "Sommus live found no microphone audio (\$(date +%H:%M)). Trying again in 2 minutes."
+    sleep 120
+  else
+    echo "Sommus live stopped (\$(date +%H:%M)). Starting again in 5 s; close this window to stop it."
+    sleep 5
+  fi
 done
 END_COMMAND
   chmod +x "$command_file"
