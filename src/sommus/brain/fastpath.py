@@ -35,6 +35,7 @@ LOUD_UP, LOUD_DOWN = {"louder", "loud"}, {"quieter", "softer", "quiet"}
 BRIGHT_UP, BRIGHT_DOWN = {"brighter", "bright"}, {"dim", "dimmer", "darker", "dark"}
 SOUND_WORDS = {"volume", "sound", "audio"} | LOUD_UP | LOUD_DOWN
 SCREEN_WORDS = {"brightness"} | BRIGHT_UP | BRIGHT_DOWN
+PLAIN_ADJECTIVES = {"loud", "quiet", "bright", "dark"}  # "how loud is it": a question, not a direction
 MAX = {"max", "maximum", "full"}
 MIN = {"min", "minimum", "zero"}
 STEP_SMALL, STEP_DEFAULT, STEP_BIG = 5, 10, 25
@@ -42,20 +43,23 @@ WEATHER_TRIGGERS = {"weather", "temperature", "temp", "rain", "raining", "foreca
                     "snowing", "umbrella"}  # fmt: skip
 
 VOCAB = {
-    "battery": {"battery", "charge", "charged", "charging", "percentage", "left", "life", "remaining", "low"},
+    "battery": {"battery", "charge", "charged", "charging", "percentage", "left", "life", "remaining", "low", "do",
+                "i", "have", "got", "still"},
     "time": {"time", "clock"},
     "date": {"date", "day", "today", "todays"},
     "brightness": SCREEN_WORDS | {"screen", "display", "too"} | UP | DOWN | MAX | MIN,
     "volume": SOUND_WORDS | {"too"} | UP | DOWN | MAX | MIN,
     "list_apps": {"apps", "app", "applications", "programs", "open", "running", "do", "i", "have", "are", "which"},
-    "clipboard": {"clipboard", "on", "in", "do", "i", "have", "whats"},
+    "clipboard": {"clipboard", "on", "in", "do", "i", "have", "whats", "read", "show", "contents", "copied"},
     "audio_output": {"which", "bluetooth", "audio", "sound", "output", "device", "connected", "to", "check", "am", "i",
-                     "playing", "through", "using", "speaker", "speakers", "headphones", "what", "is", "are", "on"},
+                     "playing", "through", "using", "speaker", "speakers", "headphones", "what", "is", "are", "on",
+                     "airpods", "earbuds", "buds", "coming", "going", "from", "out", "where"},
     "messages": {"do", "i", "have", "any", "unread", "new", "messages", "message", "texts", "imessages", "imessage",
                  "in", "the", "app", "check", "read", "my", "are", "there", "whats", "what", "on", "of"},
     "now_playing": {"playing", "song", "track", "this", "music", "listening", "called", "name", "which", "am", "i",
                     "spotify", "on"},
-    "wifi": {"wifi", "wi", "fi", "network", "internet", "connected", "on", "am", "i", "which", "whats", "using"},
+    "wifi": {"wifi", "wi", "fi", "network", "internet", "connected", "on", "am", "i", "which", "whats", "using", "do",
+             "have", "got", "there", "working", "down"},
     "shortcuts": {"shortcuts", "do", "i", "have", "list", "show", "which", "available", "are", "there", "any"},
     "mute": {"mute", "sound", "audio", "volume"},
     "unmute": {"unmute", "sound", "audio", "volume"},
@@ -126,6 +130,14 @@ def words(text: str) -> list[str]:
     return re.findall(r"[a-z]+|\d{1,4}", text)
 
 
+QUESTION_STARTS = {"is", "are", "whats", "what", "which", "am", "do", "does", "how", "where", "check"}
+
+
+def _reads_status(tokens: list[str]) -> bool:
+    """'turn on wifi' shares every word with 'is the wifi on': only a question, or a request with no on/off, reads."""
+    return "on" not in tokens or tokens[0] in QUESTION_STARTS
+
+
 def _number(tokens: list[str]) -> int | None:
     numbers = [int(t) for t in tokens if t.isdigit()]
     return numbers[0] if len(numbers) == 1 else None
@@ -147,6 +159,13 @@ def _level_change(intent: str, tokens: list[str], raw: str) -> Match | None:
         return None
     going_up = any(t in UP | LOUD_UP | BRIGHT_UP for t in tokens)
     going_down = any(t in DOWN | LOUD_DOWN | BRIGHT_DOWN for t in tokens)
+    if tokens[:1] and tokens[0] in QUESTION_STARTS and "too" not in tokens:
+        # "how loud is it" asks; it must not turn the sound up. A question with a real direction ("is it louder
+        # now") is left to the model.
+        directions = (UP | DOWN | LOUD_UP | LOUD_DOWN | BRIGHT_UP | BRIGHT_DOWN) - PLAIN_ADJECTIVES
+        if number is not None or any(t in directions for t in tokens):
+            return None
+        return Match(intent, read_tool)
     if "too" in tokens:  # "too dim" wants it brighter, "too loud" wants it quieter
         too = set(tokens)
         going_up = bool(too & {"dim", "dark", "darker", "quiet", "quieter", "soft", "softer", "low"})
@@ -204,8 +223,12 @@ def match(
     present = set(tokens)
     # "when is Diwali" is a question, not "when X happens, do Y" — only a holiday intent can claim it.
     stopped = present & STOP_WORDS - ({"when"} if tokens[:1] == ["when"] else set())
-    if not tokens or len(tokens) > 12 or stopped:
+    # "what's on my to-do list for the rest of today and tomorrow" is long and has an "and" (between two days only).
+    asks_todo = bool(todo) and len(tokens) <= 16 and _asks_for_todo(tokens)
+    if not tokens or (len(tokens) > 12 or stopped) and not asks_todo:
         return None
+    if asks_todo:
+        return Match("todo", local=lambda: todo(tokens))
 
     if found := reminder(text):
         return found
@@ -219,8 +242,23 @@ def match(
         return Match("list_apps", "list_apps")
     if (
         _claims("audio_output", tokens)
-        and present & {"bluetooth", "audio", "output", "device", "speaker", "speakers", "headphones"}
-        and present & {"connected", "playing", "through", "using", "device", "output", "which"}
+        and (
+            present
+            & {
+                "bluetooth",
+                "audio",
+                "output",
+                "device",
+                "speaker",
+                "speakers",
+                "headphones",
+                "airpods",
+                "earbuds",
+                "buds",
+            }
+            or ("sound" in present and present & {"coming", "going"})
+        )
+        and present & {"connected", "playing", "through", "using", "device", "output", "which", "coming", "going"}
     ):
         return Match("audio_output", "get_audio_output", phrase=say_audio_output)
     if (
@@ -231,7 +269,7 @@ def match(
         return Match("messages", "read_messages", {"limit": 10}, phrase=lambda result: result)
     if _claims("clipboard", tokens) and "clipboard" in present:
         return Match("clipboard", "get_clipboard")
-    if _claims("wifi", tokens) and present & {"wifi", "wi", "network", "internet"}:
+    if _claims("wifi", tokens) and present & {"wifi", "wi", "network", "internet"} and _reads_status(tokens):
         return Match("wifi", "get_wifi")
     if _claims("shortcuts", tokens) and "shortcuts" in present:
         return Match("shortcuts", "list_shortcuts")
@@ -268,8 +306,6 @@ def match(
         if present & {"pause", "stop"} and present & {"play", "resume"}:
             wants = "play_pause"
         return Match("play_pause", "media_control", {"action": wants})
-    if todo and _asks_for_todo(tokens):
-        return Match("todo", local=lambda: todo(tokens))
     if _claims("now_playing", tokens) and (
         "playing" in present or ("song" in present and present & {"this", "name", "called"})
     ):
@@ -470,11 +506,18 @@ def reminder(text: str, now: datetime | None = None) -> Match | None:
 
 TODO_WORDS = {"todo", "todos", "to", "do", "list", "tasks", "task", "whats", "what", "on", "my", "have", "i",
               "left", "next", "need", "read", "out", "the", "is", "are", "top", "of", "remaining", "for", "today",
-              "tomorrow", "tonight", "this", "week"}  # fmt: skip
+              "tomorrow", "tonight", "this", "week", "rest"}  # fmt: skip
+DAY_WORDS = {"today", "tomorrow", "tonight"}
 
 
 def _asks_for_todo(tokens: list[str]) -> bool:
-    """'what's on my to-do list', 'what do I have to do', 'read my todos' — not 'add X to my to-do list'."""
+    """'what's on my to-do list', 'what do I have to do', 'read my todos' — not 'add X to my to-do list'.
+    An "and" is fine only between two days ("the rest of today and tomorrow")."""
+    tokens = [
+        t
+        for i, t in enumerate(tokens)
+        if not (t == "and" and 0 < i < len(tokens) - 1 and tokens[i - 1] in DAY_WORDS and tokens[i + 1] in DAY_WORDS)
+    ]
     named = {"todo", "todos", "tasks"} & set(tokens) or "to do" in " ".join(tokens)
     return bool(named) and all(t in TODO_WORDS or t in FILLER for t in tokens)
 

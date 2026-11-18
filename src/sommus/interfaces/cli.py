@@ -767,7 +767,7 @@ async def live_chat() -> None:
         detector.reset()
         console.print("[dim]  (listening for your PIN here on the Mac — it isn't sent to Google)[/]")
 
-    async def open_conversation(first: str | None = None, handle: str | None = None) -> None:
+    async def open_conversation(first: str | None = None, handle: str | None = None, spoken: bool = False) -> None:
         voice.chime(voice.CHIME_WAKE)
         live_session, failure = None, None
         for attempt in range(1, 4):
@@ -802,7 +802,7 @@ async def live_chat() -> None:
         state.update(mode="awake", conversation=conversation, context=context, opened_at=time.monotonic())
         state["receiver"] = asyncio.create_task(receive(conversation, context))
         if first:
-            await conversation.send_text(first)
+            await conversation.send_text(first, spoken=spoken)
         console.print("[dim]  live — talk normally; it stops when you talk over it[/]")
 
     async def receive(conversation, context) -> None:
@@ -856,7 +856,7 @@ async def live_chat() -> None:
         request = voice.heard_wake(text, wake)
         log(text=text, outcome="ignored: asleep, no wake phrase" if request is None else "wake")
         if request is not None:
-            await open_conversation(first=request or None)
+            await open_conversation(first=request or None, spoken=True)
 
     async def heard_pin(audio: np.ndarray) -> None:
         conversation = state["conversation"]

@@ -148,6 +148,56 @@ def split_cost(text: str) -> tuple[str, float]:
     return (text[: found.start()], float(found.group(1))) if found else (text, 0.0)
 
 
+REPEAT_SECONDS = 30  # the same request again within this long gets the previous reply, not a second model call
+
+
+def repeat_key(text: str, channel: str) -> tuple[str, str]:
+    return " ".join(fastpath.words(text)), channel
+
+
+# Words that ask for something. A short spoken fragment with none of them (and no number or name for Sommus) is
+# room chatter, not a request.
+COMMAND_WORDS = {
+    "what", "whats", "when", "where", "who", "why", "how", "which", "is", "are", "do", "does", "can", "could",
+    "will", "would", "should", "open", "close", "quit", "launch", "play", "pause", "stop", "resume", "skip", "next",
+    "previous", "mute", "unmute", "lock", "sleep", "turn", "switch", "set", "make", "put", "show", "tell", "read",
+    "check", "find", "search", "list", "add", "remind", "send", "text", "email", "call", "message", "create",
+    "write", "start", "volume", "brightness", "louder", "quieter", "brighter", "dimmer", "weather", "time",
+    "battery", "wifi", "remember", "forget", "save", "give", "get", "take", "run", "cancel", "delete", "reply",
+    "answer", "explain", "help", "please",
+}  # fmt: skip
+NAMES = {"sommus", "somis", "sommis", "jarvis"}
+FRAGMENT_WORDS = 4  # a request this short with no command word is a fragment
+LEVEL_ASKED = {
+    "set_volume": {"volume", "sound", "louder", "quieter", "softer", "loud", "quiet", "max", "maximum", "mute"},
+    "set_brightness": {"brightness", "brighter", "dimmer", "dim", "darker", "screen", "max", "maximum"},
+}
+
+
+def overheard(text: str, in_class: bool, recent_reply: bool = False) -> str | None:
+    """Why a *spoken* request should be ignored (no tools, no reply), or None. Only for voice: a typed request
+    is always meant. 2026-11-09: a tutorial's speech was answered in 7 model turns and one fragment changed the
+    volume. He can still get through by saying the name, and a short answer straight after a reply
+    ("yes", "a bit more") is a follow-up, not a fragment."""
+    tokens = fastpath.words(text)
+    if set(tokens) & NAMES:
+        return None
+    if in_class:
+        return "in a class"
+    if len(tokens) <= FRAGMENT_WORDS and not recent_reply and not set(tokens) & COMMAND_WORDS:
+        return "a fragment with no command"
+    return None
+
+
+def level_unasked(name: str, text: str) -> bool:
+    """A spoken request that moves the volume or the screen must say so: a number or the level's own word."""
+    wanted = LEVEL_ASKED.get(name)
+    if wanted is None:
+        return False
+    tokens = fastpath.words(text)
+    return not (any(t.isdigit() for t in tokens) or set(tokens) & wanted)
+
+
 LOCKS_SOMMUS = {"lock_screen", "sleep_computer", "sleep_display"}
 LEVEL_TOOLS = {
     "set_volume": "volume",
@@ -204,6 +254,9 @@ class Brain:
         # Where this turn came from when it isn't obvious: "iPhone" for the Action Button, so the model reaches for
         # the phone's own tools (flashlight, texting from the phone) and knows the Mac may be asleep.
         self.channel = ""
+        # The last model turn, kept for 30 s so the same request said twice isn't paid for twice.
+        self._recent: tuple[tuple[str, str], float, str, tuple] | None = None
+        self._turn_tools: list[str] = []
 
     def _start_turn(self, text: str) -> int:
         return self.store.start_turn(text, getattr(self, "source", ""))  # bare test brains have no source
@@ -305,8 +358,17 @@ class Brain:
                 handled = True
                 yield event
             if handled:
+                self._recent = None  # something changed or was read fresh: an older answer may be stale now
                 return
+        repeat = self._repeat_of(text)
+        if repeat is not None:
+            turn_id = self._start_turn(text)
+            self.store.finish_turn(turn_id, repeat, "ok", "repeat", Usage())
+            yield TextDelta(repeat)
+            yield TurnDone(Usage(), 0.0, 0)
+            return
         turn_id = self._start_turn(text)
+        self._turn_tools = []
         self._refresh_prompt()
         decision = spending.choose(self.budget, self.cfg.model, self.store.cost_month())
         self.model = decision.model
@@ -361,6 +423,7 @@ class Brain:
                         if block.type != "tool_use":
                             continue
                         yield ToolStarted(block.name, block.input, self.hub.tier(block.name))
+                        self._turn_tools.append(block.name)  # a repeat is only safe if all of them were reads
                         result = await self._run_tool(turn_id, block.name, block.input, confirm)
                         usage.extra_usd += result.extra_usd
                         yield ToolFinished(block.name, result.text, result.is_error, result.decision)
@@ -437,8 +500,33 @@ class Brain:
             self._turn_start = None
             self._last_turn_at = time.monotonic()
             self.store.finish_turn(turn_id, "".join(reply), status, self.model, usage)
+            self._note_for_repeat(text, "".join(reply), status)
 
         yield TurnDone(usage, usage.cost_usd(self.model), steps)
+
+    def _repeat_of(self, text: str) -> str | None:
+        """The reply to give again: this exact request (same words, same channel) was answered by the model less than
+        REPEAT_SECONDS ago, and everything that turn ran only read things. 2026-11-17: one question ran twice
+        in seconds and got two different answers, paid for twice."""
+        recent = getattr(self, "_recent", None)
+        if recent is None:
+            return None
+        key, at, reply, memory = recent
+        if (
+            key == repeat_key(text, getattr(self, "channel", ""))
+            and time.monotonic() - at <= REPEAT_SECONDS
+            and memory == self._memory_key()  # his memory or the diary changed since: the answer may too
+        ):
+            return reply
+        return None
+
+    def _note_for_repeat(self, text: str, reply: str, status: str) -> None:
+        reads_only = all(self.hub.tier(name) is Tier.READ for name in self._turn_tools)
+        self._recent = (
+            (repeat_key(text, getattr(self, "channel", "")), time.monotonic(), reply, self._memory_key())
+            if status == "ok" and reply.strip() and reads_only and self.gate.pending is None
+            else None
+        )
 
     def _home(self) -> fastpath.Place:
         home = self.fast_settings
@@ -478,12 +566,13 @@ class Brain:
             return self._level[0]
         return None
 
-    def _todo(self, tokens: list[str] | None = None) -> str:
+    def _todo(self, tokens: list[str] | None = None, now: datetime | None = None) -> str:
         """The top of the to-do list from the vault, read by plain code: was ~2¢ and ~9 s through the model
         ("to-do list for tomorrow" went to it and took 14 s and 4¢). A day named adds what's due that day."""
         path = campus.todo_path()
         ranked, added = campus.task_sections(path)
-        ended = campus.plan_ended(path, datetime.now().date())
+        today = (now or datetime.now()).date()
+        ended = campus.plan_ended(path, today)
         if ended:  # last week's plan read out as today's list misled him (2026-09-28)
             plain = re.sub(r"[^\w\s–-]", "", re.sub(r"\(.*?\)", "", ended)).strip()
             said = f"Your to-do plan is still last week's ({plain}), so it needs updating."
@@ -492,12 +581,12 @@ class Brain:
         else:
             said = fastpath.say_tasks(ranked, added)
         if tokens and {"today", "tomorrow", "tonight"} & set(tokens) and campus.schedule_path().exists():
+            # Classes still ahead (never one that's over), what's due that day, then the list: all from the clock.
             with contextlib.suppress(Exception):
-                said = f"{self._campus('due', tokens)} {said}"
+                schedule = campus.cached(campus.schedule_path())
+                said = f"{campus.agenda(schedule, now or datetime.now(schedule.zone), tokens)} {said}"
         updated = campus.todo_updated(path)
-        if (
-            updated and updated < datetime.now().date()
-        ):  # 2026-11-17: a list two days old named a tutorial that was over
+        if updated and updated < today:  # 2026-11-17: a list two days old named a tutorial that was over
             said = f"Heads up, the list was last updated {updated:%A}, so it may be out of date. {said}"
         return said
 
@@ -754,6 +843,8 @@ class Brain:
         said, which the outside-content rule checks against."""
         if asked != self._asked:
             self._asked, self._read_outside = asked, None
+        if self.hub.tier(name) is not Tier.READ:
+            self._recent = None  # a live-mode action: an earlier answer may be stale now
         turn_id = self._start_turn(f"[{model}] {asked}")
         result = await self._run_tool(turn_id, name, args, _allow)
         self.store.finish_turn(turn_id, result.text, "error" if result.is_error else "ok", model, Usage())

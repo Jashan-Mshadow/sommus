@@ -335,3 +335,74 @@ def test_a_dropped_connection_says_why_not_just_its_type():
     assert live.reason(TimeoutError("timed out during opening handshake")) == (
         "TimeoutError: timed out during opening handshake"
     )
+
+
+# ------------------------------------------------------------------ overheard speech (2026-11-09)
+
+
+async def spoken(conv, text):
+    await conv.handle_message(message(input_transcription=SimpleNamespace(text=text)))
+
+
+async def test_a_fragment_heard_by_the_microphone_runs_no_tool_and_gets_no_reply(tmp_path):
+    conv, hub, calls, shown, logged, _ = await conversation(tmp_path)
+    conv.in_class = lambda: False
+    await spoken(conv, "and then the")
+    await conv.run_tool(SimpleNamespace(id="c1", name="peek", args={}))
+    assert calls == []  # the tool never ran
+    assert "Say nothing" in conv.session.responses[0].response["result"]
+    assert logged[-1]["outcome"].startswith("ignored: overheard") and logged[-1]["text"] == "and then the"
+    rows = conv.brain.store._db.execute("SELECT user_text, reply FROM turns").fetchall()
+    assert rows == [("[overheard] and then the", "")]  # logged, not answered
+    await hub.__aexit__(None, None, None)
+
+
+async def test_nothing_runs_for_speech_in_a_class_block_but_his_name_gets_through(tmp_path):
+    conv, hub, calls, *_ = await conversation(tmp_path)
+    conv.in_class = lambda: True
+    await spoken(conv, "what is the weather today")
+    await conv.run_tool(SimpleNamespace(id="c1", name="peek", args={}))
+    assert calls == []
+    conv.exchange = live.Exchange()
+    await spoken(conv, "hey sommus what's the weather")
+    await conv.run_tool(SimpleNamespace(id="c2", name="peek", args={}))
+    assert calls == ["peek"]
+    await hub.__aexit__(None, None, None)
+
+
+async def test_the_request_that_came_with_the_wake_phrase_is_meant_even_in_class(tmp_path):
+    conv, hub, calls, *_ = await conversation(tmp_path)
+    conv.in_class = lambda: True
+    await conv.send_text("what's next", spoken=True)
+    await conv.run_tool(SimpleNamespace(id="c1", name="peek", args={}))
+    assert calls == ["peek"]
+    await hub.__aexit__(None, None, None)
+
+
+async def test_typed_requests_are_never_dropped(tmp_path):
+    conv, hub, calls, *_ = await conversation(tmp_path)
+    conv.in_class = lambda: True
+    await conv.send_text("ok")  # typed: a fragment, in a class, with no wake phrase
+    await conv.run_tool(SimpleNamespace(id="c1", name="peek", args={}))
+    assert calls == ["peek"]
+    await hub.__aexit__(None, None, None)
+
+
+async def test_a_spoken_set_volume_needs_a_number_or_a_volume_word(tmp_path):
+    conv, hub, *_ = await conversation(tmp_path)
+    conv.in_class = lambda: False
+    await spoken(conv, "I think that is a really interesting point")  # long enough to not be a fragment
+    assert conv.overheard_reason("set_volume", conv.last_heard) == "the volume or brightness wasn't asked for"
+    assert conv.overheard_reason("peek", conv.last_heard) is None
+    assert conv.overheard_reason("set_volume", "turn the volume down a bit") is None
+    assert conv.overheard_reason("set_volume", "set it to 30") is None
+    await hub.__aexit__(None, None, None)
+
+
+async def test_a_short_answer_right_after_sommus_spoke_is_a_follow_up(tmp_path):
+    conv, hub, *_ = await conversation(tmp_path)
+    conv.in_class = lambda: False
+    assert conv.overheard_reason("peek", "yes") is not None
+    conv.last_spoke = live.time.monotonic()
+    assert conv.overheard_reason("peek", "yes") is None
+    await hub.__aexit__(None, None, None)

@@ -84,10 +84,29 @@ ASK_SOMMUS = {
     # Non-blocking: Gemini can still talk while Claude works, so a slow lookup gets a holding line, not silence.
     "behavior": "NON_BLOCKING",
 }
+SILENT = (
+    "Nothing was done: that sounded like room chatter or a fragment, not a request for you. Say nothing at all, "
+    "and don't mention this."
+)
+RECENT_REPLY_SECONDS = 20  # a short answer this soon after Sommus spoke is a follow-up, not a fragment
 LOCKED = (
     "LOCKED: this needs Jashan's PIN. Say only \"What's your PIN?\" and stop. Sommus is listening for it privately "
     "on the Mac; never say or repeat digits."
 )
+
+
+def in_class(now: datetime | None = None) -> bool:
+    """Whether the campus schedule has him in a class right now. Fails open (False) without a schedule."""
+    try:
+        from sommus.brain import campus
+
+        path = campus.schedule_path()
+        if not path.exists():
+            return False
+        schedule = campus.cached(path)
+        return schedule.current(now or datetime.now(schedule.zone)) is not None
+    except Exception:
+        return False
 
 
 def gemini_key() -> str:
@@ -273,6 +292,10 @@ class LiveConversation:
         self.cancelled: set[str] = set()
         self.nudged: dict[str, float] = {}  # call id -> when its holding line went out
         self.last_interrupt = 0.0  # when he last talked over Sommus
+        self.addressed = ""
+        self.typed = False  # his latest request was typed: never dropped as room chatter
+        self.last_spoke = float("-inf")  # when Sommus last said something (audio or words)
+        self.in_class = in_class  # swapped in tests
 
     async def send_audio(self, chunks: list[np.ndarray]) -> None:
         from google.genai import types
@@ -281,9 +304,11 @@ class LiveConversation:
             audio=types.Blob(data=to_pcm16(chunks), mime_type=f"audio/pcm;rate={IN_RATE}")
         )
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, spoken: bool = False) -> None:
         if not text.startswith("[Sommus:"):
             self.last_heard = text  # typed, or the request that came with the wake phrase
+            self.typed = not spoken
+            self.addressed = text if spoken else ""  # said right after the wake phrase: meant for Sommus
         self.last_activity = time.monotonic()
         await self.session.send_realtime_input(text=text)
 
@@ -317,15 +342,17 @@ class LiveConversation:
             self.last_interrupt = self.last_activity
         if content.input_transcription and content.input_transcription.text:
             self.exchange.heard.append(content.input_transcription.text)
+            self.typed = False  # words from the microphone
             self.last_heard = self.exchange.heard_text
             self.last_activity = time.monotonic()
         if content.model_turn:
             for part in content.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
                     self.player.enqueue(from_pcm16(part.inline_data.data))
-                    self.last_activity = time.monotonic()
+                    self.last_activity = self.last_spoke = time.monotonic()
         if content.output_transcription and content.output_transcription.text:
             self.exchange.said.append(content.output_transcription.text)
+            self.last_spoke = time.monotonic()
         if content.turn_complete:
             self.finish_exchange()
 
@@ -347,6 +374,20 @@ class LiveConversation:
             self.dismissed = True
         self.last_activity = time.monotonic()
 
+    def overheard_reason(self, name: str, asked: str) -> str | None:
+        """Why this tool call is dropped without running or replying, or None. Only for spoken requests: a typed
+        one is always meant. With no words to judge (the transcript hasn't arrived) nothing is dropped."""
+        from sommus.brain.loop import level_unasked, overheard
+
+        if self.typed or not asked.strip() or asked == self.addressed:
+            return None
+        recent = time.monotonic() - self.last_spoke <= RECENT_REPLY_SECONDS
+        if why := overheard(asked, self.in_class(), recent):
+            return why
+        if level_unasked(name, asked):
+            return "the volume or brightness wasn't asked for"
+        return None
+
     async def run_tool(self, call) -> None:
         from google.genai import types
 
@@ -355,6 +396,17 @@ class LiveConversation:
         # His words, never Sommus's: the last reply stood in here once, and the outside-content rule checked
         # tools against what Sommus had said.
         asked = self.exchange.heard_text or self.last_heard
+        if why := self.overheard_reason(name, asked):
+            self.show(f"  [dim]→ {escape(name)} not run: {escape(why)}[/]")
+            self.log(text=asked, tools=[name], outcome=f"ignored: overheard ({why})")
+            store = self.brain.store
+            store.finish_turn(store.start_turn(f"[overheard] {asked}"), "", "ok", "gemini-live", Usage())
+            if call.id not in self.cancelled:
+                response = types.FunctionResponse(id=call.id, name=name, response={"result": SILENT})
+                if name == "ask_sommus":
+                    response.scheduling = types.FunctionResponseScheduling.WHEN_IDLE
+                await self.session.send_tool_response(function_responses=[response])
+            return
         self.show(f"  [dim]→ {escape(name)}({escape(', '.join(f'{k}={v!r}' for k, v in args.items()))})[/]")
         try:
             if name == "ask_sommus":

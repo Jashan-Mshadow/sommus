@@ -605,3 +605,82 @@ def test_a_reminder_with_no_task_still_sets_a_reminder():
 def test_the_audio_device_is_said_like_a_person():
     assert fastpath.say_audio_output("Logi Z207 (speakers)") == "Sound is going to Logi Z207, a speaker."
     assert fastpath.say_audio_output("AirPods (headphones)") == "Sound is going to AirPods, headphones."
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "What's on my to-do list for the rest of today and tomorrow?",
+        "what do I have to do today and tomorrow",
+        "what's left on my to do list for the rest of today",
+        "read my to-do list for tonight and tomorrow",
+    ],
+)
+def test_a_todo_for_two_days_is_read_without_the_model(text):
+    found = fastpath.match(text, todo=lambda tokens: " ".join(tokens))
+    assert found and found.intent == "todo"
+    assert "today" in found.local() or "tonight" in found.local()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "add milk to my to-do list today and tomorrow",
+        "what's on my to-do list and then play music",
+        "what's on my to-do list and my calendar",
+        "what's on my to-do list for today and also open spotify",
+    ],
+)
+def test_an_and_that_joins_anything_but_two_days_still_goes_to_the_model(text):
+    assert fastpath.match(text, todo=lambda tokens: "unused") is None
+
+
+@pytest.mark.parametrize(
+    "text, intent",
+    [
+        ("how much battery do I have left", "battery"),
+        ("do I have battery left", "battery"),
+        ("read my clipboard", "clipboard"),
+        ("show me my clipboard", "clipboard"),
+        ("do I have internet", "wifi"),
+        ("is the wifi on", "wifi"),
+        ("are my airpods connected", "audio_output"),
+        ("where is the sound coming from", "audio_output"),
+        ("how loud is it", "volume"),
+        ("how bright is my screen", "brightness"),
+    ],
+)
+def test_one_call_lookups_that_used_to_reach_the_model_are_free(text, intent):
+    found = fastpath.match(text)
+    assert found and found.intent == intent
+    assert found.tool in {
+        "get_battery",
+        "get_clipboard",
+        "get_wifi",
+        "get_audio_output",
+        "get_volume",
+        "get_brightness",
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "turn on wifi",
+        "wifi on",
+        "is it louder now",
+        "how about volume 40",
+        "do I have battery and wifi",
+        "where did the sound go",
+        "why is my battery draining",
+    ],
+)
+def test_lookups_never_grab_what_they_do_not_fully_understand(text):
+    found = fastpath.match(text)
+    assert found is None or found.tool not in {"get_wifi", "get_battery", "get_audio_output", "set_volume"}
+    assert found is None or found.read_tool is None or found.delta == 0
+
+
+def test_asking_how_loud_it_is_never_turns_the_volume_up():
+    found = fastpath.match("how loud is it")
+    assert found.tool == "get_volume" and found.delta == 0 and not found.args
