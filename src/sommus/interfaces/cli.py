@@ -734,12 +734,15 @@ async def live_chat() -> None:
             return True
 
         parts: list[str] = []
-        async with brain.lock:
-            async for event in brain.handle(request, allow):
-                if isinstance(event, TextDelta):
-                    parts.append(event.text)
-                elif isinstance(event, Notice):
-                    parts.append(f" ({event.text})")
+        try:
+            async with brain.lock:
+                async for event in brain.handle(request, allow):
+                    if isinstance(event, TextDelta):
+                        parts.append(event.text)
+                    elif isinstance(event, Notice):
+                        parts.append(f" ({event.text})")
+        except Exception:  # the network is down too, so nothing else can answer: say so, locally and plainly
+            parts = ["I can't reach the network right now."]
         reply = "".join(parts).strip()
         if not reply:
             return
@@ -782,6 +785,9 @@ async def live_chat() -> None:
                 break
             except Exception as e:  # offline, quota used up, Google down
                 failure = e
+                if handle and ("not found" in str(e).lower() or "expired" in str(e).lower()):
+                    handle = None  # the old session is gone (2026-11-18, error 1008): start a fresh one instead
+                    continue
                 blip = isinstance(e, (TimeoutError, OSError, ConnectionError)) or "handshake" in str(e).lower()
                 if not blip or attempt == 3:
                     break
@@ -799,6 +805,7 @@ async def live_chat() -> None:
         detector.reset()  # its speech score carries state: start the live session's clean
         conversation = live.LiveConversation(live_session, brain, engine_io, show, log, listen_for_pin)
         conversation.handle = handle
+        engine_io.conversation_open = True  # echo cancellation stays on while Sommus talks (or it hears itself)
         state.update(mode="awake", conversation=conversation, context=context, opened_at=time.monotonic())
         state["receiver"] = asyncio.create_task(receive(conversation, context))
         if first:
@@ -833,6 +840,7 @@ async def live_chat() -> None:
 
     async def close_conversation(quiet: bool = False) -> None:
         conversation, context = state["conversation"], state["context"]
+        engine_io.conversation_open = False
         state.update(mode="asleep", conversation=None, context=None)
         receiver = state.pop("receiver", None)
         if receiver is not None and receiver is not asyncio.current_task():

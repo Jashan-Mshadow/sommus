@@ -37,6 +37,13 @@ QUEUE_STUCK_SECONDS = 120  # audio "still queued" this long: its completions wer
 PLAY_SLACK_SECONDS = 3.0  # a reply that hasn't finished this long after it should have: the player is dead
 
 
+def want_voice_processing(media_playing: bool, conversation_open: bool) -> bool:
+    """Whether echo cancellation should be on. Off only while something else plays AND no conversation is open.
+    With a conversation open Sommus is talking through the speaker, and without echo cancellation its own voice
+    comes back in through the mic and Gemini answers it ("you > I am indeed responding, sir.", 2026-11-18)."""
+    return conversation_open or not media_playing
+
+
 def watchdog_action(quiet: float, rebuilds: int) -> str:
     """What the watchdog does when no mic audio has arrived for `quiet` seconds: nothing, a fresh engine, or
     give up so the process restarts (`rebuilds` fresh engines already failed to bring the audio back)."""
@@ -85,6 +92,7 @@ class DuplexAudio:
         # return (2026-11-18). Sommus keeps listening with the plain mic; barge-in needs its name then anyway.
         self.pause_for_media = pause_for_media
         self.voice_processing = True
+        self.conversation_open = False  # set by live mode: a Live conversation is open, so echo cancellation stays on
         self._rebuild_lock = threading.RLock()
         self._media_watching = False
         self.last_frame = time.monotonic()
@@ -174,12 +182,12 @@ class DuplexAudio:
                     sys.stderr.write("The audio engine won't come back: restarting Sommus live.\n")
                     os._exit(75)
                 continue
-            want_vp = not state.feed(media.other_audio_playing())
+            want_vp = want_voice_processing(state.feed(media.other_audio_playing()), self.conversation_open)
             if want_vp == self.voice_processing:
                 continue
             self.voice_processing = want_vp
             sys.stderr.write(
-                "Echo cancellation back on: nothing else is playing.\n"
+                "Echo cancellation back on.\n"
                 if want_vp
                 else "Something is playing sound: echo cancellation off so the volume isn't touched.\n"
             )

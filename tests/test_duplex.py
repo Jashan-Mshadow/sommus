@@ -73,3 +73,12 @@ def test_kokoro_plays_through_the_echo_cancelling_engine_when_barge_in_is_on():
 )
 def test_the_watchdog_rebuilds_the_engine_then_gives_up_so_the_process_restarts(quiet, rebuilds, expected):
     assert duplex.watchdog_action(quiet, rebuilds) == expected
+
+
+@pytest.mark.parametrize(
+    ("media", "conversation", "expected"),
+    [(False, False, True), (True, False, False), (True, True, True), (False, True, True)],
+)
+def test_echo_cancellation_stays_on_while_a_conversation_is_open(media, conversation, expected):
+    # Off while a video plays would be fine alone, but with a conversation open Sommus hears its own voice.
+    assert duplex.want_voice_processing(media, conversation) is expected
