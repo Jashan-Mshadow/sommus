@@ -65,3 +65,11 @@ def test_kokoro_plays_through_the_echo_cancelling_engine_when_barge_in_is_on():
     kokoro.play(np.zeros(2400, dtype=np.float32), threading.Event())
     kokoro.rest(threading.Event())  # nothing to close: the engine stays up for the mic
     assert played == [2400]
+
+
+@pytest.mark.parametrize(
+    ("quiet", "rebuilds", "expected"),
+    [(0.5, 0, "ok"), (7.9, 3, "ok"), (8, 0, "rebuild"), (30, 3, "rebuild"), (30, 4, "exit")],
+)
+def test_the_watchdog_rebuilds_the_engine_then_gives_up_so_the_process_restarts(quiet, rebuilds, expected):
+    assert duplex.watchdog_action(quiet, rebuilds) == expected

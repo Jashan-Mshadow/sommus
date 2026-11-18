@@ -13,9 +13,13 @@ sound on, which is why barge-in is off by default ([voice] barge_in).
 
 from __future__ import annotations
 
+import os
 import queue
+import sys
 import threading
+import time
 from math import gcd
+from pathlib import Path
 
 import numpy as np
 
@@ -23,6 +27,22 @@ OUT_RATE = 24_000  # Kokoro's sample rate
 MIC_RATE = 16_000  # what the speech detector and Whisper want
 CHUNK = 512  # the speech detector's frame
 DUCK_LEAST = 10  # AVAudioVoiceProcessingOtherAudioDuckingLevel.min: keep Spotify at its own volume
+
+# Self-healing (2026-11-17). Sommus sat deaf for 6 days with its process alive: the engine stopped delivering mic
+# audio (a Bluetooth speaker connecting, a sleep) or a reply never finished playing, and nothing noticed.
+BEAT_SECONDS = 5  # how often the watchdog looks
+STALL_SECONDS = 8  # no mic audio this long: build the engine again
+MAX_REBUILDS = 4  # still nothing after this many fresh engines: exit, and the wrapper starts a clean process
+QUEUE_STUCK_SECONDS = 120  # audio "still queued" this long: its completions were lost, so stop waiting for them
+PLAY_SLACK_SECONDS = 3.0  # a reply that hasn't finished this long after it should have: the player is dead
+
+
+def watchdog_action(quiet: float, rebuilds: int) -> str:
+    """What the watchdog does when no mic audio has arrived for `quiet` seconds: nothing, a fresh engine, or
+    give up so the process restarts (`rebuilds` fresh engines already failed to bring the audio back)."""
+    if quiet < STALL_SECONDS:
+        return "ok"
+    return "exit" if rebuilds >= MAX_REBUILDS else "rebuild"
 
 
 class MicResampler:
@@ -58,8 +78,13 @@ class DuplexAudio:
     through at about half the level of the plain microphone, which makes speech from across the room
     harder to detect. The captured signal is scaled back up before anyone sees it."""
 
-    def __init__(self, gain: float = 2.0):
+    def __init__(self, gain: float = 2.0, beat_file: Path | None = None):
         self.gain = gain
+        self.beat_file = beat_file  # touched while mic audio flows: the wrapper script restarts us if it goes stale
+        self.last_frame = time.monotonic()
+        self._rebuilt_at = 0.0
+        self._watching = False
+        self._closed = False
         self.mic: queue.Queue[np.ndarray] = queue.Queue(maxsize=400)  # ~13 s of chunks
         self.engine = None
         self.player = None
@@ -93,7 +118,62 @@ class DuplexAudio:
         self._resampler = MicResampler(int(mic_format.sampleRate()))
         mic.installTapOnBus_bufferSize_format_block_(0, 1024, mic_format, self._heard)
         self.engine = engine
+        self._closed = False
+        self.last_frame = time.monotonic()
         self._run()
+        if not self._watching:
+            self._watching = True
+            threading.Thread(target=self._watch, name="sommus-audio-watchdog", daemon=True).start()
+
+    def rebuild(self) -> None:
+        """A fresh engine, tap and player: after a device change the old tap can stay silent while the engine
+        still says it is running."""
+        old, self.engine = self.engine, None
+        if old is not None:
+            try:
+                old.inputNode().removeTapOnBus_(0)
+                old.stop()
+            except Exception:
+                pass
+        with self._count_lock:
+            self._generation += 1
+            self._queued = 0
+        self.start()
+
+    def _watch(self) -> None:
+        rebuilds, queued_for = 0, 0
+        while not self._closed:
+            time.sleep(BEAT_SECONDS)
+            if self.engine is None:
+                continue  # stopped on purpose, or being rebuilt right now
+            queued_for = queued_for + BEAT_SECONDS if self._queued > 0 else 0
+            if queued_for >= QUEUE_STUCK_SECONDS:
+                self.flush()
+                queued_for = 0
+            quiet = time.monotonic() - self.last_frame
+            action = watchdog_action(quiet, rebuilds)
+            if action == "ok":
+                rebuilds = 0
+                self._beat()
+            elif time.monotonic() - self._rebuilt_at >= STALL_SECONDS:  # give a fresh engine time to deliver
+                if action == "exit":
+                    sys.stderr.write("No microphone audio, even from a fresh engine: restarting Sommus live.\n")
+                    os._exit(75)
+                rebuilds += 1
+                self._rebuilt_at = time.monotonic()
+                sys.stderr.write(f"No microphone audio for {quiet:.0f} s: rebuilding the audio engine.\n")
+                try:
+                    self.rebuild()
+                except Exception as e:
+                    sys.stderr.write(f"The audio engine would not restart ({e}).\n")
+
+    def _beat(self) -> None:
+        if self.beat_file is not None:
+            try:
+                self.beat_file.parent.mkdir(parents=True, exist_ok=True)
+                self.beat_file.touch()
+            except OSError:
+                pass
 
     def _run(self) -> None:
         ok, error = self.engine.startAndReturnError_(None)
@@ -113,6 +193,7 @@ class DuplexAudio:
         frames = buffer.frameLength()
         if not frames:
             return
+        self.last_frame = time.monotonic()
         samples = np.frombuffer(buffer.floatChannelData()[0].as_buffer(frames), dtype=np.float32)
         if self.gain != 1.0:
             samples = np.clip(samples * self.gain, -1.0, 1.0)
@@ -132,8 +213,11 @@ class DuplexAudio:
         np.frombuffer(buffer.floatChannelData()[0].as_buffer(len(audio)), dtype=np.float32)[:] = audio
         finished = threading.Event()
         self.player.scheduleBuffer_completionHandler_(buffer, finished.set)
+        give_up = time.monotonic() + len(audio) / OUT_RATE + PLAY_SLACK_SECONDS
         while not finished.wait(0.02):
-            if stop.is_set():
+            if stop.is_set() or time.monotonic() > give_up:
+                # `stop`, or a player that died (the output device changed): its completion never comes, and
+                # waiting for it here kept the listener deaf for days (2026-11-11).
                 self.player.stop()  # drops what's queued
                 self.player.play()  # ready for the next reply
                 return
@@ -176,6 +260,7 @@ class DuplexAudio:
             self.player.play()
 
     def stop(self) -> None:
+        self._closed = True
         if self.engine is not None:
             self.engine.inputNode().removeTapOnBus_(0)
             self.engine.stop()

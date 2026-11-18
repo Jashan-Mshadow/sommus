@@ -628,7 +628,9 @@ async def live_chat() -> None:
     sensitivity = settings.get("interrupt_sensitivity", "low")
 
     bot_task = None
-    engine_io = duplex.DuplexAudio(gain=float(voice_settings.get("barge_in_mic_gain", 2.0)))
+    engine_io = duplex.DuplexAudio(
+        gain=float(voice_settings.get("barge_in_mic_gain", 2.0)), beat_file=cfg.data_dir / "live.heartbeat"
+    )
     from sommus import client as remote_brain
     from sommus import remote
 
