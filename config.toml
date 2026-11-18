@@ -235,3 +235,28 @@ slots = [
   { name = "dinner", at = "18:00", say = "around dinner", items = ["fish oil", "k2+d3"] },
   { name = "sleep", at = "22:30", say = "before bed", items = ["creatine", "magnesium"] },
 ]
+
+[model_training]
+# Sommus's own small model (docs/decisions/0014-own-model-nightly.md), nightly via `sommus model-nightly`.
+# The data stages (export, split, synthetic requests, report) run anywhere. The fine-tune runs only on Apple
+# silicon with mlx-lm and enough memory; elsewhere the report says "training: skipped (<reason>)".
+enabled = true                     # false = the whole job does nothing
+train = true                       # false = never fine-tune, even on a Mac that could
+base_model = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"   # 1-3B; Qwen2.5-3B-Instruct-4bit if memory allows
+lora_rank = 8
+lora_scale = 20.0
+lora_dropout = 0.0
+num_layers = 16                    # how many of the top layers get LoRA adapters
+iters = 600
+batch_size = 4
+learning_rate = 1e-4
+max_seq_length = 512
+min_memory_gb = 16                 # below this, training is skipped
+min_train_examples = 50
+timeout_minutes = 90
+synthetic_per_night = 40           # new generated requests per night (Haiku, schemas only, never real text)
+synthetic_max_usd = 0.05           # hard cap per night, estimated from token counts
+synthetic_model = ""               # "" = [budget] cheap_model
+synthetic_tools_per_night = 10     # how many of the least-covered tools each night targets
+vault = "~/Documents/Jashans_Brain"
+note = "Portfolio/Projects/Sommus Model Progress.md"   # relative to the vault; one section a night

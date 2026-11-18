@@ -17,11 +17,13 @@ from pathlib import Path
 OUTPUT_CLIP = 600
 
 
-def records(db: sqlite3.Connection) -> list[dict]:
+def records(db: sqlite3.Connection, after_id: int = 0, before_id: int | None = None) -> list[dict]:
+    """Every turn with id > after_id (and < before_id when given): the nightly model run reads only what is new."""
     db.row_factory = sqlite3.Row
     turns = db.execute(
         "SELECT id, started_at, user_text, reply, status, model, cost_usd FROM turns "
-        "WHERE model != 'pin' AND user_text NOT LIKE '[PIN entered]%' ORDER BY id"
+        "WHERE model != 'pin' AND user_text NOT LIKE '[PIN entered]%' AND id > ? AND id < ? ORDER BY id",
+        (after_id, before_id if before_id is not None else 2**62),
     ).fetchall()
     out = []
     for turn in turns:
