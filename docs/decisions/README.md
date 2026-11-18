@@ -17,3 +17,4 @@ The numbers behind them are in [MEASUREMENTS.md](../MEASUREMENTS.md) (regenerate
 | [10](0010-live-voice-on-gemini.md) | Live voice on Gemini Live, with Sommus keeping the wake word, the tools and the PIN |
 | [11](0011-a-nightly-diary-instead-of-mem0.md) | Long-term memory is a nightly diary distilled from the log, not Mem0 |
 | [12](0012-small-mac-actions-wait-for-the-mac.md) | Small Mac actions wait for the Mac to wake; nothing else does |
+| [13](0013-echo-cancellation-steps-aside-for-media.md) | Echo cancellation steps aside while another app plays sound |

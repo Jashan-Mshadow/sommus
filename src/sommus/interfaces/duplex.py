@@ -78,9 +78,15 @@ class DuplexAudio:
     through at about half the level of the plain microphone, which makes speech from across the room
     harder to detect. The captured signal is scaled back up before anyone sees it."""
 
-    def __init__(self, gain: float = 2.0, beat_file: Path | None = None):
+    def __init__(self, gain: float = 2.0, beat_file: Path | None = None, pause_for_media: bool = True):
         self.gain = gain
         self.beat_file = beat_file  # touched while mic audio flows: the wrapper script restarts us if it goes stale
+        # While Netflix, YouTube, Spotify... play, echo cancellation is off: it makes the Mac's volume dip and
+        # return (2026-11-18). Sommus keeps listening with the plain mic; barge-in needs its name then anyway.
+        self.pause_for_media = pause_for_media
+        self.voice_processing = True
+        self._rebuild_lock = threading.RLock()
+        self._media_watching = False
         self.last_frame = time.monotonic()
         self._rebuilt_at = 0.0
         self._watching = False
@@ -107,13 +113,14 @@ class DuplexAudio:
         engine.connect_to_format_(self.player, engine.mainMixerNode(), self.out_format)
 
         mic = engine.inputNode()
-        ok, error = mic.setVoiceProcessingEnabled_error_(True, None)
-        if not ok:
-            raise RuntimeError(f"echo cancellation isn't available: {error}")
-        try:  # voice processing turns other apps down by default; Spotify shouldn't dip while listening
-            mic.setVoiceProcessingOtherAudioDuckingConfiguration_((False, DUCK_LEAST))
-        except Exception:
-            pass
+        if self.voice_processing:
+            ok, error = mic.setVoiceProcessingEnabled_error_(True, None)
+            if not ok:
+                raise RuntimeError(f"echo cancellation isn't available: {error}")
+            try:  # voice processing turns other apps down by default; Spotify shouldn't dip while listening
+                mic.setVoiceProcessingOtherAudioDuckingConfiguration_((False, DUCK_LEAST))
+            except Exception:
+                pass
         mic_format = mic.outputFormatForBus_(0)
         self._resampler = MicResampler(int(mic_format.sampleRate()))
         mic.installTapOnBus_bufferSize_format_block_(0, 1024, mic_format, self._heard)
@@ -124,21 +131,74 @@ class DuplexAudio:
         if not self._watching:
             self._watching = True
             threading.Thread(target=self._watch, name="sommus-audio-watchdog", daemon=True).start()
+        if self.pause_for_media and not self._media_watching:
+            self._media_watching = True
+            threading.Thread(target=self._watch_media, name="sommus-media-watch", daemon=True).start()
 
     def rebuild(self) -> None:
         """A fresh engine, tap and player: after a device change the old tap can stay silent while the engine
         still says it is running."""
-        old, self.engine = self.engine, None
-        if old is not None:
+        with self._rebuild_lock:
+            old, self.engine = self.engine, None
+            if old is not None:
+                try:
+                    old.inputNode().removeTapOnBus_(0)
+                    old.stop()
+                except Exception:
+                    pass
+            with self._count_lock:
+                self._generation += 1
+                self._queued = 0
+            self.start()
+
+    def _watch_media(self) -> None:
+        """Echo cancellation off while another app plays sound, on again when it stops."""
+        from sommus.interfaces import media
+
+        state = media.MediaState()
+        failed_rounds = 0
+        while not self._closed:
+            time.sleep(media.POLL_SECONDS)
+            if self.engine is None:
+                continue
+            if not self.engine.isRunning():
+                # Another app starting to play changes the output's format and stops this engine (measured
+                # 2026-11-18); waiting for the 8 s no-mic-audio watchdog would leave Sommus deaf meanwhile.
+                if self._switch_mode():
+                    failed_rounds = 0
+                    continue
+                # Fresh engines won't start either (2026-11-18: sat deaf for hours rebuilding in a loop, and
+                # this thread's rebuilds kept the watchdog below from ever giving up). Same exit as the watchdog.
+                failed_rounds += 1
+                if failed_rounds >= 2:
+                    sys.stderr.write("The audio engine won't come back: restarting Sommus live.\n")
+                    os._exit(75)
+                continue
+            want_vp = not state.feed(media.other_audio_playing())
+            if want_vp == self.voice_processing:
+                continue
+            self.voice_processing = want_vp
+            sys.stderr.write(
+                "Echo cancellation back on: nothing else is playing.\n"
+                if want_vp
+                else "Something is playing sound: echo cancellation off so the volume isn't touched.\n"
+            )
+            self._switch_mode()
+
+    def _switch_mode(self) -> bool:
+        """Rebuild for the new mode and check mic audio flows; False if three tries brought nothing. Measured
+        2026-11-18: right after echo cancellation the plain mic's engine can come up stopped (its sample rate
+        changes under it), and a second build works."""
+        for _ in range(3):
+            self._rebuilt_at = time.monotonic()
             try:
-                old.inputNode().removeTapOnBus_(0)
-                old.stop()
-            except Exception:
-                pass
-        with self._count_lock:
-            self._generation += 1
-            self._queued = 0
-        self.start()
+                self.rebuild()
+            except Exception as e:
+                sys.stderr.write(f"The audio engine would not restart ({e}).\n")
+            time.sleep(1.5)
+            if self.engine is not None and self.engine.isRunning() and time.monotonic() - self.last_frame < 1.0:
+                return True
+        return False
 
     def _watch(self) -> None:
         rebuilds, queued_for = 0, 0
@@ -195,8 +255,9 @@ class DuplexAudio:
             return
         self.last_frame = time.monotonic()
         samples = np.frombuffer(buffer.floatChannelData()[0].as_buffer(frames), dtype=np.float32)
-        if self.gain != 1.0:
-            samples = np.clip(samples * self.gain, -1.0, 1.0)
+        gain = self.gain if self.voice_processing else 1.0  # the plain mic isn't halved like the echo-cancelled one
+        if gain != 1.0:
+            samples = np.clip(samples * gain, -1.0, 1.0)
         for chunk in self._resampler.feed(samples):
             if self.mic.full():
                 self.mic.get_nowait()  # nobody is reading: drop the oldest
