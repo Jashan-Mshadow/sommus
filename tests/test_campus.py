@@ -149,3 +149,46 @@ def test_fast_path_claims_class_and_deadline_questions(text, intent):
 def test_fast_path_leaves_everything_else(text):
     found = fastpath.match(text, campus=CAMPUS)
     assert found is None or found.intent not in {"campus", "due"}
+
+
+# ------------------------------------------------------------------ "the rest of today and tomorrow"
+
+AGENDA = campus.Schedule(
+    tomllib.loads("""
+term_start = 2026-09-08
+term_end = 2026-12-08
+weekly = [
+  { course = "ECE 150", kind = "LEC", day = "Mon", start = 08:30:00, end = 09:20:00, room = "E7 5353" },
+  { course = "MATH 117", kind = "TUT", day = "Mon", start = 14:30:00, end = 16:20:00, room = "DWE 3517" },
+  { course = "ECE 105", kind = "LEC", day = "Tue", start = 10:30:00, end = 11:20:00, room = "RCH 101" },
+]
+deadlines = [
+  { what = "Early quiz", due = 2026-09-21T09:00:00 },
+  { what = "ECE 150 Lab 2", due = 2026-09-21T22:00:00 },
+  { what = "ECE 105 Assignment 2", due = 2026-09-22T23:59:00 },
+  { what = "Far away", due = 2026-09-30T23:59:00 },
+]
+""")
+)
+TODAY_AND_TOMORROW = ["whats", "on", "my", "to", "do", "list", "for", "the", "rest", "of", "today", "and", "tomorrow"]
+
+
+def test_classes_that_are_over_are_not_left_today():
+    said = campus.agenda(AGENDA, at("2026-09-21 13:00"), TODAY_AND_TOMORROW)  # a Monday, after the 8:30 lecture
+    assert "ECE 150 lecture" not in said and "MATH 117 tutorial in DWE 3517" in said
+    assert "Early quiz" not in said  # due at 9, already past
+    assert "Due today: ECE 150 Lab 2 at 10 PM" in said
+    assert "due tomorrow: ECE 105 Assignment 2" in said and "Far away" not in said
+    assert "Tomorrow: 10:30 AM ECE 105 lecture in RCH 101." in said
+
+
+def test_a_class_in_progress_is_said_to_be_on_now_and_a_finished_day_is_empty():
+    assert "on now until 4:20 PM" in campus.agenda(AGENDA, at("2026-09-21 15:00"), ["rest", "of", "today"])
+    said = campus.agenda(AGENDA, at("2026-09-21 21:00"), ["rest", "of", "today"])
+    assert said.startswith("No classes left today.") and "Lab 2" in said
+    assert campus.agenda(AGENDA, at("2026-09-21 23:00"), ["today"]).endswith("Nothing due today.")
+
+
+def test_tomorrow_alone_skips_today():
+    said = campus.agenda(AGENDA, at("2026-09-21 13:00"), ["tomorrow"])
+    assert "left today" not in said and "MATH 117" not in said and "ECE 105 lecture" in said

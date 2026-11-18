@@ -233,6 +233,53 @@ def due_summary(schedule: Schedule, now: datetime, days: int = 7) -> str:
     return "Due soon: " + "; ".join(parts) + "."
 
 
+def still_ahead(schedule: Schedule, now: datetime) -> list[Session]:
+    """Today's sessions that haven't finished yet: one that's over is never "left today" (2026-11-17: a to-do
+    answer named a tutorial that had ended). One with no end time counts for an hour, as in `current`."""
+    return [s for s in schedule.on(now.date()) if (s.end or s.start + timedelta(hours=1)) > now]
+
+
+def agenda(schedule: Schedule, now: datetime, tokens: list[str]) -> str:
+    """What's still ahead of him: classes not yet over, and what's due, for "today"/"the rest of today" and/or
+    "tomorrow". Plain code, so it can't read a stale list: it only knows the clock and the schedule."""
+    asked = set(tokens)
+    tomorrow = now.date() + timedelta(days=1)
+    want_tomorrow = bool(asked & {"tomorrow", "tomorrows"})
+    want_today = bool(asked & {"today", "todays", "tonight", "rest"}) or not want_tomorrow
+
+    def line(session: Session) -> str:
+        if session.start <= now and session.end:
+            return f"{session.label}{_room(session)}, on now until {clock(session.end)}"
+        return _line(session)
+
+    parts: list[str] = []
+    if want_today:
+        left = still_ahead(schedule, now)
+        parts.append(
+            "Classes left today: " + "; ".join(line(s) for s in left) + "." if left else "No classes left today."
+        )
+    if want_tomorrow:
+        sessions = schedule.on(tomorrow)
+        parts.append("Tomorrow: " + "; ".join(_line(s) for s in sessions) + "." if sessions else "No classes tomorrow.")
+
+    def what(deadline: Deadline) -> str:
+        return deadline.what + ("" if deadline.due.time() == time(23, 59) else f" at {clock(deadline.due)}")
+
+    due: list[str] = []
+    for label, day, wanted in (("today", now.date(), want_today), ("tomorrow", tomorrow, want_tomorrow)):
+        if wanted:
+            found = [d for d in schedule.deadlines if d.due.date() == day and d.due >= now]
+            if found:
+                due.append(f"due {label}: " + "; ".join(what(d) for d in found))
+    if due:
+        said = "; ".join(due) + "."
+        parts.append(said[0].upper() + said[1:])
+    else:
+        gone = "today or tomorrow" if want_today and want_tomorrow else "today" if want_today else "tomorrow"
+        parts.append(f"Nothing due {gone}.")
+    return " ".join(parts)
+
+
 # ---------------------------------------------------------------- today.json
 
 
