@@ -29,7 +29,7 @@ from sommus import activity, brief, config, supplements
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
-from sommus.brain.nodes import NodeHub
+from sommus.brain.nodes import NodeHub, plain_error
 from sommus.brain.permissions import Policy
 from sommus.brain.store import Store
 from sommus.contacts import ContactBook
@@ -639,11 +639,30 @@ class Server:
         if not self.reminders:
             return
         for reminder, late in self.reminders.take_due(now):
+            if reminder.action:
+                await self.run_scheduled(reminder, late)
+                continue
             note = f" (meant for {reminder.when():%-I:%M %p})" if late else ""
             spoken = brief.spoken_reminder(reminder.title, self.phrases, reminder.when() if late else None)
             # Telegram always: the phone keeps it, and he may not be at the awake Mac. Spoken too when it can be.
             await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True, kind="reminder")
             self.log(f"Reminder sent: {reminder.title}")
+
+    async def run_scheduled(self, reminder, late: bool) -> None:
+        """A timed action ("turn off the lamp in 5 minutes"): run it, then say on Telegram how it went. Never
+        spoken: the lamp going off at 1 AM shouldn't come with a voice."""
+        tool, args = reminder.action.get("tool", ""), dict(reminder.action.get("args") or {})
+        result = await self.hub.call(tool, args)
+        fallback = {"plug_on": "ble_plug_on", "plug_off": "ble_plug_off"}.get(tool)
+        if result.is_error and fallback and self.hub.tier(fallback) is not None:
+            result = await self.hub.call(fallback, {})  # the cloud can't reach it: the Mac's Bluetooth might
+        note = f" ({reminder.when():%-I:%M %p} was the time; I was late)" if late else ""
+        if result.is_error:
+            text = f'⏰ Couldn\'t do "{reminder.title}": {plain_error(result.text)}'
+        else:
+            text = f"⏰ {reminder.title}, as you asked{note}."
+        await self.tell(text)
+        self.log(f"Scheduled {tool}: {'failed: ' + result.text[:120] if result.is_error else 'done'}")
 
     async def copy_contacts(self) -> None:
         """While the Mac is awake, refresh the server's copy of its Contacts."""

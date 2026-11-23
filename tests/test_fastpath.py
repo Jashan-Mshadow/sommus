@@ -559,13 +559,14 @@ def test_requests_that_sound_like_goodbyes_are_not(said):
 )
 def test_the_fan_skips_the_model(text, tool):
     found = fastpath.match(text, WEATHER)
-    assert found is not None and (found.intent, found.tool, found.args) == ("fan", tool, {"plug": "fan"}), text
+    name = "" if "plug" in text else "fan"  # "the plug" names none: the only plug answers to it
+    assert found is not None and (found.intent, found.tool, found.args) == ("fan", tool, {"plug": name}), text
 
 
 @pytest.mark.parametrize(
     "text",
-    ["turn on the fan and the lights", "fan", "turn on the fan in 10 minutes", "why is the fan so loud",
-     "buy a new fan", "turn the fan on off"],
+    ["turn on the fan and the lights", "fan", "why is the fan so loud", "buy a new fan", "turn the fan on off",
+     "turn the lamp off in 3 days", "turn off the lamp in 5 minutes and the fan"],
 )  # fmt: skip
 def test_fan_requests_with_more_in_them_go_to_the_model(text):
     found = fastpath.match(text, WEATHER)
@@ -684,3 +685,60 @@ def test_lookups_never_grab_what_they_do_not_fully_understand(text):
 def test_asking_how_loud_it_is_never_turns_the_volume_up():
     found = fastpath.match("how loud is it")
     assert found.tool == "get_volume" and found.delta == 0 and not found.args
+
+
+@pytest.mark.parametrize(
+    ("text", "tool", "plug"),
+    [
+        ("turn off the lamp", "plug_off", "lamp"),
+        ("lamp on", "plug_on", "lamp"),
+        ("turn the light off", "plug_off", "lamp"),
+        ("switch the lights on", "plug_on", "lamp"),
+        ("turn the lamp back on", "plug_on", "lamp"),
+        ("is the lamp on", "plug_status", "lamp"),
+    ],
+)
+def test_the_lamp_skips_the_model(text, tool, plug):
+    found = fastpath.match(text, WEATHER)
+    assert found is not None and (found.tool, found.args) == (tool, {"plug": plug}), text
+
+
+def test_the_lamp_reply_names_the_lamp():
+    assert fastpath.match("turn off the lamp").phrase("Lamp told to turn off.") == "Lamp's off."
+
+
+@pytest.mark.parametrize("text", ["turn on the flashlight", "turn on the phone light", "why is the lamp on"])
+def test_other_lights_are_not_the_lamp(text):
+    found = fastpath.match(text, WEATHER)
+    assert found is None or not (found.tool or "").startswith(("plug", "schedule")), text
+
+
+@pytest.mark.parametrize(("text", "tool"), [("turn it back on", "plug_on"), ("turn it off", "plug_off")])
+def test_it_means_the_plug_right_after_a_plug_command(text, tool):
+    found = fastpath.match(text, follow="plug")
+    assert found is not None and found.tool == tool
+    assert fastpath.match(text) is None or fastpath.match(text).tool != tool  # without it, the model decides
+
+
+@pytest.mark.parametrize(
+    ("text", "on", "due", "said"),
+    [
+        ("turn off the lamp in 5 minutes", False, "2026-11-23 00:10", "Lamp goes off in 5 minutes."),
+        ("turn the lamp off in half an hour", False, "2026-11-23 00:35", "Lamp goes off in 30 minutes."),
+        ("turn on the fan in 10 minutes", True, "2026-11-23 00:15", "Fan goes on in 10 minutes."),
+        ("lamp on at 7 am", True, "2026-11-23 07:00", "Lamp goes on at 7 AM."),
+        ("turn on the lamp tomorrow at 7", True, "2026-11-24 07:00", "Lamp goes on tomorrow at 7 AM."),
+        ("turn off the lights at 1:30", False, "2026-11-23 01:30", "Lamp goes off at 1:30 AM."),  # next 1:30
+    ],
+)
+def test_a_plug_command_with_a_time_is_scheduled(text, on, due, said):
+    now = datetime(2026, 11, 23, 0, 5, 20)
+    found = fastpath.match(text, now=now)
+    assert found is not None and found.tool == "schedule_plug", text
+    assert found.args["on"] is on and found.args["due"] == due
+    assert found.phrase("") == said
+
+
+def test_a_reminder_about_the_lamp_stays_a_reminder():
+    found = fastpath.match("remind me to turn off the lamp in 5 minutes")
+    assert found is not None and found.tool == "set_reminder"

@@ -204,7 +204,9 @@ LEVEL_TOOLS = {
     "get_volume": "volume",
     "set_brightness": "brightness",
     "get_brightness": "brightness",
-}
+    # "turn it back on" right after the lamp: the plug again (fastpath `follow`)
+    "plug_on": "plug", "plug_off": "plug", "ble_plug_on": "plug", "ble_plug_off": "plug",
+}  # fmt: skip
 FOLLOW_SECONDS = 180  # "a bit more" continues the level changed within this long
 IMAGES_KEPT = 1  # screenshots are ~1,200 tokens each and pile up fast in a browser task
 

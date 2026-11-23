@@ -296,3 +296,57 @@ async def test_good_morning_waits_for_the_end_of_quiet_hours_and_comes_once(serv
     await server.greet(sched, morning.replace(minute=45), morning)
     await server.greet(sched, morning.replace(minute=50), morning)
     assert len(server.hub_fake.calls) == 1 and "First up is physics" in server.hub_fake.calls[0][2]["text"]
+
+
+class PlugHub:
+    """The server's hub for a scheduled plug switch: records calls; the cloud can be made to fail."""
+
+    def __init__(self, cloud_fails=False):
+        self.cloud_fails, self.calls = cloud_fails, []
+
+    async def call(self, tool, args):
+        self.calls.append((tool, args))
+        if self.cloud_fails and tool.startswith("plug_"):
+            return ToolOutput.failure("Couldn't reach SwitchBot (ConnectError).")
+        return ToolOutput([], f"Lamp told to turn {'on' if tool.endswith('on') else 'off'}.", False)
+
+    def tier(self, tool):
+        return "reversible"
+
+
+@pytest.mark.parametrize("cloud_fails", [False, True])
+async def test_a_scheduled_plug_switch_runs_at_its_time_and_says_so_on_telegram(server, monkeypatch, cloud_fails):
+    hub = PlugHub(cloud_fails)
+    monkeypatch.setattr(server, "hub", hub)
+    monkeypatch.setattr(server, "tell", server.herald.tell)
+    node = server.reminders.node(clock=lambda: datetime(2026, 11, 23, 0, 5))
+    async with Client(node) as client:
+        said = await client.call_tool("schedule_plug", {"on": False, "due": "2026-11-23 00:10", "plug": "lamp"})
+    assert said.content[0].text.startswith("Scheduled: Lamp off at 2026-11-23 00:10")
+    await server.fire_reminders(datetime(2026, 11, 23, 0, 9))
+    assert hub.calls == []  # not yet
+    await server.fire_reminders(datetime(2026, 11, 23, 0, 10))
+    expected = [("plug_off", {"plug": "lamp"})] + ([("ble_plug_off", {})] if cloud_fails else [])
+    assert hub.calls == expected
+    assert server.told == ["⏰ Lamp off, as you asked."]
+    assert server.hub_fake.calls == []  # never spoken
+    await server.fire_reminders(datetime(2026, 11, 23, 0, 11))
+    assert len(hub.calls) == len(expected)  # once
+
+
+async def test_a_plug_switch_missed_by_more_than_half_an_hour_is_skipped(server, monkeypatch):
+    hub = PlugHub()
+    monkeypatch.setattr(server, "hub", hub)
+    server.reminders.add("Lamp off", "2026-11-23 00:10", datetime(2026, 11, 23, 0, 5),
+                         {"tool": "plug_off", "args": {"plug": "lamp"}})  # fmt: skip
+    await server.fire_reminders(datetime(2026, 11, 23, 2, 0))  # the server was down
+    assert hub.calls == [] and server.reminders.open() == []
+
+
+async def test_schedule_plug_refuses_a_time_already_gone(tmp_path):
+    from sommus.reminders import Reminders
+
+    node = Reminders(tmp_path / "r.json").node(clock=lambda: datetime(2026, 11, 23, 0, 5))
+    async with Client(node) as client:
+        said = await client.call_tool("schedule_plug", {"on": True, "due": "2026-11-22 23:00"})
+    assert "already passed" in said.content[0].text

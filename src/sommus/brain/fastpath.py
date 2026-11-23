@@ -67,9 +67,9 @@ VOCAB = {
     "next": {"skip", "next", "song", "track", "this"},
     "previous": {"previous", "back", "go", "last", "song", "track"},
     "lock": {"lock", "screen"},
-    # The fan on the SwitchBot plug (home node, on the server). "plug" alone works too: there's only one.
-    "fan": {"fan", "plug", "on", "off", "switch", "kill", "start", "stop", "room", "bedroom", "desk", "is", "are",
-            "whats", "what", "running", "status", "check"},
+    # The SwitchBot plug (home node, on the server): the lamp at home now, the fan before. "plug" alone works too.
+    "fan": {"fan", "plug", "lamp", "light", "lights", "on", "off", "switch", "kill", "start", "stop", "room",
+            "bedroom", "desk", "is", "are", "whats", "what", "running", "status", "check", "back", "again"},
     "flashlight": {"flashlight", "torch", "on", "off", "phone", "phones", "iphone", "light", "switch", "kill"},
     "screen_off": {"off", "screen", "display", "sleep", "monitor"},
     "weather": WEATHER_TRIGGERS
@@ -216,8 +216,10 @@ def match(
     apps: Callable[[], dict[str, str]] | None = None,
     follow: str | None = None,
     todo: Callable[[list[str]], str] | None = None,
+    now: datetime | None = None,
 ) -> Match | None:
-    """`follow` is "volume" or "brightness" when one was just changed, so "a bit more" continues it."""
+    """`follow` is "volume" or "brightness" when one was just changed, so "a bit more" continues it, or "plug"
+    when the plug was just switched, so "turn it back on" does."""
     raw = " ".join(text.strip().lower().split())
     tokens = words(raw)
     present = set(tokens)
@@ -229,6 +231,9 @@ def match(
         return None
     if asks_todo:
         return Match("todo", local=lambda: todo(tokens))
+    later = _PLUG_LATER.search(raw)  # "turn off the lamp in 5 minutes": a plug timer on the server
+    if later and (found := _plug_later(words(raw[: later.start()]), later, follow, now or datetime.now())):
+        return found
 
     if found := reminder(text):
         return found
@@ -276,17 +281,8 @@ def match(
     if _claims("screen_off", tokens) and present & {"off", "sleep"} and present & {"screen", "display", "monitor"}:
         return Match("screen_off", "sleep_display", phrase=lambda _: "Screen's off.")
     switch = present & {"on", "off", "kill"} and tokens[0] not in {"is", "are", "whats", "what"}  # not "is it on?"
-    if _claims("fan", tokens) and present & {"fan", "plug"}:
-        if tokens[0] in {"is", "are", "whats", "what", "check"} or present & {"status", "running"} - {"on", "off"}:
-            if not present & {"start", "stop", "kill", "switch"}:
-                return Match("fan", "plug_status", {"plug": "fan"}, fallback="ble_plug_status", fallback_args={})
-        on = bool(present & {"on", "start"}) and not present & {"off", "kill", "stop"}
-        off = bool(present & {"off", "kill", "stop"}) and not present & {"on", "start"}
-        if on or off:
-            # No Wi-Fi for the plug yet (eduroam): the Mac's Bluetooth does it instead (loop.py `fallback`).
-            return Match("fan", "plug_on" if on else "plug_off", {"plug": "fan"},
-                         phrase=lambda _, on=on: "Fan's on." if on else "Fan's off.",
-                         fallback="ble_plug_on" if on else "ble_plug_off", fallback_args={})  # fmt: skip
+    if found := _plug_command(tokens, follow):
+        return found
     if _claims("flashlight", tokens) and present & {"flashlight", "torch"} and switch:
         on = "on" in present and not present & {"off", "kill"}
         return Match("flashlight", "phone_flashlight", {"on": on}, phrase=lambda result: result)
@@ -379,6 +375,88 @@ def _level_intent(tokens: list[str], follow: str | None) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------- the plug (lamp)
+PLUG_NOUNS = {"fan", "plug", "lamp", "light", "lights"}
+PLUG_QUESTIONS = {"is", "are", "whats", "what", "check"}
+
+
+def _plug_name(present: set[str]) -> str:
+    """The name passed to plug_*: matched against the SwitchBot app's names, and one plug answers to any."""
+    if present & {"lamp", "light", "lights"}:
+        return "lamp"
+    return "fan" if "fan" in present else ""
+
+
+def _plug_switch(tokens: list[str], follow: str | None) -> tuple[bool, str] | None:
+    """(on?, plug name) for "turn off the lamp", "lamp on", or "turn it back on" right after a plug command."""
+    present = set(tokens)
+    named = present & PLUG_NOUNS
+    if not _claims("fan", tokens) or not (named or follow == "plug"):
+        return None
+    if not named and not present & {"on", "off"}:
+        return None  # "start" or "stop" alone after the lamp could mean the music
+    if tokens[0] in PLUG_QUESTIONS:
+        return None
+    on = bool(present & {"on", "start"}) and not present & {"off", "kill", "stop"}
+    off = bool(present & {"off", "kill", "stop"}) and not present & {"on", "start"}
+    if on == off:
+        return None
+    return on, _plug_name(present)
+
+
+def _plug_command(tokens: list[str], follow: str | None) -> Match | None:
+    present = set(tokens)
+    if (
+        _claims("fan", tokens)
+        and present & PLUG_NOUNS
+        and (tokens[0] in PLUG_QUESTIONS or present & {"status", "running"})
+    ):
+        if not present & {"start", "stop", "kill", "switch", "on", "off"} or tokens[0] in PLUG_QUESTIONS:
+            return Match("fan", "plug_status", {"plug": _plug_name(present)}, fallback="ble_plug_status",
+                         fallback_args={})  # fmt: skip
+    if not (switched := _plug_switch(tokens, follow)):
+        return None
+    on, name = switched
+    noun = (name or "plug").capitalize()
+    # The cloud first; if it can't reach the plug (no Wi-Fi, e.g. eduroam), the Mac's Bluetooth (loop.py `fallback`).
+    return Match("fan", "plug_on" if on else "plug_off", {"plug": name},
+                 phrase=lambda _, on=on: f"{noun}'s {'on' if on else 'off'}.",
+                 fallback="ble_plug_on" if on else "ble_plug_off", fallback_args={})  # fmt: skip
+
+
+def _plug_later(tokens: list[str], when: re.Match[str], follow: str | None, now: datetime) -> Match | None:
+    """'turn off the lamp in 5 minutes', 'lamp on at 7 am': schedule_plug on the server, which switches it then."""
+    if not (switched := _plug_switch(tokens, follow)):
+        return None
+    due = _due(when, now)
+    if isinstance(due, datetime) and when["h"] and not when["ap"] and not (when["day"] or when["day2"]):
+        # No AM/PM: whichever is next. Reminders read "at 1" as 1 PM; "lamp off at 1:30" after midnight is 1:30 AM.
+        hour, minute = int(when["h"]) % 12, int(when["m"] or 0)
+        times = [now.replace(hour=h, minute=minute, second=0, microsecond=0) + timedelta(days=d)
+                 for d in (0, 1) for h in (hour, hour + 12)]  # fmt: skip
+        due = min((t for t in times if t > now), default=due)
+    if not isinstance(due, datetime) or due <= now or due - now > timedelta(days=2):
+        return None
+    on, name = switched
+    noun = (name or "plug").capitalize()
+    due = (due + timedelta(seconds=30)).replace(second=0, microsecond=0)  # to the nearest minute
+    state = "on" if on else "off"
+    if when["n"]:
+        said = f"{noun} goes {state} in {_say_span(due - now)}."
+    else:
+        said = f"{noun} goes {state} {say_when(due, now)}."
+    return Match("fan", "schedule_plug", {"on": on, "due": f"{due:%Y-%m-%d %H:%M}", "plug": name},
+                 phrase=lambda _: said)  # fmt: skip
+
+
+def _say_span(span: timedelta) -> str:
+    minutes = max(1, round(span.total_seconds() / 60))
+    if minutes < 60:
+        return f"{minutes} minute{'s' * (minutes != 1)}"
+    hours = minutes / 60
+    return f"{hours:g} hour{'s' * (hours != 1)}" if hours == int(hours) or minutes % 30 == 0 else f"{minutes} minutes"
+
+
 # ---------------------------------------------------------------- reminders and timers
 # "remind me to X at 8", "remind me tomorrow at 9 to X", "set a timer for 10 minutes". The task is free text,
 # so the every-word rule can't apply; instead the whole sentence has to fit a template, with an explicit
@@ -398,6 +476,8 @@ _LEAD = r"^(?:(?:hey|yo|ok|okay)\s+)?(?:sommus|somis|sommis)?[,\s]*(?:(?:can|cou
 _REMIND_A = re.compile(_LEAD + rf"remind\s+me\s+to\s+(?P<task>.+?)(?:\s+(?:at\s+)?{_WHEN})?[.!?\s]*$", re.I)
 _REMIND_B = re.compile(_LEAD + rf"remind\s+me\s+{_WHEN}\s+to\s+(?P<task>.+?)[.!?\s]*$", re.I)
 _REMIND_C = re.compile(_LEAD + rf"remind\s+me\s+(?:again\s+)?{_WHEN}[.!?\s]*$", re.I)  # no task: "remind me at 11:15"
+# The end of a plug command that says when: "... in 5 minutes", "... at 1 am", "... tomorrow at 7".
+_PLUG_LATER = re.compile(rf"\s+(?:{_IN}|(?=(?:today|tonight|tomorrow)?\s*at\s){_AT})[.!?\s]*$", re.I)
 _TIMER = re.compile(
     _LEAD + rf"(?:set\s+(?:a\s+|me\s+a\s+)?)?(?:(?P<n1>\d{{1,3}})[\s-]+(?P<u1>{_UNIT})\s+timer"
     rf"|timer\s+(?:for\s+)?(?P<n2>{_COUNT})\s+(?P<u2>{_UNIT}))(?:\s+please)?[.!?\s]*$",
