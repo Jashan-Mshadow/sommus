@@ -4,7 +4,9 @@
 #
 # The job runs at login AND every 2 minutes: if Sommus live is not running (the Terminal window was closed, Terminal
 # quit, a crash that took the wrapper too: it sat off from 2026-11-22 to 11-25 because the job only ran at login)
-# it opens Terminal again, in the background so it doesn't pull focus. Running = the pid file points at a live process.
+# it opens Terminal again, in the background so it doesn't pull focus. Running = ~/.sommus/live.pid names a live
+# sommus-live process. That file is in $HOME, not the repo: launchd jobs can't read ~/Documents (macOS privacy), which
+# made the first version of this check always fail and open 155 Terminal windows in 16 hours.
 #
 # It has to run inside Terminal.app: macOS gave Terminal the microphone, Accessibility and Automation
 # permissions, and a background launchd job would have none of them. So the login job only asks Terminal
@@ -35,6 +37,9 @@ if [ -f "\$pidfile" ] && kill -0 "\$(cat "\$pidfile")" 2>/dev/null; then
   exit 0
 fi
 echo \$\$ >"\$pidfile"
+# A copy outside ~/Documents: the login job runs under launchd, which macOS blocks from reading Documents, so it
+# could never see the file above and opened a new Terminal window every 2 minutes (155 of them, 2026-11-26).
+mkdir -p "\$HOME/.sommus" && echo \$\$ >"\$HOME/.sommus/live.pid"
 log="$repo/data/live.log"
 beat="$repo/data/live.heartbeat"
 # Safety net (2026-11-17): Sommus once sat deaf for 6 days with its process alive, so "restart if it exits" never
@@ -59,7 +64,7 @@ beat="$repo/data/live.heartbeat"
   done
 ) &
 watchdog=\$!
-trap 'rm -f "\$pidfile"; kill \$watchdog 2>/dev/null' EXIT
+trap 'rm -f "\$pidfile" "\$HOME/.sommus/live.pid"; kill \$watchdog 2>/dev/null' EXIT
 while true; do
   # The app follows this log; keep it small.
   if [ -f "\$log" ] && [ "\$(stat -f %z "\$log")" -gt 5000000 ]; then : >"\$log"; fi
@@ -89,7 +94,7 @@ END_COMMAND
   <key>ProgramArguments</key>
   <array>
     <string>/bin/zsh</string><string>-c</string>
-    <string>f="$repo/data/live.pid"; if [ -f "\$f" ] &amp;&amp; kill -0 "\$(cat "\$f")" 2&gt;/dev/null; then exit 0; fi; /usr/bin/open -g -a Terminal "$command_file"</string>
+    <string>p=\$(cat "\$HOME/.sommus/live.pid" 2&gt;/dev/null); if [ -n "\$p" ] &amp;&amp; /bin/ps -p "\$p" -o command= 2&gt;/dev/null | /usr/bin/grep -q sommus-live; then exit 0; fi; /usr/bin/open -g -a Terminal "$command_file"</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>120</integer>
