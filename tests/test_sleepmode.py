@@ -229,3 +229,50 @@ async def test_a_spoken_phrase_in_a_live_conversation_is_offered_as_it_arrives(t
         await conv.handle_message(message(input_transcription=SimpleNamespace(text="override zero five one seven")))
         await asyncio.sleep(0.05)
     assert offered and offered[-1] == "sleep max override zero five one seven"
+
+
+def test_garbled_words_still_match_when_the_digits_are_exact(tmp_path, monkeypatch):
+    """Speech-to-text wrote an invented word three different ways in one evening (2026-11-25)."""
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["sleep"], "sleepmax override 0517")
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["wake"], "wakeupmax override 0517")
+    sleep = Sleep(tmp_path)
+    for heard in ("Sleep mask override 0517", "Leakmax override 0517", "Sommus, sleep Max override 0517.", "sleepmax"):
+        sleep.path.unlink(missing_ok=True)
+        sleep._seen = (-9.0, False)
+        assert (sleep.which(heard) == "sleep") == (heard != "sleepmax"), heard
+    assert sleep.which("Sommus. Leakmax override 0517") == "sleep"
+
+
+def test_wrong_digits_or_other_words_never_match(tmp_path, monkeypatch):
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["sleep"], "sleepmax override 0517")
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["wake"], "wakeupmax override 0517")
+    sleep = Sleep(tmp_path)
+    for heard in (
+        "sleepmax override 0518",
+        "sleepmax override 517 0",
+        "go to sleep please",
+        "turn off the lamp override 0517",
+        "wake up max override 0517",  # the wake phrase while awake is just text, not sleep
+        "",
+    ):
+        assert sleep.which(heard) is None, heard
+    assert sleep.last[0] is False  # the empty text left no match behind
+
+
+def test_only_the_wake_phrase_wakes_even_when_garbled(tmp_path, monkeypatch):
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["sleep"], "sleepmax override 0517")
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["wake"], "wakeupmax override 0517")
+    sleep = Sleep(tmp_path)
+    assert sleep.command("sleep mask override 0517") == "sleep"
+    assert sleep.command("sleepmax override 0517") is None  # the sleep phrase again, while asleep
+    assert sleep.command("wake up Max override 0517") == "wake"
+    assert not sleep.asleep
+
+
+def test_the_near_miss_is_reported_without_its_words(tmp_path, monkeypatch):
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["sleep"], "sleepmax override 0517")
+    monkeypatch.setenv(sleepmode.PHRASE_ENV["wake"], "wakeupmax override 0517")
+    sleep = Sleep(tmp_path)
+    assert sleep.which("banana split override 0517") is None
+    digits_ok, similarity = sleep.last
+    assert digits_ok and similarity < sleepmode.MIN_SIMILARITY

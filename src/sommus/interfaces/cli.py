@@ -898,8 +898,12 @@ async def live_chat() -> None:
     async def phrase_heard(text: str, spoken: bool = True) -> str | None:
         """Is `text` the sleep phrase (awake) or the wake phrase (asleep)? Checked here first, so only a matching
         phrase is sent to the server; whatever else was overheard stays on this Mac. Returns "sleep", "wake" or None."""
-        expected = os.environ.get(sleepmode.WAKE_ENV if sleeper.asleep else sleepmode.SLEEP_ENV, "")
-        if not await asyncio.to_thread(sleepmode.matches, text, expected):
+        if not sleeper.enabled:
+            return None
+        if await asyncio.to_thread(sleeper.which, text) is None:
+            digits_ok, similarity = sleeper.last
+            if digits_ok:  # the code was said but the words were too far off: say so, without the words
+                log(text="[phrase?]", outcome=f"hard sleep: digits matched, words only {similarity:.2f} alike")
             return None
         if use_server:
             answer = await asyncio.to_thread(remote_brain.sleep_command, text) or {}
