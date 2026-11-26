@@ -10,6 +10,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timedelta
@@ -807,7 +808,9 @@ async def live_chat() -> None:
                 await answer_locally(first)
             return
         detector.reset()  # its speech score carries state: start the live session's clean
-        conversation = live.LiveConversation(live_session, brain, engine_io, show, log, listen_for_pin)
+        conversation = live.LiveConversation(
+            live_session, brain, engine_io, show, log, listen_for_pin, on_phrase=phrase_heard
+        )
         conversation.handle = handle
         engine_io.conversation_open = True  # echo cancellation stays on while Sommus talks (or it hears itself)
         state.update(mode="awake", conversation=conversation, context=context, opened_at=time.monotonic())
@@ -865,6 +868,8 @@ async def live_chat() -> None:
         text = await asyncio.to_thread(transcriber.transcribe, audio)
         if not text:
             return
+        if await phrase_heard(text):  # the sleep/wake phrase: not a request, never sent to Google
+            return
         request = voice.heard_wake(text, wake)
         log(text=text, outcome="ignored: asleep, no wake phrase" if request is None else "wake")
         if request is not None:
@@ -889,6 +894,33 @@ async def live_chat() -> None:
             )
         else:
             await conversation.send_text(f"[Sommus: {answer} Tell him in a few words.]")
+
+    async def phrase_heard(text: str, spoken: bool = True) -> str | None:
+        """Is `text` the sleep phrase (awake) or the wake phrase (asleep)? Checked here first, so only a matching
+        phrase is sent to the server; whatever else was overheard stays on this Mac. Returns "sleep", "wake" or None."""
+        expected = os.environ.get(sleepmode.WAKE_ENV if sleeper.asleep else sleepmode.SLEEP_ENV, "")
+        if not await asyncio.to_thread(sleepmode.matches, text, expected):
+            return None
+        if use_server:
+            answer = await asyncio.to_thread(remote_brain.sleep_command, text) or {}
+            changed = answer.get("changed")
+            if changed:
+                sleeper.mirror(bool(answer.get("asleep")))
+        else:
+            changed = sleeper.command(text, "Mac")
+        if changed:
+            log(text="[phrase]", outcome=f"hard sleep: {changed}")
+            console.print("[dim]  … sleeping.[/]" if changed == "sleep" else "[dim]  … awake.[/]")
+            if spoken:
+                voice.chime(voice.CHIME_SLEEP if changed == "sleep" else voice.CHIME_WAKE)
+        return changed
+
+    async def heard_hard_asleep(audio: np.ndarray) -> None:
+        """Hard sleep still listens on this Mac, locally, for the wake phrase and nothing else: it is transcribed
+        here, compared, and thrown away. Nothing is sent to Google or the server unless it is the phrase."""
+        text = await asyncio.to_thread(transcriber.transcribe, audio)
+        if text:
+            await phrase_heard(text)
 
     async def follow_server_sleep() -> None:
         """Copy the server's hard-sleep state here, so a sleep said on Telegram silences this Mac within seconds."""
@@ -915,6 +947,8 @@ async def live_chat() -> None:
                     detector.reset()
                     if wake_word is not None:
                         wake_word.reset()
+                if (utterance := detector.feed(chunk)) is not None:
+                    await heard_hard_asleep(utterance)
                 continue
             hard_asleep = False
             mode, conversation = state["mode"], state["conversation"]
@@ -1006,17 +1040,8 @@ async def live_chat() -> None:
                         f"[Sommus: PIN accepted; personal actions unlocked. Now do: {pending or 'his last request'}]"
                     )
                 continue
-            if typed and len(typed) <= sleepmode.MAX_LENGTH:
-                if use_server:
-                    answer = await asyncio.to_thread(remote_brain.sleep_command, typed) or {}
-                    if answer.get("changed"):
-                        sleeper.mirror(bool(answer.get("asleep")))
-                    changed = answer.get("changed")
-                else:
-                    changed = sleeper.command(typed, "Mac")
-                if changed:
-                    console.print("[dim]  … sleeping.[/]" if changed == "sleep" else "[dim]  … awake.[/]")
-                    continue
+            if typed and await phrase_heard(typed, spoken=False):
+                continue
             if sleeper.asleep:  # hard sleep: Return and typing do nothing either; only the wake phrase does
                 continue
             if state["conversation"] is None:
@@ -1669,11 +1694,10 @@ def main() -> None:
             from sommus import sleepmode
 
             if not args.tool_name:
-                console.print(
-                    "usage: sommus sleep-hash <phrase>   (prints the value for the .env line; stores nothing)"
-                )
+                console.print("usage: sommus sleep-hash <phrase>, or `sommus sleep-hash -` to read it from stdin")
             else:
-                print(sleepmode.digest(args.tool_name))
+                phrase = sys.stdin.read() if args.tool_name == "-" else args.tool_name
+                print(sleepmode.digest(phrase))
         elif args.command == "stats":
             from sommus import stats
 

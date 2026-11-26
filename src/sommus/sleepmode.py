@@ -24,28 +24,45 @@ from datetime import datetime
 from pathlib import Path
 
 SLEEP_ENV, WAKE_ENV = "SOMMUS_SLEEP_HASH", "SOMMUS_WAKE_HASH"
-SALT = b"sommus-hard-sleep-v1"
+SALT = b"sommus-hard-sleep-v2"
 ROUNDS = 50_000
 MAX_LENGTH = 80  # a phrase is short: anything longer is not checked (keeps the hashing off normal messages)
 CACHE_SECONDS = 1.0  # the Mac's mic loop asks about every audio chunk
 
-_NAME = re.compile(r"^(?:hey[\s,]+)?sommus\b[\s,:;.\-]*")
+# Said out loud, a phrase like "word:thing0517" comes back from speech-to-text as "word thing zero five one seven"
+# (or "05 17", "oh five one seven", "517"). So a phrase is reduced to its letters and digits: number words become
+# digits, punctuation and spaces go, and leading zeros in a digit run are dropped (0517 = 517).
+_NUMBER_WORDS = {
+    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}  # fmt: skip
+MAX_SKIPPED_WORDS = 3  # "hey sommus ..." or a misheard name in front of the phrase
 
 
-def normalize(text: str) -> str:
-    """Lower case, no spaces, no leading "Sommus"/"Hey Sommus", no trailing punctuation."""
-    cleaned = _NAME.sub("", text.strip().lower())
-    return re.sub(r"\s+", "", cleaned).rstrip(".!?,;")
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z]+|\d+", text.lower())
+
+
+def _canonical(tokens: list[str]) -> str:
+    joined = "".join(_NUMBER_WORDS.get(token, token) for token in tokens)
+    return re.sub(r"(?<!\d)0+(?=\d)", "", joined)
+
+
+def _hash(canonical: str) -> str:
+    return hashlib.pbkdf2_hmac("sha256", canonical.encode(), SALT, ROUNDS).hex()
 
 
 def digest(phrase: str) -> str:
-    return hashlib.pbkdf2_hmac("sha256", normalize(phrase).encode(), SALT, ROUNDS).hex()
+    return _hash(_canonical(_tokens(phrase)))
 
 
 def matches(text: str, expected: str) -> bool:
+    """Is `text` the phrase whose digest is `expected`? A few words in front of it are allowed."""
     if not expected or not text or len(text) > MAX_LENGTH:
         return False
-    return hmac.compare_digest(digest(text), expected.strip().lower())
+    expected, tokens = expected.strip().lower(), _tokens(text)
+    skips = range(min(MAX_SKIPPED_WORDS, len(tokens) - 1) + 1)
+    return any(hmac.compare_digest(_hash(_canonical(tokens[skip:])), expected) for skip in skips)
 
 
 class Sleep:

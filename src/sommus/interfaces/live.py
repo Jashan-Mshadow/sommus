@@ -26,7 +26,7 @@ import contextlib
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -275,6 +275,7 @@ class LiveConversation:
         show: Callable[[str], None],
         log: Callable[..., None],
         on_pin: Callable[[], None],
+        on_phrase: Callable[[str], Awaitable[Any]] | None = None,
     ):
         self.session = session
         self.brain = brain
@@ -296,6 +297,10 @@ class LiveConversation:
         self.typed = False  # his latest request was typed: never dropped as room chatter
         self.last_spoke = float("-inf")  # when Sommus last said something (audio or words)
         self.in_class = in_class  # swapped in tests
+        # Hard sleep by voice: every transcript of his words is offered to this, as it arrives, so the sleep phrase
+        # ends the conversation before Gemini answers it. Only a matching phrase leaves the Mac for the server.
+        self.on_phrase = on_phrase
+        self._phrase_task: asyncio.Task | None = None
 
     async def send_audio(self, chunks: list[np.ndarray]) -> None:
         from google.genai import types
@@ -345,6 +350,8 @@ class LiveConversation:
             self.typed = False  # words from the microphone
             self.last_heard = self.exchange.heard_text
             self.last_activity = time.monotonic()
+            if self.on_phrase is not None and self._phrase_task is None:
+                self._phrase_task = asyncio.create_task(self._watch_phrase())
         if content.model_turn:
             for part in content.model_turn.parts or []:
                 if part.inline_data and part.inline_data.data:
@@ -355,6 +362,20 @@ class LiveConversation:
             self.last_spoke = time.monotonic()
         if content.turn_complete:
             self.finish_exchange()
+
+    async def _watch_phrase(self) -> None:
+        """Offer what he has said so far to `on_phrase`, again whenever more arrives, one check at a time."""
+        from sommus.sleepmode import MAX_LENGTH
+
+        checked = ""
+        try:
+            while (text := self.exchange.heard_text[-MAX_LENGTH:]) and text != checked:
+                checked = text
+                await self.on_phrase(text)
+        except Exception:
+            pass  # a failed check must never end the conversation
+        finally:
+            self._phrase_task = None
 
     def finish_exchange(self) -> None:
         from sommus.brain.pin import redact

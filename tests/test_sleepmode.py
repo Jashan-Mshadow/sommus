@@ -43,6 +43,34 @@ def test_near_misses_and_other_text_do_not_match():
     assert not sleepmode.matches(SLEEP, "")  # no hash set: nothing matches
 
 
+def test_the_phrase_matches_however_speech_to_text_writes_it():
+    stored = sleepmode.digest("sleepmax:override0517")  # a dummy of the same shape: real phrases never go in the repo
+    for heard in (
+        "sleepmax:override0517",
+        "sleepmax override 0517",
+        "Sleep max override 0517.",
+        "sleep max, override zero five one seven",
+        "Sommus, sleep max override oh five one seven",
+        "hey sommus sleepmax override 517",
+        "sleepmax override 05 17",
+        "uh sleepmax override zero five one seven",
+    ):
+        assert sleepmode.matches(heard, stored), heard
+
+
+def test_close_but_wrong_spoken_phrases_do_not_match():
+    stored = sleepmode.digest("sleepmax:override0517")
+    for heard in (
+        "sleep max override 0518",
+        "sleepmax override",
+        "sleep override 0517",
+        "wake up max override 0517",
+        "please go to sleep now thank you very much sleepmax override 0517",  # too much junk in front
+        "I think the override is 0517",
+    ):
+        assert not sleepmode.matches(heard, stored), heard
+
+
 def test_the_hash_does_not_contain_the_phrase():
     assert "test-phrase" not in sleepmode.digest(SLEEP)
 
@@ -175,3 +203,26 @@ async def test_the_scheduler_does_nothing_while_asleep(tmp_path, monkeypatch):
         await asyncio.sleep(0.05)
         task.cancel()
         assert "tick" in ran and "diary" in ran
+
+
+async def test_a_spoken_phrase_in_a_live_conversation_is_offered_as_it_arrives(tmp_path):
+    from test_live import FakeSession, message
+
+    from sommus.brain.loop import Brain
+    from sommus.interfaces import live
+
+    offered = []
+
+    async def on_phrase(text):
+        offered.append(text)
+
+    async with NodeHub((), Policy()) as hub:
+        brain = Brain(config(tmp_path), hub, Store(tmp_path / "t.db"), voice=True)
+        player = SimpleNamespace(enqueue=lambda audio: None, flush=lambda: None)
+        conv = live.LiveConversation(
+            FakeSession(), brain, player, lambda line: None, lambda **k: None, lambda: None, on_phrase=on_phrase
+        )
+        await conv.handle_message(message(input_transcription=SimpleNamespace(text="sleep max ")))
+        await conv.handle_message(message(input_transcription=SimpleNamespace(text="override zero five one seven")))
+        await asyncio.sleep(0.05)
+    assert offered and offered[-1] == "sleep max override zero five one seven"
