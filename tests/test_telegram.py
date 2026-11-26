@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from sommus.interfaces import telegram
+from sommus.sleepmode import Sleep
 
 
 def test_long_replies_are_split_on_newlines():
@@ -48,6 +49,7 @@ async def test_strangers_are_ignored_and_reported(tmp_path):
     class FakeBot(telegram.Bot):
         def __init__(self):
             self.allowed = {42}
+            self.sleep = Sleep(tmp_path)
             self.offset = None
             self.seen_strangers = set()
             self.brain = SimpleNamespace(gate=SimpleNamespace(active=False))
@@ -105,6 +107,7 @@ async def test_a_pin_typed_in_telegram_is_deleted_from_the_chat(tmp_path):
     class PinBot(telegram.Bot):
         def __init__(self):
             self.allowed, self.offset, self.seen_strangers, self.failures = {42}, None, set(), 0
+            self.sleep = Sleep(tmp_path)
             self.brain = SimpleNamespace(gate=pin.Gate(tmp_path, {"read_email"}))
             self.updates = [
                 {"update_id": 1, "message": {"message_id": 7, "chat": {"id": 42}, "from": {}, "text": "pin 5173"}},

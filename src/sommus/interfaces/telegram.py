@@ -23,6 +23,7 @@ from sommus.brain.permissions import Policy
 from sommus.brain.pin import redact, split_pin
 from sommus.brain.store import Store
 from sommus.config import Config
+from sommus.sleepmode import Sleep
 
 API = "https://api.telegram.org"
 MESSAGE_LIMIT = 4000  # Telegram's cap is 4096; leave room for the footer
@@ -58,7 +59,10 @@ def split(text: str, limit: int = MESSAGE_LIMIT) -> list[str]:
 
 
 class Bot:
-    def __init__(self, token: str, allowed: set[int], brain: Brain, store: Store, cfg: Config):
+    def __init__(
+        self, token: str, allowed: set[int], brain: Brain, store: Store, cfg: Config, sleep: Sleep | None = None
+    ):
+        self.sleep = sleep or Sleep(cfg.data_dir)
         self.http = httpx2.AsyncClient(base_url=f"{API}/bot{token}", timeout=POLL_SECONDS + 15)
         self.allowed = allowed
         self.brain = brain
@@ -120,6 +124,19 @@ class Bot:
         except Exception as e:
             log(f"Couldn't delete the PIN message ({e}) — delete it in Telegram yourself.")
 
+    async def hard_sleep(self, chat: int, message: dict, text: str, log) -> bool:
+        """True if this message was the sleep/wake phrase or arrived while asleep: nothing else may happen to it.
+
+        The phrase is removed from the chat once used (like a PIN). Asleep, every other message is ignored without
+        a word, so a wrong guess looks the same as Sommus being off."""
+        changed = self.sleep.command(text, "Telegram")
+        if changed:
+            log(f"Hard sleep: {'on' if changed == 'sleep' else 'off'} (Telegram)")
+            await self.forget_message(chat, message["message_id"], log)
+            await self.say(chat, "Going to sleep." if changed == "sleep" else "Awake.")
+            return True
+        return self.sleep.asleep
+
     async def handle(self, chat: int, text: str, log) -> None:
         if text == "/new":
             self.brain.reset()
@@ -177,6 +194,8 @@ class Bot:
                         )
                     continue
                 text = message["text"].strip()
+                if await self.hard_sleep(chat, message, text, log):
+                    continue
                 pin_given = self.brain.gate.active and self.is_pin(text)
                 try:
                     await self.handle(chat, text, log)

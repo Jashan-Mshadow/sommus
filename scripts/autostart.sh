@@ -2,6 +2,10 @@
 # Start `sommus live` in a Terminal window at login and keep it running: it's the one Mac mode (voice and wake
 # word, the Mac's tools for the always-on brain, the Sommus app's feed), meant to be on 24/7 (Jashan, 2026-11-09).
 #
+# The job runs at login AND every 2 minutes: if Sommus live is not running (the Terminal window was closed, Terminal
+# quit, a crash that took the wrapper too: it sat off from 2026-11-22 to 11-25 because the job only ran at login)
+# it opens Terminal again, in the background so it doesn't pull focus. Running = the pid file points at a live process.
+#
 # It has to run inside Terminal.app: macOS gave Terminal the microphone, Accessibility and Automation
 # permissions, and a background launchd job would have none of them. So the login job only asks Terminal
 # to open sommus-live.command, which restarts Sommus live whenever it stops.
@@ -83,14 +87,18 @@ END_COMMAND
 <dict>
   <key>Label</key><string>$label</string>
   <key>ProgramArguments</key>
-  <array><string>/usr/bin/open</string><string>-a</string><string>Terminal</string><string>$command_file</string></array>
+  <array>
+    <string>/bin/zsh</string><string>-c</string>
+    <string>f="$repo/data/live.pid"; if [ -f "\$f" ] &amp;&amp; kill -0 "\$(cat "\$f")" 2&gt;/dev/null; then exit 0; fi; /usr/bin/open -g -a Terminal "$command_file"</string>
+  </array>
   <key>RunAtLoad</key><true/>
+  <key>StartInterval</key><integer>120</integer>
 </dict>
 </plist>
 END_PLIST
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist"
-  echo "Installed: Sommus live opens in Terminal at every login (and just now), and restarts if it stops."
+  echo "Installed: Sommus live opens in Terminal at every login (and just now), and a check every 2 minutes reopens it if it is not running."
   ;;
 uninstall)
   launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true

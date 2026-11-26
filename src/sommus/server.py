@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import activity, brief, config, supplements
+from sommus import activity, brief, config, sleepmode, supplements
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -271,6 +271,7 @@ class Server:
         for other in (self.voice_brain, self.relay_brain):
             other.messages, other.gate, other.lock = self.brain.messages, self.brain.gate, self.brain.lock
         self.bot = None
+        self.sleep = sleepmode.Sleep(cfg.data_dir)  # hard sleep: see sleepmode.py
         self.tailnet = Tailnet()
         self.state_path = cfg.data_dir / "brief_state.json"
         self.state = self._load_state()
@@ -354,6 +355,15 @@ class Server:
             else:
                 text = str(body)
             text = text.strip()
+            changed = self.sleep.command(text, "iPhone")
+            if changed == "sleep":
+                self.log("Hard sleep: on (iPhone)")
+                return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
+            if changed == "wake":
+                self.log("Hard sleep: off (iPhone)")
+                return JSONResponse({"reply": "Awake.", "action": ""})
+            if self.sleep.asleep:  # silent: the Shortcut just stops listening
+                return JSONResponse({"reply": "", "action": "sleep"})
             if not text:
                 self.log(f"/ask got no words: {len(raw)} bytes, {raw[:120]!r}")
                 # Silence in the Shortcut's loop means he's done: end it rather than ask again and again.
@@ -371,7 +381,7 @@ class Server:
 
         async def health(_request: Request) -> JSONResponse:
             mac = all(self.hub.reachable(n.name) for n in self.cfg.nodes if n.where == "mac")
-            return JSONResponse({"ok": True, "mac": mac})
+            return JSONResponse({"ok": True, "mac": mac, "asleep": self.sleep.asleep})
 
         def mine(handler):
             async def checked(request: Request) -> JSONResponse:
@@ -379,6 +389,9 @@ class Server:
                 if not await asyncio.to_thread(self.tailnet.is_mine, caller):
                     self.log(f"Refused {request.url.path} from {caller}")
                     return JSONResponse({"error": "not allowed"}, status_code=403)
+                # /live/tools only lists names (the Mac needs it to start up while the server sleeps)
+                if self.sleep.asleep and request.url.path not in ("/live/sleep", "/live/tools"):
+                    return JSONResponse({"error": "asleep", "asleep": True}, status_code=423)
                 try:
                     body = await request.json() if request.method == "POST" else {}
                 except ValueError:
@@ -399,6 +412,7 @@ class Server:
             Route("/live/tool", mine(self.live_tool), methods=["POST"]),
             Route("/live/pin", mine(self.live_pin), methods=["POST"]),
             Route("/live/gate", mine(self.live_gate), methods=["POST"]),
+            Route("/live/sleep", mine(self.live_sleep), methods=["POST"]),
         ]
         return Starlette(routes=routes)
 
@@ -444,6 +458,13 @@ class Server:
                 brain.note_unlocked()
         return {"answer": answer, **self.gate_state()}
 
+    async def live_sleep(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The Mac's typed line: it is the sleep or wake phrase, or nothing. Works while asleep (it is how to wake)."""
+        changed = self.sleep.command(str(body.get("text", "")), "Mac")
+        if changed:
+            self.log(f"Hard sleep: {'on' if changed == 'sleep' else 'off'} (Mac)")
+        return {"changed": changed, "asleep": self.sleep.asleep}
+
     async def live_gate(self, body: dict) -> dict[str, Any]:
         gate = self.brain.gate
         match body.get("do"):
@@ -462,7 +483,7 @@ class Server:
     # -- what Sommus says first
 
     async def tell(self, text: str) -> None:
-        if not self.bot:
+        if not self.bot or self.sleep.asleep:
             return
         for chat in self.bot.allowed:
             with contextlib.suppress(Exception):
@@ -723,6 +744,9 @@ class Server:
 
     async def scheduler(self) -> None:
         while True:
+            if self.sleep.asleep:  # no brief, nudges, reminders, plug timers or diary until woken
+                await asyncio.sleep(TICK_SECONDS)
+                continue
             now = datetime.now().astimezone()
             try:
                 await self.tick(now)
@@ -830,7 +854,7 @@ async def serve(log=print) -> None:
         # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":
             token, allowed = tg.credentials()
-            server.bot = tg.Bot(token, allowed, server.brain, store, cfg)
+            server.bot = tg.Bot(token, allowed, server.brain, store, cfg, sleep=server.sleep)
             log(f"Telegram: @{await server.bot.whoami()} for {len(allowed)} chat(s)")
             tasks.append(asyncio.create_task(server.bot.run(log)))
         host, port = settings["server_host"], int(settings["api_port"])

@@ -36,6 +36,24 @@ def reachable(timeout: float = 3.0) -> bool:
         return False
 
 
+def server_asleep(timeout: float = 3.0) -> bool | None:
+    """Is the server in hard sleep (sleepmode.py)? None when it can't be reached: keep the last known state."""
+    try:
+        response = httpx2.get(f"{server_url()}/health", timeout=timeout)
+        return bool(response.json().get("asleep")) if response.status_code == 200 else None
+    except Exception:
+        return None
+
+
+def sleep_command(text: str, timeout: float = 5.0) -> dict[str, Any] | None:
+    """Send a typed line to the server to see if it is the sleep or wake phrase. None if it didn't answer."""
+    try:
+        response = httpx2.post(f"{server_url()}/live/sleep", json={"text": text}, timeout=timeout)
+        return response.json() if response.status_code == 200 else None
+    except Exception:
+        return None
+
+
 @dataclass
 class RemoteResult:
     text: str

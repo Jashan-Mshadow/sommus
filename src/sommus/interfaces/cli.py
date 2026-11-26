@@ -633,7 +633,11 @@ async def live_chat() -> None:
         gain=float(voice_settings.get("barge_in_mic_gain", 2.0)), beat_file=cfg.data_dir / "live.heartbeat"
     )
     from sommus import client as remote_brain
-    from sommus import remote
+    from sommus import remote, sleepmode
+
+    # Hard sleep (sleepmode.py): the server decides; this Mac keeps a copy of the flag so it stays quiet even if
+    # the server can't be reached.
+    sleeper = sleepmode.Sleep(cfg.data_dir)
 
     # One Sommus: when the always-on brain answers, live mode uses it (same conversation as the phone and
     # Telegram) and serves the Mac's tools to it from this same window. Otherwise it runs its own brain.
@@ -886,12 +890,33 @@ async def live_chat() -> None:
         else:
             await conversation.send_text(f"[Sommus: {answer} Tell him in a few words.]")
 
+    async def follow_server_sleep() -> None:
+        """Copy the server's hard-sleep state here, so a sleep said on Telegram silences this Mac within seconds."""
+        while True:
+            asleep = await asyncio.to_thread(remote_brain.server_asleep)
+            if asleep is not None:
+                sleeper.mirror(asleep)
+            await asyncio.sleep(5)
+
     async def pump() -> None:
         """Every mic chunk goes one place: the wake-word check (asleep), Google (live), or the PIN check."""
         nonlocal quiet_chunks
         batch: list[np.ndarray] = []
+        hard_asleep = False
         while True:
             chunk = await mic.get()
+            if sleeper.asleep:  # hard sleep: hear nothing, send nothing anywhere, answer nothing
+                if not hard_asleep:
+                    hard_asleep = True
+                    batch = []
+                    if state["conversation"] is not None:
+                        await close_conversation(quiet=True)
+                    state["mode"], brain.gate.pending = "asleep", None
+                    detector.reset()
+                    if wake_word is not None:
+                        wake_word.reset()
+                continue
+            hard_asleep = False
             mode, conversation = state["mode"], state["conversation"]
             now = time.monotonic()
             if mode == "awake" and conversation is not None:
@@ -941,7 +966,7 @@ async def live_chat() -> None:
             elif utterance is not None:
                 await heard_asleep(utterance)
 
-    pumping = None
+    pumping = following = None
     try:
         if use_server:
             telegram_note = " · on the always-on brain" + (f" · {node_note}" if node_note else "")
@@ -957,6 +982,7 @@ async def live_chat() -> None:
             console.print(f"[dim]Mic input was at {raised}%, turned up to {MIN_MIC_INPUT}%.[/]")
         reader.start()
         pumping = asyncio.create_task(pump())
+        following = asyncio.create_task(follow_server_sleep()) if use_server else None
         while True:
             typed = await _prompt_line(session)
             if typed == CTRL_C:
@@ -980,6 +1006,19 @@ async def live_chat() -> None:
                         f"[Sommus: PIN accepted; personal actions unlocked. Now do: {pending or 'his last request'}]"
                     )
                 continue
+            if typed and len(typed) <= sleepmode.MAX_LENGTH:
+                if use_server:
+                    answer = await asyncio.to_thread(remote_brain.sleep_command, typed) or {}
+                    if answer.get("changed"):
+                        sleeper.mirror(bool(answer.get("asleep")))
+                    changed = answer.get("changed")
+                else:
+                    changed = sleeper.command(typed, "Mac")
+                if changed:
+                    console.print("[dim]  … sleeping.[/]" if changed == "sleep" else "[dim]  … awake.[/]")
+                    continue
+            if sleeper.asleep:  # hard sleep: Return and typing do nothing either; only the wake phrase does
+                continue
             if state["conversation"] is None:
                 await open_conversation(first=typed or None)
             elif typed:
@@ -989,6 +1028,8 @@ async def live_chat() -> None:
     finally:
         if pumping is not None:
             pumping.cancel()
+        if following is not None:
+            following.cancel()
         reader.stop()
         if state["conversation"] is not None:
             await close_conversation(quiet=True)
@@ -1582,6 +1623,7 @@ def main() -> None:
             "voiceprint",
             "diary",
             "ui",
+            "sleep-hash",
         ],
         default="chat",
     )
@@ -1623,6 +1665,15 @@ def main() -> None:
             from sommus.modeltrain import nightly
 
             print(nightly.run_from_config().summary)
+        elif args.command == "sleep-hash":
+            from sommus import sleepmode
+
+            if not args.tool_name:
+                console.print(
+                    "usage: sommus sleep-hash <phrase>   (prints the value for the .env line; stores nothing)"
+                )
+            else:
+                print(sleepmode.digest(args.tool_name))
         elif args.command == "stats":
             from sommus import stats
 

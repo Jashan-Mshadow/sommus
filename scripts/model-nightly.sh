@@ -4,6 +4,7 @@
 #   cron:  30 3 * * *  ~/sommus/scripts/model-nightly.sh
 # SOMMUS_NIGHTLY_TELEGRAM=1 (in .env or the crontab) sends the summary with the bot already in .env.
 cd "$(dirname "$0")/.." || exit 0
+[ -e data/sleep.json ] && exit 0  # hard sleep (sleepmode.py): Sommus does nothing, not even this job
 export PATH="$HOME/.local/bin:$PATH"
 mkdir -p data/training
 log=data/training/nightly.log
