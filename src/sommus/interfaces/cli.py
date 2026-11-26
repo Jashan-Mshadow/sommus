@@ -680,6 +680,19 @@ async def live_chat() -> None:
     from sommus.interfaces import speaker as voice_id
 
     voiceprint = voice_id.Voiceprint.load(cfg.data_dir)
+    # Shadow mode (voicedb.py): quietly keep the voice embedding of each sentence said in a conversation, so a
+    # voiceprint can be built from real live-mode audio later. It never touches the PIN or the gate.
+    from sommus import voicedb
+
+    collecting = config.section("voice_db")
+    collector = None
+    if collecting.get("collect", True):
+        collector = voicedb.Collector(
+            voicedb.VoiceDB(
+                cfg.data_dir, bool(collecting.get("keep_clips", True)), int(collecting.get("max_clips", 200))
+            ),
+            reference=voicedb.parked_print(cfg.data_dir),
+        )
     said: list[np.ndarray] = []  # his current sentence, kept on the Mac only for voice ID, then dropped
     quiet_chunks = 0
 
@@ -707,6 +720,17 @@ async def live_chat() -> None:
         if task is not None:
             await task
 
+    async def collect(audio: np.ndarray, label: str) -> None:
+        """Store one sentence's voice embedding. Never lets a problem here reach the conversation."""
+        if collector is None:
+            return
+        try:
+            await asyncio.to_thread(collector.capture, audio, label)
+        except Exception as e:
+            log(text="", outcome=f"voice db: {type(e).__name__}")
+
+    if collector is not None and voiceprint is None:
+        asyncio.create_task(asyncio.to_thread(voice_id.embed, np.random.default_rng(0).normal(0, 0.01, 24000)))
     if voiceprint is not None:
         brain.gate.settle = settle
         # Load the model now: the first check otherwise takes seconds (torch + onnx) and loses the race.
@@ -884,6 +908,8 @@ async def live_chat() -> None:
         pending, brain.gate.pending = brain.gate.pending, None
         state["mode"] = "awake"
         log(text="[PIN]", outcome="pin: " + ("unlocked" if brain.gate.unlocked else "refused"))
+        if brain.gate.unlocked:  # his voice, saying the right PIN: the surest sample there is
+            asyncio.create_task(collect(audio, "pin_said"))
         if conversation is None:
             return
         if brain.gate.unlocked:
@@ -970,7 +996,7 @@ async def live_chat() -> None:
                 talking = detector.probability(chunk) >= detector.threshold
                 if talking:
                     conversation.last_activity = now
-                if voiceprint is not None and not engine_io.speaking:
+                if (voiceprint is not None or collector is not None) and not engine_io.speaking:
                     if talking or said:
                         said.append(chunk)
                         del said[:-300]  # the last ~10 s is plenty to tell whose voice it is
@@ -978,7 +1004,9 @@ async def live_chat() -> None:
                     if said and quiet_chunks >= 12:  # ~0.4 s of quiet: the sentence is over
                         sentence = np.concatenate(said)
                         said.clear()
-                        start_check(sentence)
+                        if voiceprint is not None:
+                            start_check(sentence)
+                        asyncio.create_task(collect(sentence, "pin" if brain.gate.unlocked else "live"))
                 quiet_for = now - conversation.last_activity
                 if (
                     not engine_io.speaking
@@ -1653,6 +1681,7 @@ def main() -> None:
             "diary",
             "ui",
             "sleep-hash",
+            "voice-db",
         ],
         default="chat",
     )
@@ -1694,6 +1723,20 @@ def main() -> None:
             from sommus.modeltrain import nightly
 
             print(nightly.run_from_config().summary)
+        elif args.command == "voice-db":
+            from sommus import voicedb
+
+            db = voicedb.VoiceDB(config.ROOT / "data")
+            if args.tool_name == "build":
+                path = voicedb.build_candidate(db)
+                print(
+                    f"Wrote {path.relative_to(config.ROOT)}. Nothing reads it: voice ID stays off until it is renamed "
+                    "voiceprint.json."
+                    if path
+                    else "Not enough data to build a candidate yet."
+                )
+            else:
+                print(voicedb.report(db))
         elif args.command == "sleep-hash":
             from sommus import sleepmode
 

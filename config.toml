@@ -260,3 +260,13 @@ synthetic_model = ""               # "" = [budget] cheap_model
 synthetic_tools_per_night = 10     # how many of the least-covered tools each night targets
 vault = "~/Documents/Jashans_Brain"
 note = "Portfolio/Projects/Sommus Model Progress.md"   # relative to the vault; one section a night
+
+[voice_db]
+# Shadow-mode voice-ID data (src/sommus/voicedb.py): the Mac keeps the voice embedding (256 numbers, not audio) of each
+# sentence said in a live conversation, to build a voiceprint from real data later. The PIN is unchanged and nothing
+# reads this to unlock anything. `sommus voice-db` shows how it is going.
+collect = true
+# Also keep a short WAV clip of the surest sentences (the PIN said aloud), up to max_clips, so a better model can be
+# tried later without re-recording. false = numbers only.
+keep_clips = true
+max_clips = 200
