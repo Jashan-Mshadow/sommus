@@ -54,6 +54,9 @@ def test_the_phrase_matches_however_speech_to_text_writes_it():
         "hey sommus sleepmax override 517",
         "sleepmax override 05 17",
         "uh sleepmax override zero five one seven",
+        "Sleep mask override 0517",  # what Gemini wrote for "sleep max" on 2026-11-25
+        "sleep Mac's override o five one seven",
+        "sleep max overwrite 0517",
     ):
         assert sleepmode.matches(heard, stored), heard
 

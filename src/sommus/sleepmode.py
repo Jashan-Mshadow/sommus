@@ -33,7 +33,7 @@ CACHE_SECONDS = 1.0  # the Mac's mic loop asks about every audio chunk
 # (or "05 17", "oh five one seven", "517"). So a phrase is reduced to its letters and digits: number words become
 # digits, punctuation and spaces go, and leading zeros in a digit run are dropped (0517 = 517).
 _NUMBER_WORDS = {
-    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "zero": "0", "oh": "0", "o": "0", "one": "1", "two": "2", "three": "3", "four": "4",
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
 }  # fmt: skip
 MAX_SKIPPED_WORDS = 3  # "hey sommus ..." or a misheard name in front of the phrase
@@ -43,8 +43,22 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z]+|\d+", text.lower())
 
 
+# What speech-to-text actually wrote for "max" and "override" (voice.log, 2026-11-25: "sleep mask override ...").
+# Applied to the phrase being stored and the phrase heard alike, so it only widens what counts as a match.
+_HEARD_AS = (
+    ("mask", "max"),
+    ("macs", "max"),
+    ("macks", "max"),
+    ("maks", "max"),
+    ("overwrite", "override"),
+    ("overrides", "override"),
+)
+
+
 def _canonical(tokens: list[str]) -> str:
     joined = "".join(_NUMBER_WORDS.get(token, token) for token in tokens)
+    for wrong, right in _HEARD_AS:
+        joined = joined.replace(wrong, right)
     return re.sub(r"(?<!\d)0+(?=\d)", "", joined)
 
 
