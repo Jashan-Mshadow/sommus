@@ -26,7 +26,13 @@ printf '%s\n' "$lines" | ssh sommus-brain "cd ~/sommus && { grep -Ev '$drop' .en
 unset lines
 echo "Phrases saved on the Mac and the server."
 
-scripts/deploy.sh   # restarts the server so it reads them (and picks up any new code)
+out=$(scripts/deploy.sh 2>&1) || { echo "$out"; exit 1; }   # restarts the server when there is new code
+echo "$out"
+case "$out" in
+  *"nothing to deploy"*)  # no new code, so no restart: the server only reads .env when it starts
+    ssh sommus-brain 'sudo -n systemctl restart sommus; for i in $(seq 1 30); do sleep 2; if curl -sf -m 3 http://100.101.226.81:8780/health >/dev/null; then echo "Server restarted, healthy after $((i * 2)) s."; exit 0; fi; done; echo "The server did not answer after the restart."; exit 1'
+    ;;
+esac
 # Restart the Mac's live mode too: its wrapper starts a fresh one in 5 s.
 pkill -f ".venv/bin/sommus live" 2>/dev/null || true
 pkill -f "uv run --quiet --no-sync sommus live" 2>/dev/null || true
