@@ -19,7 +19,7 @@ from typing import Any
 
 import anthropic
 
-from sommus import costs, status, supplements, wakeup
+from sommus import costs, scenes, status, supplements, wakeup
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain import nodes as nodes_mod
@@ -268,6 +268,8 @@ class Brain:
         self._recent: tuple[tuple[str, str], float, str, tuple] | None = None
         self._turn_tools: list[str] = []
         self.wakeups = None  # the server's WakeUps (wakeup.py): set by Server, so a ringing alarm hears him
+        # Moves a fast-path match to the device that should do it (devices.route, set by the server).
+        self.route: Callable[[fastpath.Match], fastpath.Match] | None = None
 
     def _start_turn(self, text: str) -> int:
         return self.store.start_turn(text, getattr(self, "source", ""))  # bare test brains have no source
@@ -360,6 +362,7 @@ class Brain:
             or self._cost_question(text)
             or self._status_question(text)
             or wakeup.match(text)
+            or scenes.fast_match(text)  # "goodnight", "run study mode", "what scenes do I have"
             or fastpath.match(
                 text,
                 self._weather,
@@ -374,6 +377,8 @@ class Brain:
         )
         if quick and quick.fallback and self.hub.tier(quick.tool or "") is None:
             quick = dataclasses.replace(quick, tool=quick.fallback, args=quick.fallback_args or quick.args, phrase=None)
+        if quick and (route := getattr(self, "route", None)):  # bare test brains have no route
+            quick = route(quick)
         if quick and self._fast_ready(quick):
             handled = False
             async for event in self._fast(text, quick, confirm):
@@ -931,6 +936,8 @@ class Brain:
         ) and not await confirm(name, input):
             output, is_error, decision = f"{self.cfg.user} declined this action.", True, "declined"
         else:
+            with contextlib.suppress(AttributeError):
+                self.hub.caller = self  # a scene's steps run through this brain (scenes.py)
             result = await self.hub.call(name, input)
             blocks, output, is_error, decision = result.blocks, result.text, result.is_error, "ran"
             if name in UNTRUSTED_TOOLS:

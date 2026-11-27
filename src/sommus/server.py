@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import activity, brief, config, sleepmode, status, supplements, wakeup
+from sommus import activity, brief, config, devices, phone_more, scenes, sleepmode, status, supplements, wakeup
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -41,6 +41,7 @@ TICK_SECONDS = 30
 ACTIVITY_EVERY_SECONDS = 600  # today's activity note in the vault; the vault sync pushes it
 CONTACTS_EVERY_SECONDS = 6 * 3600  # recopy the Mac's contacts this often, when it's awake
 GREET_RETRY_SECONDS = 600  # the Mac was awake but didn't say good morning (muted): try again this much later
+MAX_PHONE_ACTIONS = 8  # one /ask; a runaway turn can't hand the Shortcut a hundred things to do
 
 
 # ---------------------------------------------------------------- the phone's own tools
@@ -52,7 +53,9 @@ class Phone:
 
     def __init__(self, zone: ZoneInfo | None = None, clock=None, state: Path | None = None) -> None:
         self.present = False  # true only while a request from the iPhone is being handled
-        self.action: dict[str, Any] = {}
+        self.action: dict[str, Any] = {}  # the first action: what a Shortcut from before `actions` runs
+        self.actions: list[dict[str, Any]] = []  # every action queued for this request (phone_more.py)
+        self.many = False  # this request's Shortcut sent "v": 2, so it loops over `actions`
         self.telegram: Callable[[str], Awaitable[None]] | None = None  # set by Server: sends to his Telegram chat
         self.zone = zone or ZoneInfo("America/Toronto")
         self.clock = clock or (lambda: datetime.now(self.zone))
@@ -110,14 +113,20 @@ class Phone:
         server = MCPServer("phone", log_level="WARNING")
         quick = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 
-        away = "This only works when Jashan is talking through his iPhone (the Action Button)."
+        away = (
+            "Not done: this only works while Jashan is talking through his iPhone (the Action Button). Tell him it "
+            "didn't happen, and that it works when he asks through the Action Button."
+        )
 
         def queue(action: dict[str, Any], done: str) -> str:
             if not self.present:
                 return away
-            if self.action:
-                return f"The phone can do one thing per request; already queued: {self.action['action']}."
-            self.action = action
+            if self.action and not self.many:
+                return f"Not done: the phone can do one thing per request; already queued: {self.action['action']}."
+            if len(self.actions) >= MAX_PHONE_ACTIONS:
+                return f"Not done: {MAX_PHONE_ACTIONS} phone actions is the most for one request."
+            self.action = self.action or action
+            self.actions.append(action)
             return done
 
         @server.tool(annotations=quick, structured_output=False)
@@ -222,6 +231,7 @@ class Phone:
             await self.telegram(text)
             return "Sent to his Telegram."
 
+        phone_more.register(server, queue, quick)  # open, timer, volume, brightness, directions, a Shortcut
         return server
 
 
@@ -258,6 +268,14 @@ def alarm_time(said: str, day: str, now: datetime) -> datetime:
         return when
     when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return when if when > now else when + timedelta(days=1)
+
+
+def shortcut_version(body: dict) -> int:
+    """The `v` the Shortcut sent: 2 means it loops over `actions`; missing (every Shortcut before it) is 1."""
+    try:
+        return int(float(str(body.get("v", 1)).strip() or 1))
+    except ValueError:
+        return 1
 
 
 def spoken_time(when: datetime, now: datetime) -> str:
@@ -315,6 +333,7 @@ class Server:
         contacts: ContactBook | None = None,
         calendar=None,
         wakeups: wakeup.WakeUps | None = None,
+        scene_book: scenes.Scenes | None = None,
     ):
         self.cfg, self.hub, self.store, self.phone, self.log = cfg, hub, store, phone, log
         phone.telegram = self.tell
@@ -330,6 +349,11 @@ class Server:
         self.brain.source, self.voice_brain.source, self.relay_brain.source = "Telegram", "iPhone", "Mac live"
         for other in (self.voice_brain, self.relay_brain):
             other.messages, other.gate, other.lock = self.brain.messages, self.brain.gate, self.brain.lock
+        # Music, timers, opening an app: on the device he's talking from, else whichever is there (devices.py).
+        for brain, here in ((self.brain, ""), (self.voice_brain, "phone"), (self.relay_brain, "mac")):
+            brain.route = lambda quick, here=here: devices.route(quick, here, self.device_available)
+        self.scenes = scene_book or scenes.Scenes()
+        self._wire_scenes()
         self.bot = None
         self.sleep = sleepmode.Sleep(cfg.data_dir)  # hard sleep: see sleepmode.py
         self.tailnet = Tailnet()
@@ -347,6 +371,39 @@ class Server:
             wakeups.attach(self.tell, self.busy, lambda: self.herald.private_audio(), self.record_said, log)
             for brain in (self.brain, self.voice_brain, self.relay_brain):
                 brain.wakeups = wakeups
+
+    # -- several devices at once (scenes.py, devices.py)
+
+    def device_of(self, tool: str) -> str:
+        owner = next((t.node for t in self.hub.tools if t.tool.name == tool), None)
+        return devices.device_of(owner, (n.name for n in self.cfg.nodes if n.where == "mac"))
+
+    def device_available(self, device: str) -> bool:
+        if device == "phone":
+            return self.phone.present  # the Shortcut is waiting for this request's answer
+        if device == "mac":
+            return all(self.hub.reachable(n.name) for n in self.cfg.nodes if n.where == "mac")
+        return True
+
+    def _wire_scenes(self) -> None:
+        async def decline(name: str, args: dict) -> bool:
+            return False  # a scene never stops halfway to ask: that step is skipped and named
+
+        async def step(tool: str, args: dict) -> Any:
+            # The brain whose turn is running the scene (Telegram, the iPhone or live mode), so the step is judged
+            # against the request he actually made.
+            brain = getattr(self.hub, "caller", None) or self.brain
+            return await brain._run_tool(self.store.last_turn_id(), tool, args, decline)
+
+        book = self.scenes
+        book.call = step
+        book.available = self.device_available
+        book.device_of = self.device_of
+        book.has_tool = lambda tool: self.hub.tier(tool) is not None
+        book.needs_pin = self.brain.gate.needs_pin
+        book.here = lambda: (
+            "phone" if self.phone.present else "mac" if getattr(self.hub, "caller", None) is self.relay_brain else ""
+        )
 
     def record_said(self, kind: str, text: str, route: str) -> None:
         activity.record_said(self.said_path, kind, text, route)
@@ -375,7 +432,8 @@ class Server:
 
     # -- the iPhone
 
-    async def ask(self, text: str) -> dict[str, Any]:
+    async def ask(self, text: str, many: bool = False) -> dict[str, Any]:
+        """`many`: the Shortcut sent "v": 2 and runs every entry of `actions`; an older one runs only `action`."""
         reply: list[str] = []
         notices: list[str] = []
 
@@ -383,7 +441,7 @@ class Server:
             return True
 
         async with self.brain.lock:
-            self.phone.present, self.phone.action = True, {}
+            self.phone.present, self.phone.action, self.phone.actions, self.phone.many = True, {}, [], many
             try:
                 async for event in self.voice_brain.handle(text, allow):
                     match event:
@@ -394,9 +452,10 @@ class Server:
                         case TurnDone():
                             pass
             finally:
-                self.phone.present = False
+                self.phone.present, self.phone.many = False, False
         said = "".join(reply).strip() or "Done."
-        return {"reply": said, **({"action": ""} | self.phone.action), "notices": notices}
+        actions = [dict(a) for a in self.phone.actions]
+        return {"reply": said, **({"action": ""} | self.phone.action), "actions": actions, "notices": notices}
 
     def app(self):
         from starlette.applications import Starlette
@@ -414,7 +473,9 @@ class Server:
                 body = json.loads(raw)
             except ValueError:
                 body = raw.decode(errors="replace")
+            many = False
             if isinstance(body, dict):
+                many = shortcut_version(body) >= 2
                 # The Shortcut's JSON key is easy to leave blank or misspell: take "text", else any string in it.
                 text = str(body.get("text") or next((v for v in body.values() if isinstance(v, str) and v.strip()), ""))
             else:
@@ -434,15 +495,18 @@ class Server:
                 # Silence in the Shortcut's loop means he's done: end it rather than ask again and again.
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
             ringing = self.wakeups is not None and self.wakeups.ringing()  # then "okay" means "I'm up"
-            if fastpath.DISMISS.match(text) and not ringing:  # "you're good to go": the Shortcut stops listening
+            # "you're good to go": the Shortcut stops listening. Unless an alarm is ringing, or it names a scene
+            # ("goodnight" is one).
+            if fastpath.DISMISS.match(text) and not ringing and not scenes.find(text, self.scenes.read()):
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
 
             try:
-                result = await self.ask(text)
+                result = await self.ask(text, many=many)
             except Exception as e:
                 self.log(f"/ask failed: {type(e).__name__}: {e}")
                 result = {"reply": "Something went wrong on my end.", "action": ""}
-            self.log(f"iPhone: {text[:50]!r} → {result.get('action') or 'reply'}")
+            done = ", ".join(a.get("action", "") for a in result.get("actions", [])) or result.get("action") or "reply"
+            self.log(f"iPhone: {text[:50]!r} → {done}")
             return JSONResponse(result)
 
         async def phone_done(body: dict) -> dict[str, Any]:
@@ -980,6 +1044,8 @@ async def serve(log=print) -> None:
         await hub.add("reminders", Client(reminders.node()))
         await hub.add("wakeup", Client(wakeups.node()))
         await hub.add("contacts", Client(contacts.node()))
+        scene_book = scenes.Scenes()  # run_scene / list_scenes; its hooks are filled in by Server
+        await hub.add("scenes", Client(scene_book.node()))
         from sommus import calendars
 
         calendar = None
@@ -988,7 +1054,9 @@ async def serve(log=print) -> None:
             await hub.add("calendar", Client(calendar.node()))
         for name, why in hub.unreachable.items():
             log(f"Node '{name}': {why}")
-        server = Server(cfg, hub, store, phone, log, reminders, contacts, calendar, wakeups)
+        server = Server(
+            cfg, hub, store, phone, log, reminders, contacts, calendar, wakeups=wakeups, scene_book=scene_book
+        )
         tasks = [asyncio.create_task(server.scheduler()), asyncio.create_task(server.vault_sync())]
         # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":

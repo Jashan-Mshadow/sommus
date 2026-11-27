@@ -294,3 +294,40 @@ max_clips = 200
 mac_alert_minutes = 30
 alert_from_hour = 10
 alert_until_hour = 23
+
+# Scenes (src/sommus/scenes.py): one phrase, several devices, no model ($0). Say the scene's name or one of its
+# phrases on its own ("goodnight", "run study mode", "start my goodnight scene"); "what scenes do I have" lists them.
+# Each step: tool + args, and optionally device ("mac" | "phone" | "home" | "server", default: whoever owns the tool),
+# done (said when it worked), label (named when it didn't), fallback (+ fallback_args) tried if the tool fails, or
+# any = [ {tool...}, {tool...} ] to use the first whose device is there, the one he's talking from first.
+# Steps on different devices run at the same time; on one device in the order written. A step that needs the PIN or
+# a yes/no is skipped and named, never asked halfway. Phone steps happen only through the Action Button. Edits work
+# without a restart.
+[scenes.goodnight]
+phrases = ["good night", "bedtime", "night night"]
+say = "Goodnight."
+steps = [
+    { tool = "plug_off", args = { plug = "lamp" }, fallback = "ble_plug_off", label = "Lamp", done = "lamp off" },
+    { tool = "set_quiet", args = { on = true }, done = "Mac quiet" },
+    { tool = "sleep_display", done = "Mac screen off" },
+    { tool = "phone_focus", args = { mode = "Sleep" }, done = "Sleep Focus on" },
+]
+
+[scenes.study]
+name = "study mode"
+phrases = ["study time", "time to study"]
+say = "Study mode. Go get it."
+steps = [
+    { tool = "set_quiet", args = { on = true }, done = "Mac quiet" },
+    { tool = "set_volume", args = { level = 20 }, done = "volume 20" },
+    { tool = "open_app", args = { name = "Visual Studio Code" }, done = "VS Code open" },   # change to the app you study in
+    { tool = "phone_focus", args = { mode = "Do Not Disturb" }, done = "Do Not Disturb on" },
+]
+
+[scenes.leaving]
+name = "I'm leaving"
+phrases = ["I'm leaving", "I'm heading out", "heading out", "leaving now"]
+steps = [
+    { tool = "plug_off", args = { plug = "lamp" }, fallback = "ble_plug_off", label = "Lamp", done = "lamp off" },
+    { tool = "lock_screen", done = "Mac locked" },
+]

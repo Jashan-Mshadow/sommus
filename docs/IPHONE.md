@@ -83,6 +83,66 @@ answer. If the Mac is asleep only Telegram rings, so keep Telegram's notificatio
 be woken by the server: it only does things inside an Action Button request. Phone alarms can't be set from
 Telegram either, and Sommus says so.
 
+## Version 2: several actions per request (scenes, timers, apps, directions)
+
+The steps above run one `action` per request, and they keep working unchanged. Version 2 lets one request do
+several phone things ("goodnight" = Sleep Focus on the phone while the lamp and the Mac do their part), and adds
+timers, opening apps and links, volume, brightness, directions and running one of your own Shortcuts. The server
+only queues more than one action when the Shortcut says it can loop, so build all of this before turning it on.
+
+**1. Tell the server you loop.** In step 2 (**Get Contents of URL**), add another field: **Number** · Key `v` ·
+Value `2`. (A Number, not Text: a Text field could be read as what you said when dictation comes back empty.)
+
+**2. Replace steps 3–7 with one loop.** Delete the old *Get Dictionary Value → action* step and its `If` branches
+(or keep them in a copy of the Shortcut as a backup), then add:
+
+1. **Get Dictionary Value** — Get **Value** for key `actions` in **Contents of URL**
+2. **Repeat with Each** — in **Dictionary Value** (the `actions` list). Inside the repeat:
+   1. **Get Dictionary Value** — key `action` in **Repeat Item**. Rename this step's output *Kind*
+      (tap the variable → Rename) so the `If`s below can't pick the wrong one.
+   2. One **If** per row of the table below: *Kind* **is** the name in the first column → inside, the actions in
+      the last column, each reading its keys with **Get Dictionary Value** · key · in **Repeat Item** → **End If**.
+3. **End Repeat**, then the old steps 8–9 (**Get Dictionary Value** `reply` → **Speak Text**) as before.
+
+| `action` | keys | Shortcut actions inside the If |
+|---|---|---|
+| `flashlight_on` / `flashlight_off` | — | **Set Flashlight** On / Off |
+| `text` | `to`, `message` | **Send Message** (Message `message`, Recipients `to`). Leave **Show When Run ON** here: you tap Send, which is the confirmation |
+| `alarm` | `time` (24-hour `13:05`), `label` | **Get Dates from Input** on `time` → **Create Alarm** (Time: Dates, Label `label`) |
+| `music` | `control`, `what` | `control` is `pause` → **Play/Pause**; `next` → **Skip Forward**; `previous` → **Skip Back**; `play` with a `what` → **Find Playlists** (Name contains `what`) → **Play Music**; `play` alone → **Play/Pause** |
+| `focus_on` / `focus_off` | `mode` | one **If** per Focus you use (`Sleep`, `Do Not Disturb`, `Study`...) → **Set Focus** On / Off |
+| `open_app` | `app` | **Open App** — tap the app field, choose **Select Variable**, pick `app` (if your iOS won't take a variable there, add an **If** per app you use) |
+| `open_url` | `url` | **Open URLs** — `url` |
+| `timer` | `seconds`, `minutes`, `label` | **Start Timer** — `seconds`, unit **seconds** |
+| `volume` | `level` (0–100), `fraction` (0–1) | **Set Volume** — `level`. If the phone jumps to full volume, use `fraction` instead |
+| `brightness` | `level`, `fraction` | **Set Brightness** — `level` (same note as volume) |
+| `navigate` | `to`, `mode`, `url` | **Open URLs** — `url` (Apple Maps opens with directions; press Go to start) |
+| `shortcut` | `name`, `input` | **Run Shortcut** — Shortcut: `name` (Select Variable), Input: `input` |
+
+`sleep` never shows up in `actions`: it stays in `action` as before ("you're good to go", silence, hard sleep),
+and those answers have no `actions` at all, which the loop simply runs zero times.
+
+**3. Try it.** Press the Action Button and say "set a timer for 2 minutes" (a Clock timer, not a reminder), "open
+Spotify", "goodnight" (the lamp goes off, the Mac goes quiet and dark, the phone goes into Sleep Focus), and
+"directions to E7". The server log shows the whole list: `iPhone: 'goodnight' → focus_on`.
+
+Without step 1 (no `"v": 2`), the server still hands over one action, as before, and a scene that wanted a second
+phone action says so in its reply ("your Shortcut takes one action per request").
+
+## Scenes and which device answers
+
+A scene is one phrase for several devices at once, defined in `config.toml` under `[scenes]` (edit it there; no
+restart). The defaults: **goodnight** (lamp off, Mac quiet, Mac screen off, Sleep Focus on the phone), **study
+mode** (Mac quiet, volume 20, VS Code open, Do Not Disturb on the phone) and **I'm leaving** (lamp off, Mac locked).
+Say the name alone ("goodnight", "run study mode", "start my goodnight scene"); "what scenes do I have" lists them.
+Each device reports for itself: "Lamp off, Mac quiet, Mac screen off. Phone: skipped, it only acts while you're
+using the Action Button. Goodnight." A Mac that's asleep is "Mac: couldn't reach it", and the rest still happens.
+A step that needs the PIN is skipped and named, never half-asked.
+
+Through the Action Button, "play music", "pause", "next song", "set a timer for 10 minutes" and "open Spotify"
+happen on the phone. From Telegram or the Mac they happen on the Mac (a timer from Telegram is a Telegram reminder).
+The phone can only act while you are using the Action Button: asked from Telegram, Sommus says it didn't happen.
+
 ## Try it
 
 | Say | What happens |
@@ -102,6 +162,11 @@ Telegram either, and Sommus says so.
 `at` as the full ISO date and time it rings, and `label`; the Shortcut then POSTs `{"action": "alarm"}` to
 `/phone/done`) or `sleep` (nothing was said, or "you're good to go":
 stop listening); empty means just speak the reply. One action per request: each `/ask` starts with none queued.
+
+Version 2 is additive: every answer the brain gives also carries `actions`, a list of `{"action": ..., keys...}` in the order to
+run them (vocabulary in the table above, and in `src/sommus/phone_more.py`). `action` and its keys at the top
+level are always the list's first entry, so an older Shortcut sees exactly what it did before. Only a request
+that sends `"v": 2` can get more than one entry (at most 8).
 
 An iPhone alarm is a time of day: it rings the next time the clock shows it. So `phone_alarm` only takes alarms
 within the next 24 hours; for a later day Sommus sets a reminder instead (a Telegram ping at that time).

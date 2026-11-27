@@ -90,6 +90,11 @@ class Store:
         self._db.commit()
         return cur.lastrowid
 
+    def last_turn_id(self) -> int:
+        """The newest turn: a scene's steps are logged under the request that ran it."""
+        row = self._db.execute("SELECT max(id) FROM turns").fetchone()
+        return int(row[0] or 0)
+
     def log_tool(
         self, turn_id: int, tool: str, input: dict, tier: str | None, decision: str, is_error: bool, output: str
     ) -> None:
