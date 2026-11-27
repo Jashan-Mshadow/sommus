@@ -53,6 +53,7 @@ Decisions and their reasons: `docs/decisions/`. Add one when a choice is measure
 | `src/sommus/nodes/home/` · `nodes/laptop/bluetooth_plug.py` | smart plugs: SwitchBot cloud API on the server (needs `scripts/switchbot-setup.sh`; Tuya was removed 2026-11-17; with no keys the cloud tools aren't offered at all), else the Mac's Bluetooth (`ble_plug_*`, Terminal holds the permission; ~4 s). The fast path tries the cloud, then Bluetooth |
 | `src/sommus/brief.py` | $0 morning brief, due-tomorrow heads-up, class-in-15 nudges; their spoken, varied versions |
 | `src/sommus/herald.py` | where a nudge goes: said on the awake Mac (`announce`) outside quiet hours, else Telegram |
+| `src/sommus/nodes/laptop/screen.py` | screen-aware tools: `read_screen`, `find_on_screen`, `click_text`, `type_into` (Accessibility + Vision OCR, positions in global screen points, output is outside content) |
 | `src/sommus/nodes/laptop/speak.py` | `announce` / `set_quiet` on the Mac: Kokoro, else `say`; silent when muted or quiet |
 | `src/sommus/interfaces/speaker.py` | voice ID: WeSpeaker embeddings, voiceprint, check; `Gate.vouch` in brain/pin.py |
 | `scripts/autostart.sh` | `install`/`uninstall`: `sommus live` opens in Terminal at login |

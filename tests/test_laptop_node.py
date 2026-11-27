@@ -60,6 +60,11 @@ EXPECTED_TIERS = {
     "sleep_display": "reversible",
     "quit_app": "destructive",
     "sleep_computer": "destructive",
+    # screen-aware (screen.py)
+    "read_screen": "read",
+    "find_on_screen": "read",
+    "click_text": "reversible",
+    "type_into": "reversible",
 }
 
 

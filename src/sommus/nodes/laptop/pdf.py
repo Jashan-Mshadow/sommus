@@ -33,16 +33,24 @@ def parse_pages(spec: str | None, total: int) -> list[int]:
     return [p - 1 for p in wanted if 1 <= p <= total]
 
 
-def ocr_image(png: bytes) -> str:
-    """Recognise text in an image using macOS Vision."""
-    import Vision
-    from Foundation import NSData
+def ocr_lines(image, correct: bool = True) -> list[tuple[str, float, tuple[float, float, float, float]]]:
+    """Recognise text with macOS Vision: (text, confidence, box) per line, in reading order.
 
-    data = NSData.dataWithBytes_length_(png, len(png))
-    handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(data, None)
+    `image` is PNG bytes or a CGImage. The box is Vision's own: (x, y, width, height) as fractions of the
+    image, with the origin at the image's bottom-left. `correct` turns language correction on (good for prose,
+    bad for UI labels and codes)."""
+    import Vision
+
+    if isinstance(image, bytes | bytearray):
+        from Foundation import NSData
+
+        data = NSData.dataWithBytes_length_(image, len(image))
+        handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(data, None)
+    else:
+        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, None)
     request = Vision.VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLevel_(0)  # accurate rather than fast
-    request.setUsesLanguageCorrection_(True)
+    request.setUsesLanguageCorrection_(correct)
     success, error = handler.performRequests_error_([request], None)
     if not success:
         raise ActionError(f"OCR failed: {error}")
@@ -50,8 +58,20 @@ def ocr_image(png: bytes) -> str:
     for observation in request.results() or []:
         candidates = observation.topCandidates_(1)
         if candidates:
-            lines.append(candidates[0].string())
-    return "\n".join(lines)
+            box = observation.boundingBox()
+            lines.append(
+                (
+                    candidates[0].string(),
+                    float(candidates[0].confidence()),
+                    (box.origin.x, box.origin.y, box.size.width, box.size.height),
+                )
+            )
+    return lines
+
+
+def ocr_image(png: bytes) -> str:
+    """Recognise text in an image using macOS Vision."""
+    return "\n".join(text for text, _, _ in ocr_lines(png))
 
 
 def read(path: str, pages: str | None = None, ocr: bool = True) -> tuple[str, int, int]:

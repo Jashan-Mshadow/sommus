@@ -118,6 +118,8 @@ pin_tools = [
     "save_browser_tab",
     # anything that could do all of the above another way
     "run_shell", "type_text", "press_keys", "click", "screenshot",
+    # screen-aware: what they read is as personal as a screenshot, what they do as a click or typing
+    "read_screen", "find_on_screen", "click_text", "type_into",
 ]
 
 [mac_queue]
