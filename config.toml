@@ -23,6 +23,8 @@ core_tools = [
     "close_browser_tabs", "focus_browser_tab",
     # the SwitchBot plug (lamp): "turn the lamp off when I leave" goes to the model, no tool search first
     "plug_on", "plug_off", "plug_status", "ble_plug_on", "ble_plug_off", "ble_plug_status", "schedule_plug",
+    # "wake me up at 7:50" in words the fast path doesn't know: no tool search before it
+    "schedule_wakeup", "cancel_wakeup",
     # long-term memory: offered on every turn so a fact gets saved without a tool search first
     "remember",
 ]
@@ -219,6 +221,16 @@ nudge_minutes = 15               # "ECE 105 lecture in 15 minutes, E2 1792"
 # "be quiet" (set_quiet). speak = false: Telegram only.
 speak = true
 quiet_hours = ["23:00", "07:30"]
+
+[wakeup]
+# "Wake me up at 7:50" (wakeup.py): said on the Mac even in quiet hours (never during a class or event), and sent to
+# Telegram, every ring. The Mac is turned up to at least `volume` and unmuted for it, then put back. It rings
+# `rings` times, `repeat_minutes` apart, until he answers (any message, or the Telegram button); the sound is put
+# back `restore_after_seconds` after the last ring. "At 7:50 say X out loud" is said once.
+volume = 50
+repeat_minutes = 2
+rings = 3
+restore_after_seconds = 60
 
 [gym]
 # Which split day is on which weekday; the morning brief says "Gym today: Day 1." (no exercise list: that lives in the

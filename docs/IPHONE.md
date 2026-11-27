@@ -31,6 +31,10 @@ Shortcuts app → **+** → name it **Sommus**. Add these actions in order (sear
    - **Get Dictionary Value** — key `label` in **Contents of URL**
    - **Create Alarm** (Clock) — Time: **Dates** · Label: the `label` value
      (leave *Show When Run* on at first, so you see the alarm it makes)
+   - **Get Contents of URL** — URL `http://100.101.226.81:8780/phone/done` · Method **POST** · Request Body
+     **JSON** · field **Text**, key `action`, value `alarm`. This tells Sommus the alarm was really made. Until
+     the phone has confirmed the last alarm it was handed, Sommus says "it may not ring, check Clock" instead of
+     "alarm set", because it can't see the phone.
    - **End If**
 8. **Get Dictionary Value** — key `reply` in **Contents of URL**
 9. **Speak Text** — the `reply` value
@@ -52,13 +56,32 @@ Two more branches, same pattern as `alarm` (add them after the alarm's **End If*
 
 Say "play my Lofi playlist" or "turn on Do Not Disturb" through the Action Button to try them.
 
-### If you built it before November 2026: add the alarm
+### Alarms don't show up in Clock? Fix step 7
 
 The first version of these steps had no `alarm` branch, so Sommus said the alarm was set and the phone threw
-the action away (the 1:05 PM alarm on Oct 8 never rang). Open the Shortcut, add step 7 above after the `text`
-branch's **End If**, and test it: press the Action Button, say "set an alarm for" a time two minutes from now,
-and check Clock → Alarms. The server's log shows what the phone was handed:
-`ssh sommus-brain 'journalctl -u sommus -n 20'` → `iPhone: 'set an alarm for …' → alarm`.
+the action away (the 1:05 PM alarm on Oct 8 never rang). It happened again on 2026-11-26 (a 7:50 PM test alarm:
+the server handed the phone `alarm`, Clock showed nothing), so the Shortcut on the phone still lacks a working
+alarm branch. Open the Shortcut and check step 7:
+
+1. The branch exists, after the `text` branch's **End If**.
+2. Its **If** compares the `action` value from step 3, not a later *Dictionary Value* (tap the variable and pick
+   the step 3 one).
+3. The **Get Contents of URL → /phone/done** step is the last one inside the branch.
+
+Test it: press the Action Button, say "set an alarm for" a time two minutes from now, and check Clock → Alarms.
+The server's log shows what the phone was handed and whether it confirmed:
+`ssh sommus-brain 'journalctl -u sommus -n 20'` → `iPhone: 'set an alarm for …' → alarm`, then
+`iPhone confirmed: alarm`. From then on Sommus says "Setting an alarm on your phone", and a wake-up set from the
+phone ("wake me up at 7:50") also puts a backup alarm in Clock.
+
+## Wake-ups work without the Shortcut
+
+"Wake me up at 7:50" (by Telegram, the Mac or the phone) is kept on the server, not the phone: at the time Sommus
+says it out loud on the Mac (turned up and unmuted for it, even late at night, never during a class) and sends it
+to Telegram with an "I'm up" button, every 2 minutes, 3 times, until you answer. Any message to Sommus counts as an
+answer. If the Mac is asleep only Telegram rings, so keep Telegram's notification sound on. The phone itself can't
+be woken by the server: it only does things inside an Action Button request. Phone alarms can't be set from
+Telegram either, and Sommus says so.
 
 ## Try it
 
@@ -67,7 +90,8 @@ and check Clock → Alarms. The server's log shows what the phone was handed:
 | "What's my next class?" | Spoken answer from the schedule, $0 |
 | "Turn on my flashlight" | Flashlight on, $0 |
 | "Remind me to take creatine at 9:30" | A Reminders entry, which rings on the phone |
-| "Set an alarm for 6:45" | An alarm in Clock for the next 6:45 |
+| "Set an alarm for 6:45" | An alarm in Clock for the next 6:45 (needs step 7; until it has confirmed one, Sommus says it may not ring) |
+| "Wake me up at 7:50" | Said on the Mac and sent to Telegram at 7:50, repeated until you answer, $0 |
 | "What's the battery on my laptop?" | Asks the Mac; if it's asleep, Sommus says so |
 | "Text Didi I'm running late" | Looks the number up (needs the Mac awake and the PIN for contacts), then the phone sends it |
 
@@ -75,7 +99,8 @@ and check Clock → Alarms. The server's log shows what the phone was handed:
 
 `POST /ask {"text": "..."}` returns `{"reply": "...", "action": "", ...}`. `action` is one of `flashlight_on`,
 `flashlight_off`, `text` (with `to`, `message`), `alarm` (with `time` as `HH:MM` 24-hour in Waterloo time,
-`at` as the full ISO date and time it rings, and `label`) or `sleep` (nothing was said, or "you're good to go":
+`at` as the full ISO date and time it rings, and `label`; the Shortcut then POSTs `{"action": "alarm"}` to
+`/phone/done`) or `sleep` (nothing was said, or "you're good to go":
 stop listening); empty means just speak the reply. One action per request: each `/ask` starts with none queued.
 
 An iPhone alarm is a time of day: it rings the next time the clock shows it. So `phone_alarm` only takes alarms

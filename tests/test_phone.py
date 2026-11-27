@@ -53,6 +53,7 @@ def test_times_that_arent_times_are_refused(said):
 
 async def test_the_alarm_is_queued_with_a_24_hour_time_and_said_honestly():
     phone = Phone(ZONE, clock=lambda: MORNING)
+    phone.confirmed("alarm")  # the Shortcut has made one before
     async with Client(phone.node()) as client:
         away = await client.call_tool("phone_alarm", {"time_24h": "13:05"})
         assert "set_reminder" in away.content[0].text and phone.action == {}
@@ -60,6 +61,62 @@ async def test_the_alarm_is_queued_with_a_24_hour_time_and_said_honestly():
         said = await client.call_tool("phone_alarm", {"time_24h": "1:05 PM", "day": "2026-10-08"})
     assert said.content[0].text == "Setting an alarm on your phone for 1:05 PM."
     assert phone.action == {"action": "alarm", "time": "13:05", "at": "2026-10-08T13:05-04:00", "label": "Sommus"}
+
+
+async def test_away_from_the_iphone_it_says_no_alarm_was_set_and_offers_a_wake_up():
+    """2026-11-26: from the iPhone, phone_alarm said "Set it for 7:50 PM" and Clock showed nothing. From Telegram
+    the phone can't be reached at all, so the reply must not read like success."""
+    phone = Phone(ZONE, clock=lambda: MORNING)
+    async with Client(phone.node()) as client:
+        away = (await client.call_tool("phone_alarm", {"time_24h": "13:05"})).content[0].text
+    assert away.startswith("No phone alarm was set") and "schedule_wakeup" in away and phone.action == {}
+
+
+async def test_until_the_shortcut_confirms_an_alarm_the_reply_never_says_it_is_set(tmp_path):
+    clock = [MORNING]
+    phone = Phone(ZONE, clock=lambda: clock[0], state=tmp_path / "phone.json")
+    phone.present = True
+    async with Client(phone.node()) as client:
+        first = (await client.call_tool("phone_alarm", {"time_24h": "13:05"})).content[0].text
+        assert phone.action["action"] == "alarm"  # still handed over: the Shortcut may have the step
+        assert "never confirmed" in first and "Do not say the alarm is set" in first
+        assert "Setting an alarm" not in first
+        clock[0] = MORNING.replace(minute=1)
+        phone.confirmed("alarm")  # /phone/done from the Shortcut's alarm branch
+        phone.action = {}
+        clock[0] = MORNING.replace(minute=2)
+        second = (await client.call_tool("phone_alarm", {"time_24h": "14:00"})).content[0].text
+        assert second == "Setting an alarm on your phone for 2:00 PM."
+        phone.action = {}
+        clock[0] = MORNING.replace(minute=3)  # that one was never confirmed: the Shortcut lost its step again
+        third = (await client.call_tool("phone_alarm", {"time_24h": "15:00"})).content[0].text
+        assert "never confirmed" in third
+    assert Phone(ZONE, state=tmp_path / "phone.json").alarms["confirmed"] == MORNING.replace(minute=1).isoformat()
+
+
+def test_the_shortcut_confirms_through_phone_done_from_his_devices_only(tmp_path):
+    from starlette.testclient import TestClient
+
+    phone = Phone(ZONE, clock=lambda: MORNING)
+    server = Server(config(tmp_path), NodeHub((), Policy()), Store(tmp_path / "t.db"), phone, log=lambda _l: None)
+    server.tailnet.is_mine = lambda address: address == "testclient"
+    with TestClient(server.app()) as http:
+        assert http.post("/phone/done", json={"action": "alarm"}).json() == {"ok": True}
+    assert phone.alarms_work()
+    server.tailnet.is_mine = lambda address: False
+    with TestClient(server.app()) as http:
+        assert http.post("/phone/done", json={"action": "alarm"}).status_code == 403
+
+
+def test_a_backup_alarm_for_a_wake_up_goes_only_to_a_phone_that_can_make_one():
+    phone = Phone(ZONE, clock=lambda: MORNING)
+    at = datetime(2026, 10, 9, 7, 50)
+    assert phone.backup_alarm(at) == ""  # not from the iPhone
+    phone.present = True
+    assert phone.backup_alarm(at) == "" and phone.action == {}  # never confirmed: nothing claimed, nothing queued
+    phone.confirmed("alarm")
+    assert phone.backup_alarm(at) == "Your phone's Clock gets an alarm for 7:50 AM tomorrow too."
+    assert phone.action["time"] == "07:50" and phone.action["label"] == "Wake up"
 
 
 async def test_a_bad_alarm_time_queues_nothing():

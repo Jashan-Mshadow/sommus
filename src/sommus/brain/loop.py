@@ -19,7 +19,7 @@ from typing import Any
 
 import anthropic
 
-from sommus import costs, status, supplements
+from sommus import costs, status, supplements, wakeup
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain import nodes as nodes_mod
@@ -267,6 +267,7 @@ class Brain:
         # The last model turn, kept for 30 s so the same request said twice isn't paid for twice.
         self._recent: tuple[tuple[str, str], float, str, tuple] | None = None
         self._turn_tools: list[str] = []
+        self.wakeups = None  # the server's WakeUps (wakeup.py): set by Server, so a ringing alarm hears him
 
     def _start_turn(self, text: str) -> int:
         return self.store.start_turn(text, getattr(self, "source", ""))  # bare test brains have no source
@@ -328,6 +329,15 @@ class Brain:
         return wire
 
     async def handle(self, text: str, confirm: ConfirmFn) -> AsyncIterator[Event]:
+        wake = getattr(self, "wakeups", None)  # bare test brains have none
+        if wake is not None and wake.ringing():  # an alarm is going: any word from him means he's up
+            if answer := await wake.heard(text, getattr(self, "source", "")):
+                turn_id = self._start_turn(text)
+                yield TextDelta(answer)
+                self._remember(text, answer)
+                self.store.finish_turn(turn_id, answer, "ok", "fastpath", Usage())
+                yield TurnDone(Usage(), 0.0, 0)
+                return
         if self.gate.active:
             given, rest = split_pin(text)
             if given and not rest and not self.gate.claims(text):
@@ -349,6 +359,7 @@ class Brain:
             self._supplement_report(text)
             or self._cost_question(text)
             or self._status_question(text)
+            or wakeup.match(text)
             or fastpath.match(
                 text,
                 self._weather,
