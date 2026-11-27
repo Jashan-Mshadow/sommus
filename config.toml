@@ -20,7 +20,7 @@ core_tools = [
     "send_email", "search_email", "search_vault", "read_note", "add_todo", "complete_todo", "web_search", "ask_claude",
     # quick spoken requests: deferred, each first cost a tool search (~2 s before the tool ran)
     "get_now_playing", "get_brightness", "lock_screen", "sleep_display", "get_wifi", "list_browser_tabs",
-    "close_browser_tabs",
+    "close_browser_tabs", "focus_browser_tab",
     # the SwitchBot plug (lamp): "turn the lamp off when I leave" goes to the model, no tool search first
     "plug_on", "plug_off", "plug_status", "ble_plug_on", "ble_plug_off", "ble_plug_status", "schedule_plug",
     # long-term memory: offered on every turn so a fact gets saved without a tool search first
@@ -118,6 +118,8 @@ pin_tools = [
     "save_browser_tab",
     # anything that could do all of the above another way
     "run_shell", "type_text", "press_keys", "click", "screenshot",
+    # window titles and Terminal: listing shows what's open, the rest types and runs commands like run_shell
+    "list_windows", "list_terminal_tabs", "read_terminal", "send_to_terminal", "open_terminal", "close_terminal_tab",
 ]
 
 [mac_queue]

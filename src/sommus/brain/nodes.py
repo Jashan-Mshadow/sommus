@@ -146,6 +146,8 @@ def plain_error(text: str) -> str:
         return "That isn't set up yet."  # the setup steps are for the screen, never for his ears
     if text.startswith("Error executing tool"):
         return "That didn't work."
+    if text.startswith("No tab matching"):
+        return text.split("\n", 1)[0].replace("No tab matching", "No open tab matches")  # not every title read out
     return text
 
 

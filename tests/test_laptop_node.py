@@ -60,6 +60,20 @@ EXPECTED_TIERS = {
     "sleep_display": "reversible",
     "quit_app": "destructive",
     "sleep_computer": "destructive",
+    # windows: moving them is undone by moving them back
+    "list_windows": "read",
+    "snap_window": "reversible",
+    "move_window": "reversible",
+    "move_window_to_display": "reversible",
+    "minimize_window": "reversible",
+    "hide_app": "reversible",
+    "arrange_side_by_side": "reversible",
+    # Terminal: typing into a tab runs commands, so it sits with run_shell
+    "list_terminal_tabs": "read",
+    "read_terminal": "read",
+    "send_to_terminal": "destructive",
+    "open_terminal": "destructive",
+    "close_terminal_tab": "destructive",
 }
 
 
