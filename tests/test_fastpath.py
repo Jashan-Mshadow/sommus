@@ -742,3 +742,31 @@ def test_a_plug_command_with_a_time_is_scheduled(text, on, due, said):
 def test_a_reminder_about_the_lamp_stays_a_reminder():
     found = fastpath.match("remind me to turn off the lamp in 5 minutes")
     assert found is not None and found.tool == "set_reminder"
+
+
+@pytest.mark.parametrize(
+    ("text", "tool"),
+    [
+        ("I'm at my lamp turn my lamp on", "plug_on"),  # 2026-11-23: this one went to Sonnet for $0.057
+        ("yeah can you turn the lamp off real quick", "plug_off"),
+        ("it's dark here turn on the lamp", "plug_on"),
+        ("um turn the light off please", "plug_off"),
+    ],
+)
+def test_filler_words_around_a_plug_command_do_not_send_it_to_the_model(text, tool):
+    found = fastpath.match(text)
+    assert found is not None and found.tool == tool, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "I want to turn off the music",  # no plug noun
+        "turn on the lamp and play some music",  # a second request: the model's
+        "turn the lamp on in the app",
+        "i am at the lamp store",
+    ],
+)
+def test_extra_words_never_make_the_plug_claim_something_else(text):
+    found = fastpath.match(text)
+    assert found is None or not (found.tool or "").startswith(("plug", "schedule")), text

@@ -469,3 +469,33 @@ def test_fast_path_repeat_and_live_turns_are_not_training_data(tmp_path):
     found = export.export_new(tmp_path / "t.db", 0, set())
     assert [e["request"] for e in found.train + found.test] == ["remind me to call mom at 6"]
     assert found.dropped_internal == 3
+
+
+def test_a_train_only_run_skips_export_and_synthetic_and_uses_the_copied_data(tmp_path):
+    """The new Mac pulls the server's data and only trains (scripts/model-train-mac.sh)."""
+    root, vault = tmp_path / "repo", tmp_path / "vault"
+    vault.mkdir()
+    tdir = root / "data" / "training"
+    tdir.mkdir(parents=True)
+    write_nodes(root)
+    rows = [
+        {"source": "real", "request": f"set the volume to {i}", "calls": [call("set_volume", level=i)]}
+        for i in range(80)
+    ]
+    (tdir / "real_train.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    store = Store(root / "data" / "sommus.db")
+    log_turn(store, "this Mac's own turn must not be exported", [("get_battery", {})])
+    seen = {}
+
+    def fake(cmd, **kw):
+        seen["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    cfg = {**nightly.DEFAULTS, "vault": str(vault)}
+    night = nightly.run(root, cfg, client=FakeClient([GOOD]), now=NOW, hardware=None, runner=fake, train_only=True)
+    r = night.record
+    assert r["train"]["status"] == "trained" and r["train"]["examples"] == 80 and "mlx_lm.lora" in seen["cmd"]
+    assert r["real_new"] == 0 and r["synthetic_new"] == 0 and r["cost_usd"] == 0  # no export, no API spend
+    assert any("train-only run" in line for line in night.log)
+    assert (vault / "Portfolio/Projects/Sommus Model Training (Mac).md").exists()
+    assert not (vault / "Portfolio/Projects/Sommus Model Progress.md").exists()  # the server's note is left alone

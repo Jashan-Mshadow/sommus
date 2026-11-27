@@ -78,7 +78,7 @@ async def test_the_phone_can_send_long_text_to_telegram():
 
     sent: list[str] = []
 
-    async def tell(text: str) -> None:
+    async def tell(text: str, buttons=None) -> None:
         sent.append(text)
 
     phone = Phone()
@@ -109,3 +109,26 @@ def test_the_calendar_does_not_read_out_what_already_happened_today():
     said = calendars.say([morning, evening], day, 1, night)
     assert "ECE 190" not in said and "Study group" in said
     assert calendars.say([], day, 1, night) == "Today: nothing on your calendar."
+
+
+def test_the_second_block_of_a_double_lecture_is_not_nudged_again(tmp_path):
+    path = tmp_path / "double.toml"
+    extra = [
+        ("ECE 105", "09:30:00", "10:20:00", "E2 1792"),
+        ("MATH 115", "13:30:00", "14:20:00", "E7 5353"),
+        ("MATH 115", "15:30:00", "16:20:00", "E7 5353"),
+    ]
+    rows = "".join(
+        f'  {{ course = "{c}", kind = "LEC", day = "Tue", start = {a}, end = {b}, room = "{r}" }},\n'
+        for c, a, b, r in extra
+    )
+    path.write_text(SCHEDULE.replace("weekly = [\n", "weekly = [\n" + rows))
+    s, sent = campus.Schedule.load(path), set()
+    # ECE 105 at 8:30 and 9:30 are back to back: the 9:15 nudge for the second block is skipped
+    first = datetime(2026, 10, 6, 8, 16, tzinfo=ZONE)
+    assert brief.class_nudges(s, first, 15, sent) == ["ECE 105 lecture in 14 minutes, in E2 1792."]
+    second = datetime(2026, 10, 6, 9, 16, tzinfo=ZONE)
+    assert brief.class_nudges(s, second, 15, sent) == []
+    # MATH 115 at 13:30 and 15:30 have a gap: both are nudged
+    assert len(brief.class_nudges(s, datetime(2026, 10, 6, 13, 16, tzinfo=ZONE), 15, sent)) == 1
+    assert len(brief.class_nudges(s, datetime(2026, 10, 6, 15, 16, tzinfo=ZONE), 15, sent)) == 1

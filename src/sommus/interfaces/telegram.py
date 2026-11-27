@@ -88,9 +88,37 @@ class Bot:
     async def whoami(self) -> str:
         return (await self.call("getMe"))["username"]
 
-    async def say(self, chat: int, text: str) -> None:
-        for chunk in split(text):
-            await self.call("sendMessage", chat_id=chat, text=chunk)
+    async def say(self, chat: int, text: str, buttons: list[list[tuple[str, str]]] | None = None) -> None:
+        """Send `text`; `buttons` (rows of (label, callback data)) go under the last part, tapped via `button`."""
+        chunks = split(text)
+        for i, chunk in enumerate(chunks):
+            extra: dict[str, Any] = {}
+            if buttons and i == len(chunks) - 1:
+                extra["reply_markup"] = {
+                    "inline_keyboard": [[{"text": t, "callback_data": d} for t, d in row] for row in buttons]
+                }
+            await self.call("sendMessage", chat_id=chat, text=chunk, **extra)
+
+    async def button(self, callback: dict, log) -> None:
+        """A tap on an inline button: stop the spinner, take the buttons away, and say what `on_button` answers."""
+        message = callback.get("message") or {}
+        chat = (message.get("chat") or {}).get("id")
+        if chat not in self.allowed or self.sleep.asleep:
+            return
+        with contextlib.suppress(Exception):
+            await self.call("answerCallbackQuery", callback_query_id=callback["id"])
+        with contextlib.suppress(Exception):
+            await self.call(
+                "editMessageReplyMarkup",
+                chat_id=chat,
+                message_id=message["message_id"],
+                reply_markup={"inline_keyboard": []},
+            )
+        handler = getattr(self, "on_button", None)
+        reply = await handler(str(callback.get("data", ""))) if handler else ""
+        if reply:
+            await self.say(chat, reply)
+            log(f"{chat}: button {callback.get('data')} -> {reply[:60]}")
 
     async def poll(self, log=None) -> list[dict]:
         """New messages, or [] after a failure. Nothing here may end the bot: any error used to escape
@@ -142,6 +170,9 @@ class Bot:
             self.brain.reset()
             await self.say(chat, "Fresh conversation.")
             return
+        if text == "/status":
+            await self.say(chat, self.brain.status_report(long=True))
+            return
         if text == "/cost":
             await self.say(chat, self.store.cost_summary(self.brain.budget.monthly_usd))
             return
@@ -180,6 +211,12 @@ class Bot:
         while True:
             for update in await self.poll(log):
                 self.offset = update["update_id"] + 1
+                if callback := update.get("callback_query"):
+                    try:
+                        await self.button(callback, log)
+                    except Exception as e:  # a bad tap must not kill the bot
+                        log(f"Button error: {type(e).__name__}: {e}")
+                    continue
                 message = update.get("message") or update.get("edited_message")
                 if not message or "text" not in message:
                     continue

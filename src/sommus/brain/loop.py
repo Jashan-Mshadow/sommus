@@ -19,7 +19,7 @@ from typing import Any
 
 import anthropic
 
-from sommus import costs, supplements
+from sommus import costs, status, supplements
 from sommus.brain import budget as spending
 from sommus.brain import campus, diary, fastpath, hidden
 from sommus.brain import nodes as nodes_mod
@@ -340,6 +340,7 @@ class Brain:
         quick = (
             self._supplement_report(text)
             or self._cost_question(text)
+            or self._status_question(text)
             or fastpath.match(
                 text,
                 self._weather,
@@ -602,6 +603,35 @@ class Brain:
         requests, fast, dollars = self.store.cost_since(since)
         said = costs.say(window, requests, fast, dollars)
         return fastpath.Match("cost", local=lambda: said)
+
+    def status_report(self, long: bool = False) -> str:
+        """Is Sommus OK? From the log, the node list and the sleep flag: no model, free (status.py)."""
+        from sommus.sleepmode import Sleep
+
+        now = datetime.now()
+        day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        requests, fast, dollars = self.store.cost_since(day)
+        _, _, month = self.store.cost_since(day.replace(day=1))
+        return status.report(
+            mac_nodes=[n.name for n in self.cfg.nodes if n.where == "mac"],
+            reachable=self.hub.reachable,
+            asleep=Sleep(self.cfg.data_dir).asleep,
+            requests=requests,
+            fast=fast,
+            dollars=dollars,
+            month_dollars=month,
+            cap=self.budget.monthly_usd,
+            data_dir=self.cfg.data_dir,
+            now=now,
+            long=long,
+        )
+
+    def _status_question(self, text: str) -> fastpath.Match | None:
+        """ "How's Sommus doing?", "system status": answered from the log and the node list, free."""
+        if not status.is_question(text):
+            return None
+        said = self.status_report()
+        return fastpath.Match("status", local=lambda: said)
 
     def _supplement_report(self, text: str) -> fastpath.Match | None:
         """ "I took my creatine", "everything except creatine and magnesium": logged by plain code, free, no PIN

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import activity, brief, config, sleepmode, supplements
+from sommus import activity, brief, config, sleepmode, status, supplements
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -482,12 +482,31 @@ class Server:
 
     # -- what Sommus says first
 
-    async def tell(self, text: str) -> None:
+    async def tell(self, text: str, buttons: list[list[tuple[str, str]]] | None = None) -> None:
         if not self.bot or self.sleep.asleep:
             return
         for chat in self.bot.allowed:
             with contextlib.suppress(Exception):
-                await self.bot.say(chat, text)
+                await (self.bot.say(chat, text, buttons) if buttons else self.bot.say(chat, text))
+
+    async def button_pressed(self, data: str) -> str:
+        """A tap on a Telegram button under a nudge. "Took them" logs what the last supplement nudge listed."""
+        pending = self.state.get("supp_pending") or {}
+        if data == "supp:skip":
+            self.state["supp_pending"] = {}
+            self._save_state()
+            return "Okay, skipped."
+        if data == "supp:took":
+            items = pending.get("items") or []
+            if not items:
+                return "Nothing is waiting to be logged."
+            result = await self.hub.call(
+                "log_supplements", {"items": ", ".join(items), "scheduled": ", ".join(pending.get("scheduled") or [])}
+            )
+            self.state["supp_pending"] = {}
+            self._save_state()
+            return result.text if not result.is_error else "I couldn't log that. Tell me which ones you took."
+        return ""
 
     async def _mail(self) -> str:
         with contextlib.suppress(Exception):
@@ -544,6 +563,32 @@ class Server:
             text += "\n" + today
         return text
 
+    async def check_mac(self, now: datetime) -> None:
+        """Tell him once if the Mac side (live mode, Mac tools, Bluetooth) has been unreachable for a while, and once
+        when it is back. It sat off for three days (2026-11-22 to 11-25) without a word."""
+        nodes = [n.name for n in self.cfg.nodes if n.where == "mac"]
+        if not nodes:
+            return
+        settings = config.section("status")
+        up = all(self.hub.reachable(name) for name in nodes)
+        event = status.presence.observe(
+            up,
+            now.replace(tzinfo=None),
+            timedelta(minutes=int(settings.get("mac_alert_minutes", 30))),
+            (int(settings.get("alert_from_hour", 10)), int(settings.get("alert_until_hour", 23))),
+        )
+        if event == "down":
+            since = status.presence.since
+            text = (
+                f"The Mac side of Sommus has been offline since {status._clock(since)}: voice, Mac controls and the "
+                "Bluetooth plug are off. Open Sommus.app or check that the Mac is awake and `sommus live` is running."
+            )
+            await self.tell(text)
+            self.record_said("mac offline", text, "telegram")
+        elif event == "back":
+            await self.tell("The Mac side of Sommus is back online.")
+            self.record_said("mac back", "The Mac side of Sommus is back online.", "telegram")
+
     async def tick(self, now: datetime) -> None:
         settings = config.section("brief")
         try:
@@ -592,6 +637,8 @@ class Server:
         except OSError as e:
             self.log(f"Supplements: can't read the log ({e.__class__.__name__}); will retry")
             return  # not marked done: the next tick tries again, inside the window
+        if await self.busy(now):  # in class or an event: the slot's window stays open, so it comes when it is over
+            return
         taken = supplements.taken_on(text, now.date())
         for slot in due:
             done.add(supplements.key_for(slot, now))
@@ -601,7 +648,14 @@ class Server:
             supplements.update_misses(misses, slot["items"], taken, now.date())
             if lacking:
                 spoken = "" if quiet else supplements.spoken(slot, lacking, self.phrases)
-                await self.herald.deliver(supplements.written(slot, lacking, now), spoken, now, kind="supplements")
+                self.state["supp_pending"] = {
+                    "items": list(lacking),
+                    "scheduled": [item for s in settings["slots"] for item in s.get("items", [])],
+                }
+                buttons = [[("✅ Took them", "supp:took"), ("Skip", "supp:skip")]]
+                await self.herald.deliver(
+                    supplements.written(slot, lacking, now), spoken, now, kind="supplements", buttons=buttons
+                )
         self.state["supplements"] = sorted(done)[-40:]
         self._save_state()
 
@@ -750,6 +804,7 @@ class Server:
             now = datetime.now().astimezone()
             try:
                 await self.tick(now)
+                await self.check_mac(now)
                 await self.fire_reminders(now.replace(tzinfo=None))
                 await self.run_waiting()
                 if time.time() - self.state.get("contacts_at", 0) > CONTACTS_EVERY_SECONDS:
@@ -855,6 +910,7 @@ async def serve(log=print) -> None:
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":
             token, allowed = tg.credentials()
             server.bot = tg.Bot(token, allowed, server.brain, store, cfg, sleep=server.sleep)
+            server.bot.on_button = server.button_pressed
             log(f"Telegram: @{await server.bot.whoami()} for {len(allowed)} chat(s)")
             tasks.append(asyncio.create_task(server.bot.run(log)))
         host, port = settings["server_host"], int(settings["api_port"])

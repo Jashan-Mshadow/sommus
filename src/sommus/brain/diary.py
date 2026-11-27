@@ -438,6 +438,13 @@ async def write_day(
                     added.append(" ".join(str(fact).split()).rstrip("."))
             except memory.MemoryError:
                 continue  # a secret, too long, or memory full: skip it, keep the rest
+    store.finish_turn(
+        turn_id,
+        f"wrote {day.isoformat()}: {len(added)} new fact(s), {len(follow_ups)} follow-up(s), {len(closed)} closed",
+        "ok",
+        model,
+        usage,
+    )
     return Written(entry, added, closed, usage.cost_usd(model))
 
 

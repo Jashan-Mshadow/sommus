@@ -378,6 +378,18 @@ def _level_intent(tokens: list[str], follow: str | None) -> str | None:
 # ---------------------------------------------------------------- the plug (lamp)
 PLUG_NOUNS = {"fan", "plug", "lamp", "light", "lights"}
 PLUG_QUESTIONS = {"is", "are", "whats", "what", "check"}
+# Words speech-to-text puts around a plug command ("I'm at my lamp turn my lamp on"). They carry no meaning, but the
+# all-words-must-belong rule sent that one to Sonnet ($0.057, 2026-11-23). Switching only, and only with a plug noun.
+PLUG_EXTRA = {
+    "i", "im", "m", "am", "ll", "ve", "d", "s", "t", "go", "ahead", "also", "need", "want", "like", "and", "then",
+    "really", "quick", "quickly", "real", "yeah", "yes", "um", "uh", "here", "there", "home", "dark", "when", "while",
+    "because", "since", "ready", "again",
+}  # fmt: skip
+
+
+def _claims_plug(tokens: list[str]) -> bool:
+    content = [t for t in tokens if not t.isdigit() and t not in FILLER]
+    return bool(content) and all(t in VOCAB["fan"] or t in PLUG_EXTRA for t in content)
 
 
 def _plug_name(present: set[str]) -> str:
@@ -391,7 +403,7 @@ def _plug_switch(tokens: list[str], follow: str | None) -> tuple[bool, str] | No
     """(on?, plug name) for "turn off the lamp", "lamp on", or "turn it back on" right after a plug command."""
     present = set(tokens)
     named = present & PLUG_NOUNS
-    if not _claims("fan", tokens) or not (named or follow == "plug"):
+    if not _claims_plug(tokens) or not (named or follow == "plug"):
         return None
     if not named and not present & {"on", "off"}:
         return None  # "start" or "stop" alone after the lamp could mean the music

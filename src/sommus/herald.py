@@ -102,7 +102,13 @@ class Herald:
         return not result.is_error and "(headphones)" in result.text
 
     async def deliver(
-        self, text: str, spoken: str, now: datetime, telegram_too: bool = False, kind: str = "nudge"
+        self,
+        text: str,
+        spoken: str,
+        now: datetime,
+        telegram_too: bool = False,
+        kind: str = "nudge",
+        buttons: list[list[tuple[str, str]]] | None = None,
     ) -> bool:
         """Speak `spoken` if it can; Telegram gets `text` when it couldn't (or always, with telegram_too).
         Returns whether it was said."""
@@ -110,7 +116,7 @@ class Herald:
         why = self.outcome
         sent = bool(text and (telegram_too or not said))
         if sent:
-            await self.tell(text)
+            await (self.tell(text, buttons) if buttons else self.tell(text))
         if self.record and (spoken or text):
             route = "spoken+telegram" if said and sent else "spoken" if said else "telegram" if sent else "not said"
             if not said and why in ("busy", "muted", "failed"):

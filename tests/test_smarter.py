@@ -67,7 +67,7 @@ def test_the_spoken_greeting_mentions_the_gym(tmp_path):
 async def test_nothing_is_said_aloud_while_busy_but_telegram_still_gets_it():
     told = []
 
-    async def tell(text):
+    async def tell(text, buttons=None):
         told.append(text)
 
     async def busy(_now):
@@ -212,7 +212,7 @@ class HeadphoneHub(FakeHub):
 async def test_in_class_it_speaks_only_into_headphones(output, spoken):
     told = []
 
-    async def tell(text):
+    async def tell(text, buttons=None):
         told.append(text)
 
     async def busy(_now):

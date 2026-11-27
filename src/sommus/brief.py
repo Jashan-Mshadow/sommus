@@ -99,13 +99,27 @@ def classes_starting(
     """Each class starting within `minutes`, once each. `sent` remembers which ones went out, so a restart
     inside the window doesn't repeat them."""
     out = []
+    today = list(schedule.on(now.date())) if hasattr(schedule, "on") else []
     for session in schedule.upcoming(now, days=1):
         ahead = (session.start - now).total_seconds() / 60
         key = (session.label, session.start.isoformat())
         if 0 < ahead <= minutes and key not in sent:
             sent.add(key)
-            out.append(session)
+            if not _continues(session, today):
+                out.append(session)
     return out
+
+
+def _continues(session: campus.Session, day: list[campus.Session]) -> bool:
+    """The second block of a double lecture (ECE 105 at 12:30 and again at 13:30): he is already in it, so a second
+    "lecture in 15 minutes" is noise. True when the same class is running or ended within 10 minutes."""
+    for other in day:
+        if other is session or other.label != session.label or other.start >= session.start:
+            continue
+        ended = other.end or other.start + timedelta(minutes=50)
+        if ended >= session.start - timedelta(minutes=10):
+            return True
+    return False
 
 
 def recent_nudges(sent: set[tuple[str, str]], now: datetime, keep_hours: int = 24) -> list[list[str]]:

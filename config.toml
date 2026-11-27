@@ -270,3 +270,11 @@ collect = true
 # tried later without re-recording. false = numbers only.
 keep_clips = true
 max_clips = 200
+
+[status]
+# Tell him on Telegram once if the Mac side (live mode, Mac controls, Bluetooth plug) has been unreachable this long,
+# but only between these hours (a closed lid overnight is normal). He also gets one message when it comes back.
+# "How's Sommus doing?" (spoken or typed) and /status on Telegram give the same picture for free.
+mac_alert_minutes = 30
+alert_from_hour = 10
+alert_until_hour = 23

@@ -195,7 +195,7 @@ class FakeHub:
 def make_herald(hub, settings=None):
     told = []
 
-    async def tell(text):
+    async def tell(text, buttons=None):
         told.append(text)
 
     h = herald.Herald(hub, tell, settings or {"quiet_hours": ["23:00", "07:30"]}, log=lambda _: None)
@@ -260,7 +260,7 @@ def server(tmp_path, monkeypatch):
                reminders=Reminders(tmp_path / "reminders.json"))  # fmt: skip
     hub, told = FakeHub(), []
 
-    async def tell(text):
+    async def tell(text, buttons=None):
         told.append(text)
 
     s.herald = herald.Herald(hub, tell, {"quiet_hours": ["23:00", "07:30"]}, log=lambda _: None)

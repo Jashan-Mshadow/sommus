@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     ],
     "vault": "~/Documents/Jashans_Brain",
     "note": "Portfolio/Projects/Sommus Model Progress.md",
+    "note_train_only": "Portfolio/Projects/Sommus Model Training (Mac).md",  # runs of scripts/model-train-mac.sh
 }
 
 
@@ -74,6 +75,7 @@ def run(
     hardware: str | None | bool = False,
     model: evaluate.Predict | None = None,
     say: Callable[[str], None] = lambda line: None,
+    train_only: bool = False,
 ) -> Night:
     now = now or datetime.now()
     cfg = {**cfg, "synthetic_model": cfg.get("synthetic_model") or "claude-haiku-4-5"}
@@ -102,54 +104,67 @@ def run(
     if not cfg["enabled"]:
         note("model training is off ([model_training] enabled = false): nothing ran")
     else:
-        # 1 + 2. export and split
-        try:
-            out = export.export_new(data / "sommus.db", int(manifest["last_turn_id"]), known, now)
-            common.append_jsonl(files["real_train"], out.train)
-            common.append_jsonl(files["real_test"], out.test)
-            sets["real_train"] += out.train
-            sets["real_test"] += out.test
-            known |= {common.key(e["request"]) for e in out.train + out.test}
-            manifest["last_turn_id"] = out.last_id
-            real_new = len(out.train) + len(out.test)
-            note(
-                f"export: {real_new} new real examples ({len(out.train)} train, {len(out.test)} test); dropped "
-                f"{out.dropped_secret} with secrets, {out.dropped_duplicate} duplicates, "
-                f"{out.dropped_internal} internal"
-            )
-        except Exception as e:
-            errors.append(f"export failed: {e}")
-            note(errors[-1])
-
-        # 3. synthetic expansion
-        try:
-            tools = schemas.load_tools(data / "nodes")
-            counts = Counter(c["tool"] for rows in sets.values() for ex in rows for c in ex["calls"])
-            res = synth.generate(
-                tools, counts, known, client=client, model=cfg["synthetic_model"], want=int(cfg["synthetic_per_night"]),
-                max_cost_usd=float(cfg["synthetic_max_usd"]), tools_per_night=int(cfg["synthetic_tools_per_night"]),
-                exclude=set(cfg["exclude_tools"]), stamp=stamp,
-            )  # fmt: skip
-            synth_status, synth_reason = res.status, res.reason
-            if res.status == "ok":
-                for ex in res.examples:
-                    bucket = "synthetic_test" if common.is_test(ex["request"]) else "synthetic_train"
-                    sets[bucket].append(ex)
-                    common.append_jsonl(files[bucket], [ex])
-                synth_new = len(res.examples)
-                cost += res.cost_usd
-                _log_spend(data / "sommus.db", cfg["synthetic_model"], res)
+        if train_only:
+            # A Mac that only trains (scripts/model-train-mac.sh): the examples were collected and generated on the
+            # server and copied here. Exporting from this Mac's own log would find almost nothing, and the synthetic
+            # step would spend API money a second time.
+            note("export and synthetic data: skipped (train-only run; the data came from the server)")
+        else:
+            # 1 + 2. export and split
+            try:
+                out = export.export_new(data / "sommus.db", int(manifest["last_turn_id"]), known, now)
+                common.append_jsonl(files["real_train"], out.train)
+                common.append_jsonl(files["real_test"], out.test)
+                sets["real_train"] += out.train
+                sets["real_test"] += out.test
+                known |= {common.key(e["request"]) for e in out.train + out.test}
+                manifest["last_turn_id"] = out.last_id
+                real_new = len(out.train) + len(out.test)
                 note(
-                    f"synthetic: {synth_new} kept of {res.generated} generated ({res.invalid} invalid, "
-                    f"{res.duplicate} duplicates), aimed at {', '.join(res.targets[:5])}; ${res.cost_usd:.4f}"
-                    + (f"; {res.reason}" if res.reason else "")
+                    f"export: {real_new} new real examples ({len(out.train)} train, {len(out.test)} test); dropped "
+                    f"{out.dropped_secret} with secrets, {out.dropped_duplicate} duplicates, "
+                    f"{out.dropped_internal} internal"
                 )
-            else:
-                note(f"synthetic: skipped: {res.reason}")
-        except Exception as e:
-            errors.append(f"synthetic failed: {e}")
-            synth_status, synth_reason = "skipped", "failed"
-            note(errors[-1])
+            except Exception as e:
+                errors.append(f"export failed: {e}")
+                note(errors[-1])
+
+            # 3. synthetic expansion
+            try:
+                tools = schemas.load_tools(data / "nodes")
+                counts = Counter(c["tool"] for rows in sets.values() for ex in rows for c in ex["calls"])
+                res = synth.generate(
+                    tools,
+                    counts,
+                    known,
+                    client=client,
+                    model=cfg["synthetic_model"],
+                    want=int(cfg["synthetic_per_night"]),
+                    max_cost_usd=float(cfg["synthetic_max_usd"]),
+                    tools_per_night=int(cfg["synthetic_tools_per_night"]),
+                    exclude=set(cfg["exclude_tools"]),
+                    stamp=stamp,
+                )
+                synth_status, synth_reason = res.status, res.reason
+                if res.status == "ok":
+                    for ex in res.examples:
+                        bucket = "synthetic_test" if common.is_test(ex["request"]) else "synthetic_train"
+                        sets[bucket].append(ex)
+                        common.append_jsonl(files[bucket], [ex])
+                    synth_new = len(res.examples)
+                    cost += res.cost_usd
+                    _log_spend(data / "sommus.db", cfg["synthetic_model"], res)
+                    note(
+                        f"synthetic: {synth_new} kept of {res.generated} generated ({res.invalid} invalid, "
+                        f"{res.duplicate} duplicates), aimed at {', '.join(res.targets[:5])}; ${res.cost_usd:.4f}"
+                        + (f"; {res.reason}" if res.reason else "")
+                    )
+                else:
+                    note(f"synthetic: skipped: {res.reason}")
+            except Exception as e:
+                errors.append(f"synthetic failed: {e}")
+                synth_status, synth_reason = "skipped", "failed"
+                note(errors[-1])
 
         # 4. train
         try:
@@ -219,7 +234,8 @@ def run(
         common.write_json(manifest_path, manifest)
         report.append_progress(progress_path, record)
         vault = Path(os.path.expanduser(cfg["vault"]))
-        note(report.append_note(vault / cfg["note"], vault, record, text, log))
+        target = cfg.get("note_train_only", cfg["note"]) if train_only else cfg["note"]
+        note(report.append_note(vault / target, vault, record, text, log))
     except Exception as e:  # the report must not be the thing that fails loudly
         log.append(f"report failed: {e}")
     return Night(text, record, log)
@@ -240,19 +256,24 @@ def _log_spend(db_path: Path, model: str, res: synth.SynthResult) -> None:
         return
     store = Store(db_path)
     turn = store.start_turn("[model-nightly] synthetic requests")
-    store.finish_turn(turn, "", "ok", model, Usage(input_tokens=res.input_tokens, output_tokens=res.output_tokens))
+    aimed = ", ".join(res.targets[:5]) or "no tools"
+    result = (
+        f"{len(res.examples)} synthetic requests kept of {res.generated} generated "
+        f"({res.invalid} invalid, {res.duplicate} duplicate), aimed at {aimed}"
+    )
+    store.finish_turn(turn, result, "ok", model, Usage(input_tokens=res.input_tokens, output_tokens=res.output_tokens))
 
 
 def _stderr(line: str) -> None:
     print(f"  {line}", file=sys.stderr, flush=True)
 
 
-def run_from_config(say: Callable[[str], None] = _stderr) -> Night:
+def run_from_config(say: Callable[[str], None] = _stderr, train_only: bool = False) -> Night:
     """Stage logs go to stderr; the one-line summary is the command's stdout, for a scheduler to send."""
     from dotenv import load_dotenv
 
     load_dotenv(config.ROOT / ".env")
-    return run(config.ROOT, settings(), say=say)
+    return run(config.ROOT, settings(), say=say, train_only=train_only)
 
 
 def main() -> None:

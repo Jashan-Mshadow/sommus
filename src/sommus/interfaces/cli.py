@@ -1688,6 +1688,9 @@ def main() -> None:
     parser.add_argument("tool_name", nargs="?", help="with `tool`: the tool to run · with `voices`: a voice to hear")
     parser.add_argument("tool_args", nargs="*", help="with `tool`: key=value arguments · with `voices`: more voices")
     parser.add_argument("--live", action="store_true", help="with `eval`: really run every tool")
+    parser.add_argument(
+        "--train-only", action="store_true", help="with `model-nightly`: skip export and synthetic data"
+    )
     parser.add_argument("--only", help="with `eval`: only commands containing this text")
     parser.add_argument("--gemini", action="store_true", help="with `voices`: hear Gemini Live's voices instead")
     args = parser.parse_args()
@@ -1722,7 +1725,7 @@ def main() -> None:
         elif args.command == "model-nightly":
             from sommus.modeltrain import nightly
 
-            print(nightly.run_from_config().summary)
+            print(nightly.run_from_config(train_only=args.train_only).summary)
         elif args.command == "voice-db":
             from sommus import voicedb
 
