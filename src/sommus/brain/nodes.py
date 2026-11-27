@@ -166,6 +166,7 @@ class NodeHub:
         self._cache_dir = cache_dir or ROOT / "data" / "nodes"
         self.unreachable: dict[str, str] = {}  # node name → why
         self.later = later  # on the server: small Mac actions wait for the Mac instead of failing (later.py)
+        self.caller: Any = None  # the Brain whose tool call is running: a scene runs its steps through it
         self._stack = AsyncExitStack()
 
     async def __aenter__(self) -> NodeHub:
