@@ -74,6 +74,26 @@ def day_note(day: str, turns: list[dict], said: list[dict]) -> str:
         f"{tool_errors} tool errors, {denied} tool calls not allowed or held, {len(failed)} turns not ok.",
         "",
     ]
+    if rings := wake_ups(said):
+        lines += [f"**Wake-ups:** {rings}", ""]  # each ring and where it went, then how it ended
+    return _events(lines, turns, said)
+
+
+def wake_ups(said: list[dict]) -> str:
+    """'07:50 ring 1/3 spoken+telegram; 07:52 ring 2/3 telegram (Mac unreachable); 07:53 ended: answered on
+    Telegram' from the said-first lines wakeup.py records."""
+    parts = []
+    for item in sorted(said, key=lambda s: s.get("at", "")):
+        kind, at = str(item.get("kind", "")), _clock(item.get("at", ""))
+        if kind == "wake-up end":
+            parts.append(f"{at} ended: {str(item.get('text', '')).split(': ', 1)[-1]}")
+        elif kind.startswith("wake-up ") or kind == "said later":
+            what = "said once" if kind == "said later" else "ring " + kind.removeprefix("wake-up ")
+            parts.append(f"{at} {what}: {item.get('route', '?')}")
+    return "; ".join(parts)
+
+
+def _events(lines: list[str], turns: list[dict], said: list[dict]) -> str:
     events = [(t["at"], "turn", t) for t in turns] + [(s["at"], "said", s) for s in said]
     for at, kind, item in sorted(events, key=lambda e: e[0]):
         if kind == "said":

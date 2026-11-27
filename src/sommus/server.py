@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sommus import activity, brief, config, sleepmode, status, supplements
+from sommus import activity, brief, config, sleepmode, status, supplements, wakeup
 from sommus.brain import campus, diary, fastpath
 from sommus.brain.later import Later
 from sommus.brain.loop import Brain, Notice, TextDelta, ToolFinished, ToolStarted, TurnDone
@@ -50,12 +50,58 @@ class Phone:
     """Tools that run on the iPhone itself. The brain can't reach into a phone, so a tool here only queues the
     action; /ask hands it back and the Shortcut does it (flashlight, a text from the phone, an alarm)."""
 
-    def __init__(self, zone: ZoneInfo | None = None, clock=None) -> None:
+    def __init__(self, zone: ZoneInfo | None = None, clock=None, state: Path | None = None) -> None:
         self.present = False  # true only while a request from the iPhone is being handled
         self.action: dict[str, Any] = {}
         self.telegram: Callable[[str], Awaitable[None]] | None = None  # set by Server: sends to his Telegram chat
         self.zone = zone or ZoneInfo("America/Toronto")
         self.clock = clock or (lambda: datetime.now(self.zone))
+        # When an alarm was last handed to the Shortcut, and when the Shortcut last said it made one (/phone/done).
+        # The server can't see the phone: a handed-out alarm only counts once the phone has confirmed the last one.
+        self.state_path = state
+        self.alarms: dict[str, str] = {}
+        if state:
+            with contextlib.suppress(OSError, ValueError):
+                self.alarms = dict(json.loads(state.read_text()))
+
+    def _note(self, key: str) -> None:
+        self.alarms[key] = self.clock().isoformat(timespec="seconds")
+        if self.state_path:
+            with contextlib.suppress(OSError):
+                self.state_path.write_text(json.dumps(self.alarms))
+
+    def alarms_work(self) -> bool:
+        """True when the Shortcut has confirmed the last alarm it was handed (so its alarm step exists)."""
+        done = self.alarms.get("confirmed", "")
+        return bool(done) and done >= self.alarms.get("sent", "")
+
+    def confirmed(self, action: str) -> None:
+        """The Shortcut's alarm branch called /phone/done after Create Alarm."""
+        if action == "alarm":
+            self._note("confirmed")
+
+    def _hand_alarm(self, when: datetime, label: str) -> bool:
+        """Queue an alarm for the Shortcut; False if the phone already has an action this request."""
+        if self.action:
+            return False
+        self.action = {
+            "action": "alarm",
+            "time": f"{when:%H:%M}",  # what the Shortcut's Create Alarm reads
+            "at": when.isoformat(timespec="minutes"),
+            "label": label.strip() or "Sommus",
+        }
+        self._note("sent")
+        return True
+
+    def backup_alarm(self, at: datetime) -> str:
+        """For a wake-up set from the iPhone: also put an alarm in its Clock, but only when the Shortcut has shown
+        it can make one. Returns what to tell him, or ''."""
+        if not self.present or not self.alarms_work():
+            return ""
+        when = at.replace(tzinfo=self.zone) if at.tzinfo is None else at
+        if not self._hand_alarm(when, "Wake up"):
+            return ""
+        return f"Your phone's Clock gets an alarm for {spoken_time(when, self.clock())} too."
 
     def node(self):
         from mcp.server.mcpserver import MCPServer
@@ -94,7 +140,8 @@ class Phone:
         def phone_alarm(time_24h: str, day: str = "", label: str = "") -> str:
             """Set an alarm in the iPhone's Clock app. Only when the request came from the iPhone. An iPhone
             alarm rings at the next time of day it's set for, so it's for the next 24 hours; anything later
-            is a reminder (set_reminder).
+            is a reminder (set_reminder). From Telegram or the Mac use schedule_wakeup instead. Never tell him
+            the alarm is set unless this tool's reply says it is.
 
             Args:
                 time_24h: The time it rings, "13:05" (also accepts "1:05 PM").
@@ -102,18 +149,30 @@ class Phone:
                 label: Optional alarm name.
             """
             if not self.present:
-                return away + " For an alarm from here, use set_reminder: it pings his phone on Telegram."
+                # From Telegram or the Mac the phone can't be reached at all (it only acts inside an Action
+                # Button request), so nothing here may sound like an alarm was set.
+                return (
+                    "No phone alarm was set: the iPhone only does things while he talks through its Action Button, "
+                    "so alarms can't be put on it from here. Say that plainly, and offer schedule_wakeup (said out "
+                    "loud on the Mac at the time, and sent to Telegram) or set_reminder (a Telegram ping) instead."
+                )
             try:
                 when = alarm_time(time_24h, day, self.clock())
             except ValueError as e:
                 return str(e)
-            action = {
-                "action": "alarm",
-                "time": f"{when:%H:%M}",  # what the Shortcut's Create Alarm reads
-                "at": when.isoformat(timespec="minutes"),
-                "label": label.strip() or "Sommus",
-            }
-            return queue(action, f"Setting an alarm on your phone for {spoken_time(when, self.clock())}.")
+            works = self.alarms_work()  # before this one counts as sent
+            if not self._hand_alarm(when, label):
+                return f"The phone can do one thing per request; already queued: {self.action['action']}."
+            said = spoken_time(when, self.clock())
+            if works:
+                return f"Setting an alarm on your phone for {said}."
+            # 2026-11-26: "set" was said, the Shortcut got the alarm, Clock showed nothing. Until the phone confirms
+            # one (docs/IPHONE.md, step 7), say only what is known.
+            return (
+                f"Sent a {said} alarm to the phone's Shortcut, but it has never confirmed making one, so it may "
+                "not ring. Tell him exactly that: check Clock, Alarms; if it isn't there the Shortcut needs its "
+                "alarm step (docs/IPHONE.md). Do not say the alarm is set. Offer schedule_wakeup as a backup."
+            )
 
         @server.tool(annotations=quick, structured_output=False)
         def phone_music(what: str = "", control: str = "play") -> str:
@@ -255,6 +314,7 @@ class Server:
         reminders: Reminders | None = None,
         contacts: ContactBook | None = None,
         calendar=None,
+        wakeups: wakeup.WakeUps | None = None,
     ):
         self.cfg, self.hub, self.store, self.phone, self.log = cfg, hub, store, phone, log
         phone.telegram = self.tell
@@ -282,6 +342,11 @@ class Server:
         self.say_as = config.section("voice").get("say_as", {})
         self._greet_tried = -GREET_RETRY_SECONDS
         self._activity_at = -ACTIVITY_EVERY_SECONDS
+        self.wakeups = wakeups  # "wake me up at 7:50": rung from fire_reminders, stopped by any message (wakeup.py)
+        if wakeups:
+            wakeups.attach(self.tell, self.busy, lambda: self.herald.private_audio(), self.record_said, log)
+            for brain in (self.brain, self.voice_brain, self.relay_brain):
+                brain.wakeups = wakeups
 
     def record_said(self, kind: str, text: str, route: str) -> None:
         activity.record_said(self.said_path, kind, text, route)
@@ -368,7 +433,8 @@ class Server:
                 self.log(f"/ask got no words: {len(raw)} bytes, {raw[:120]!r}")
                 # Silence in the Shortcut's loop means he's done: end it rather than ask again and again.
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
-            if fastpath.DISMISS.match(text):  # "you're good to go": the Shortcut stops listening
+            ringing = self.wakeups is not None and self.wakeups.ringing()  # then "okay" means "I'm up"
+            if fastpath.DISMISS.match(text) and not ringing:  # "you're good to go": the Shortcut stops listening
                 return JSONResponse({"reply": "Going to sleep.", "action": "sleep"})
 
             try:
@@ -378,6 +444,12 @@ class Server:
                 result = {"reply": "Something went wrong on my end.", "action": ""}
             self.log(f"iPhone: {text[:50]!r} → {result.get('action') or 'reply'}")
             return JSONResponse(result)
+
+        async def phone_done(body: dict) -> dict[str, Any]:
+            """The Shortcut, right after Create Alarm: proof its alarm step exists (Phone.alarms_work)."""
+            self.phone.confirmed(str(body.get("action", "")))
+            self.log(f"iPhone confirmed: {body.get('action', '?')}")
+            return {"ok": True}
 
         async def health(_request: Request) -> JSONResponse:
             mac = all(self.hub.reachable(n.name) for n in self.cfg.nodes if n.where == "mac")
@@ -413,6 +485,7 @@ class Server:
             Route("/live/pin", mine(self.live_pin), methods=["POST"]),
             Route("/live/gate", mine(self.live_gate), methods=["POST"]),
             Route("/live/sleep", mine(self.live_sleep), methods=["POST"]),
+            Route("/phone/done", mine(phone_done), methods=["POST"]),
         ]
         return Starlette(routes=routes)
 
@@ -491,6 +564,9 @@ class Server:
 
     async def button_pressed(self, data: str) -> str:
         """A tap on a Telegram button under a nudge. "Took them" logs what the last supplement nudge listed."""
+        if data == "wake:up":
+            stopped = await self.wakeups.stop("the Telegram button") if self.wakeups else ""
+            return stopped or "That alarm is already off."
         pending = self.state.get("supp_pending") or {}
         if data == "supp:skip":
             self.state["supp_pending"] = {}
@@ -714,6 +790,9 @@ class Server:
         if not self.reminders:
             return
         for reminder, late in self.reminders.take_due(now):
+            if self.wakeups and wakeup.owns(reminder):
+                await self.wakeups.start(reminder, late, now)
+                continue
             if reminder.action:
                 await self.run_scheduled(reminder, late)
                 continue
@@ -722,6 +801,8 @@ class Server:
             # Telegram always: the phone keeps it, and he may not be at the awake Mac. Spoken too when it can be.
             await self.herald.deliver(f"⏰ {reminder.title}{note}", spoken, now, telegram_too=True, kind="reminder")
             self.log(f"Reminder sent: {reminder.title}")
+        if self.wakeups:
+            await self.wakeups.tick(now)  # the next ring of one that's going, or its end
 
     async def run_scheduled(self, reminder, late: bool) -> None:
         """A timed action ("turn off the lamp in 5 minutes"): run it, then say on Telegram how it went. Never
@@ -884,7 +965,7 @@ async def serve(log=print) -> None:
         log(f"Server clock was not on Jashan's time: using {zone.key} for local times")
     cfg = config.load()
     store = Store(cfg.data_dir / "sommus.db")
-    phone = Phone(zone)
+    phone = Phone(zone, state=cfg.data_dir / "phone.json")
     settings = config.deploy()
     waits = config.section("mac_queue")
     later = Later(cfg.data_dir / "mac_queue.json", waits.get("tools", []), cfg.pin_tools, waits.get("hours", 24))
@@ -893,8 +974,11 @@ async def serve(log=print) -> None:
 
         reminders = Reminders(cfg.data_dir / "reminders.json")
         contacts = ContactBook(cfg.data_dir / "contacts.txt")
+        wakeups = wakeup.WakeUps(reminders, hub, cfg.data_dir, config.section("wakeup"), cfg.user,
+                                 phone_alarm=phone.backup_alarm)  # fmt: skip
         await hub.add("phone", Client(phone.node()))
         await hub.add("reminders", Client(reminders.node()))
+        await hub.add("wakeup", Client(wakeups.node()))
         await hub.add("contacts", Client(contacts.node()))
         from sommus import calendars
 
@@ -904,7 +988,7 @@ async def serve(log=print) -> None:
             await hub.add("calendar", Client(calendar.node()))
         for name, why in hub.unreachable.items():
             log(f"Node '{name}': {why}")
-        server = Server(cfg, hub, store, phone, log, reminders, contacts, calendar)
+        server = Server(cfg, hub, store, phone, log, reminders, contacts, calendar, wakeups)
         tasks = [asyncio.create_task(server.scheduler()), asyncio.create_task(server.vault_sync())]
         # SOMMUS_TELEGRAM=off: a test run while a Mac session still polls the bot (two pollers break both).
         if os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("SOMMUS_TELEGRAM") != "off":
