@@ -22,7 +22,19 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.types import Image
 from mcp.types import ToolAnnotations
 
-from sommus.nodes.laptop import apps, bluetooth_plug, browser, files, macos, messages, pdf, speak, terminal, windows
+from sommus.nodes.laptop import (
+    apps,
+    bluetooth_plug,
+    browser,
+    files,
+    macos,
+    messages,
+    pdf,
+    screen,
+    speak,
+    terminal,
+    windows,
+)
 
 READ = ToolAnnotations(read_only_hint=True)
 REVERSIBLE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
@@ -604,6 +616,68 @@ def click(x: int, y: int, double: bool = False) -> str:
     """
     at = macos.click(x, y, double)
     return f"{'Double-clicked' if double else 'Clicked'} at {at[0]}, {at[1]}."
+
+
+# ---------------------------------------------------------------- screen-aware reading and acting (screen.py)
+# Read the screen as text, then act on what is there, then read back: cheaper and surer than a screenshot.
+# Tiers match screenshot/click/type_text; config.toml PIN-gates all four, and the brain treats their output as
+# outside content (UNTRUSTED_TOOLS).
+
+
+@tool(READ)
+def read_screen(app: str = "", max_lines: int = 80) -> str:
+    """See what's on screen as text: the app and window in front, the focused field (its label, what it
+    holds, whether it's editable) and the window's visible text, each line with its centre in screen points.
+    Use this before clicking or typing, instead of a screenshot (far fewer tokens).
+
+    Args:
+        app: Optional app to bring to the front first, e.g. "Google Chrome".
+        max_lines: How many lines of text to return at most (default 80).
+    """
+    return screen.read_screen(app, max_lines)
+
+
+@tool(READ)
+def find_on_screen(text: str, scope: Literal["window", "screen"] = "window", limit: int = 5) -> str:
+    """Find where some words are on screen (buttons, links, labels, any visible text), best match first, with
+    each one's centre in screen points. Use it to check a thing is there before clicking it.
+
+    Args:
+        text: The words to find, e.g. "Submit", "Sign in", "Due date".
+        scope: "window" searches the front window (default); "screen" searches every display.
+        limit: How many matches to list (default 5).
+    """
+    return screen.find_on_screen(text, scope, limit)
+
+
+@tool(REVERSIBLE)
+def click_text(text: str, which: int = 0, double: bool = False, app: str = "") -> str:
+    """Click a button, link or any visible text in the front window by its words. Refuses when the words
+    appear in several places and says where; then pass `which` (the number from that list or find_on_screen).
+
+    Args:
+        text: The visible words to click, e.g. "Submit", "Reply all".
+        which: Optional 1-based number of the match to click, when there are several.
+        double: True for a double-click.
+        app: Optional app to bring to the front first.
+    """
+    return screen.click_text(text, which, double, app)
+
+
+@tool(REVERSIBLE)
+def type_into(text: str, field: str = "", replace: bool = False, press_return: bool = False, app: str = "") -> str:
+    """Type into a text field and read the field back to confirm what it now holds. Prefer this to type_text
+    for forms, search boxes and chat boxes.
+
+    Args:
+        text: The literal text to type.
+        field: The field's label, placeholder or the words next to it, e.g. "Email", "Search". Omit to type into
+            the field that already has the focus (it must be editable, or nothing is typed).
+        replace: True to replace the field's current text instead of adding to it.
+        press_return: True to press Return after typing (submits the form or sends the message).
+        app: App to bring to the front first, e.g. "Google Chrome". Recommended.
+    """
+    return screen.type_into(text, field, replace, press_return, app)
 
 
 @tool(READ)

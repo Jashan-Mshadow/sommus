@@ -120,6 +120,8 @@ pin_tools = [
     "run_shell", "type_text", "press_keys", "click", "screenshot",
     # window titles and Terminal: listing shows what's open, the rest types and runs commands like run_shell
     "list_windows", "list_terminal_tabs", "read_terminal", "send_to_terminal", "open_terminal", "close_terminal_tab",
+    # screen-aware: what they read is as personal as a screenshot, what they do as a click or typing
+    "read_screen", "find_on_screen", "click_text", "type_into",
 ]
 
 [mac_queue]

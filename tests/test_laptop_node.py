@@ -74,6 +74,11 @@ EXPECTED_TIERS = {
     "send_to_terminal": "destructive",
     "open_terminal": "destructive",
     "close_terminal_tab": "destructive",
+    # screen-aware (screen.py)
+    "read_screen": "read",
+    "find_on_screen": "read",
+    "click_text": "reversible",
+    "type_into": "reversible",
 }
 
 

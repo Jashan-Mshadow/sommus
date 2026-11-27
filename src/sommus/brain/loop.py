@@ -58,6 +58,7 @@ UNTRUSTED_TOOLS = {
     "read_email", "search_email", "read_browser_tab", "list_page_links", "list_embedded_files", "web_search",
     "read_pdf", "read_file", "get_clipboard", "screenshot", "ask_gemini", "ask_gpt", "ask_claude", "read_messages",
     "read_terminal",
+    "read_screen", "find_on_screen", "click_text", "type_into",  # all four return text read off the screen
 }  # fmt: skip
 SEND_WORDS = {
     "send", "reply", "respond", "answer", "email", "mail", "text", "message", "tell", "forward", "write", "dm",

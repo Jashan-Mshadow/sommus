@@ -25,6 +25,7 @@ dependencies = [
     "onnxruntime>=1.30.0; sys_platform == 'darwin'",
     "prompt-toolkit>=3.0.53",
     "pymupdf>=1.28.2; sys_platform == 'darwin'",
+    "pyobjc-framework-applicationservices>=12.2.2,<13 ; sys_platform == 'darwin'",
     "pyobjc-framework-avfoundation>=12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-cocoa>=12.2.2; sys_platform == 'darwin'",
     "pyobjc-framework-quartz>=12.2.2; sys_platform == 'darwin'",
