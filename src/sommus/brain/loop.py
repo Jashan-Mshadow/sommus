@@ -57,6 +57,7 @@ LIVE_SECONDS = 240  # a turn this soon after the last one is a conversation: its
 UNTRUSTED_TOOLS = {
     "read_email", "search_email", "read_browser_tab", "list_page_links", "list_embedded_files", "web_search",
     "read_pdf", "read_file", "get_clipboard", "screenshot", "ask_gemini", "ask_gpt", "ask_claude", "read_messages",
+    "read_terminal",
 }  # fmt: skip
 SEND_WORDS = {
     "send", "reply", "respond", "answer", "email", "mail", "text", "message", "tell", "forward", "write", "dm",
@@ -75,14 +76,20 @@ def asked_for(request: str, wanted: set[str]) -> bool:
     )
 
 
+SHELL_WORDS = {
+    "run", "shell", "command", "terminal", "install", "uninstall", "script", "execute", "git", "brew", "npm",
+    "pip", "unzip", "zip", "move", "copy", "delete", "remove", "rename", "convert", "compile", "build", "download",
+    "save", "file", "files", "folder", "clean", "update",
+}  # fmt: skip
+# Typing into a Terminal tab: the shell's words plus the ones for answering or stopping what runs there.
+TERMINAL_WORDS = SHELL_WORDS | {
+    "send", "type", "press", "enter", "stop", "cancel", "interrupt", "ctrl", "control", "quit", "exit", "restart",
+    "kill", "start", "launch", "server",
+}  # fmt: skip
 PLUG_WORDS = {"turn", "switch", "on", "off", "fan", "lamp", "light", "lights", "plug", "power", "start", "stop"}
 OUTWARD_TOOLS = {
     "send_email": SEND_WORDS, "reply_to_email": SEND_WORDS, "send_message": SEND_WORDS, "compose_email": SEND_WORDS,
-    "run_shell": {
-        "run", "shell", "command", "terminal", "install", "uninstall", "script", "execute", "git", "brew", "npm",
-        "pip", "unzip", "zip", "move", "copy", "delete", "remove", "rename", "convert", "compile", "build", "download",
-        "save", "file", "files", "folder", "clean", "update",
-    },
+    "run_shell": SHELL_WORDS, "send_to_terminal": TERMINAL_WORDS, "open_terminal": TERMINAL_WORDS,
     "plug_on": PLUG_WORDS, "plug_off": PLUG_WORDS,
     "ask_claude": {
         "calendar", "event", "events", "schedule", "drive", "notion", "goodnotes", "claude", "add", "book", "move",

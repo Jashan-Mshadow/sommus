@@ -237,6 +237,8 @@ def match(
 
     if found := reminder(text):
         return found
+    if found := _tab_command(tokens):
+        return found
     if apps and (found := _app_command(tokens, apps)):
         return found
     if (
@@ -652,6 +654,74 @@ def _app_command(tokens: list[str], apps: Callable[[], dict[str, str]]) -> Match
     if tokens[lead] in OPEN_VERBS:
         return Match("open_app", "open_app", {"name": name}, phrase=lambda _: f"Opening {name}.")
     return Match("quit_app", "quit_app", {"name": name})
+
+
+# ---------------------------------------------------------------- Chrome tabs
+# "close this tab", "close the YouTube tab", "close all my YouTube tabs", "switch to my Gmail tab". The site's name is
+# the one open slot, like an app's name above: at most three plain words, none of them filler or a word that makes
+# it some other request ("a new tab", "the next tab", "the other tabs"). Anything more goes to the model.
+TAB_CLOSE = {"close", "shut"}
+TAB_FOCUS = {"switch", "go", "jump", "head", "open", "show", "bring", "focus"}
+TAB_LEAD = {"over", "back", "to", "me", "up", "on"}  # "switch over to", "go back to", "show me", "bring up"
+TAB_ALL = {"all", "every"}
+TAB_THIS = {"this", "that", "current"}
+TAB_TAIL = {"please", "pls", "now", "for", "me"}
+TAB_NOT_A_NAME = {
+    "new", "another", "blank", "empty", "incognito", "private", "next", "previous", "last", "other", "others",
+    "first", "second", "third", "old", "recent", "same", "these", "those", "them", "some", "few", "both", "two",
+    "three", "four", "five", "back", "each", "any", "extra", "duplicate", "duplicates", "open", "opened", "in",
+    "with", "from", "except", "but", "tab", "tabs", "window", "windows", "browser", "of", "on", "this", "that",
+}  # fmt: skip
+
+
+def _tab_command(tokens: list[str]) -> Match | None:
+    lead = 0
+    while lead < len(tokens) and tokens[lead] in FILLER and tokens[lead] not in TAB_CLOSE | TAB_FOCUS:
+        lead += 1
+    if lead >= len(tokens) or tokens[lead] not in TAB_CLOSE | TAB_FOCUS:
+        return None
+    verb, rest = tokens[lead], tokens[lead + 1 :]
+    while rest and rest[-1] in TAB_TAIL:
+        rest = rest[:-1]
+    if not rest or rest[-1] not in {"tab", "tabs"}:
+        return None
+    plural, body = rest[-1] == "tabs", rest[:-1]
+    if verb in TAB_FOCUS:
+        while body and body[0] in TAB_LEAD:
+            body = body[1:]
+    every = False
+    while body and body[0] in TAB_ALL | {"the", "my", "of"}:
+        every = every or body[0] in TAB_ALL
+        body = body[1:]
+    this = bool(body) and body[0] in TAB_THIS
+    body = body[1:] if this else body
+    if body == ["chrome"]:
+        body = []  # "close the chrome tab": the one in front
+    if len(body) > 3 or any(not t.isalpha() or t in FILLER or t in TAB_NOT_A_NAME for t in body):
+        return None
+    name = " ".join(body)
+    if verb in TAB_FOCUS:
+        if not name or plural or every or this:
+            return None
+        return Match("tab_focus", "focus_browser_tab", {"tab": name}, phrase=lambda _: f"Switched to {name.title()}.")
+    if not name:
+        if plural or every:
+            return None  # "close all tabs": too much to do without the model
+        return Match("tab_close", "close_browser_tabs", {"tabs": ["current"]}, phrase=lambda _: "Tab closed.")
+    many = plural or every
+    return Match(
+        "tab_close",
+        "close_browser_tabs",
+        {"tabs": [name], "all_matching": many},
+        phrase=lambda result: say_closed(result, name),
+    )
+
+
+def say_closed(result: str, name: str) -> str:
+    """'Closed 3 tabs: ...' -> 'Closed 3 Youtube tabs.' The titles aren't read out."""
+    found = re.match(r"Closed (\d+) tab", result)
+    count = int(found.group(1)) if found else 1
+    return f"Closed the {name.title()} tab." if count == 1 else f"Closed {count} {name.title()} tabs."
 
 
 def app_key(name: str) -> str:

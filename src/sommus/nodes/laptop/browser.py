@@ -29,9 +29,15 @@ class Tab:
     index: int
     title: str
     url: str
+    active: bool = False  # the tab showing in its window
 
     def __str__(self) -> str:
-        return f"[{self.window}.{self.index}] {self.title} — {self.url}"
+        shown = (" [in front]" if self.window == 1 else " [showing]") if self.active else ""
+        return f"[{self.window}.{self.index}] {self.title} — {self.url}{shown}"
+
+
+# "close this tab", "close that tab" (the one just opened is the one showing): the front window's active tab.
+CURRENT = {"current", "this", "that", "active", "front", "this tab", "that tab", "current tab", "the current tab"}
 
 
 def _require_browser() -> None:
@@ -65,27 +71,43 @@ def list_tabs() -> list[Tab]:
         urls = _script(
             f'set AppleScript\'s text item delimiters to "{SEPARATOR}"\nget URL of tabs of window {window} as text'
         )
+        try:
+            active = int(_script(f"get active tab index of window {window}") or 0)
+        except (ActionError, ValueError):
+            active = 0
         for index, (title, url) in enumerate(zip(titles.split(SEPARATOR), urls.split(SEPARATOR), strict=False), 1):
-            tabs.append(Tab(window, index, title.strip(), url.strip()))
+            tabs.append(Tab(window, index, title.strip(), url.strip(), index == active))
     return tabs
 
 
+def matching_tabs(query: str, tabs: list[Tab]) -> list[Tab]:
+    """Every tab a query names: one for a number or "current", all whose title or URL holds the text otherwise."""
+    wanted = query.strip().casefold()
+    if wanted in CURRENT:
+        return [t for t in tabs if t.window == 1 and t.active][:1]
+    if re.fullmatch(r"\d+\.\d+", wanted):
+        window, index = (int(part) for part in wanted.split("."))
+        return [t for t in tabs if t.window == window and t.index == index]
+    if wanted.isdigit():
+        return [t for t in tabs if t.index == int(wanted) and t.window == 1]
+    return [t for t in tabs if wanted in t.title.casefold() or wanted in t.url.casefold()]
+
+
 def find_tab(query: str) -> Tab:
-    """Match a tab by number ("2"), "window.index" ("1.3"), or text in its title or URL."""
-    tabs = list_tabs()
+    """Match a tab by number ("2"), "window.index" ("1.3"), "current" (the one in front), or text in its title
+    or URL (the first such tab)."""
+    return find_tabs(query)[0]
+
+
+def find_tabs(query: str, tabs: list[Tab] | None = None) -> list[Tab]:
+    tabs = list_tabs() if tabs is None else tabs
     if not tabs:
         raise ActionError(f"{BROWSER} has no open tabs.")
-    if re.fullmatch(r"\d+\.\d+", query):
-        window, index = (int(part) for part in query.split("."))
-        found = [t for t in tabs if t.window == window and t.index == index]
-    elif query.isdigit():
-        found = [t for t in tabs if t.index == int(query) and t.window == 1]
-    else:
-        needle = query.casefold()
-        found = [t for t in tabs if needle in t.title.casefold() or needle in t.url.casefold()]
+    found = matching_tabs(query, tabs)
     if not found:
-        raise ActionError(f"No tab matching '{query}'. Open tabs:\n" + "\n".join(str(t) for t in tabs))
-    return found[0]
+        # Not the titles themselves: listing tabs waits for the PIN, and a failed close mustn't read them out.
+        raise ActionError(f"No tab matching '{query}'.\n{len(tabs)} tabs are open; list_browser_tabs shows them.")
+    return found
 
 
 def read_tab(query: str) -> tuple[Tab, str]:
@@ -277,13 +299,16 @@ def save_tab(query: str, folder: str = "~/Downloads", wait_seconds: float = 20) 
     )
 
 
-def close_tabs(queries: list[str]) -> list[Tab]:
+def close_tabs(queries: list[str], all_matching: bool = False) -> list[Tab]:
     """Close several tabs at once. Every query is matched first, then tabs close from the highest index
-    down, so closing one doesn't renumber the ones still to go."""
+    down, so closing one doesn't renumber the ones still to go. `all_matching`: text closes every tab it
+    matches ("close all my YouTube tabs"), not only the first."""
     chosen: dict[tuple[int, int], Tab] = {}
+    tabs = list_tabs()
     for query in queries:
-        found = find_tab(query)
-        chosen[(found.window, found.index)] = found
+        found = find_tabs(query, tabs)
+        for tab in found if all_matching else found[:1]:
+            chosen[(tab.window, tab.index)] = tab
     if not chosen:
         raise ActionError("No tabs named to close.")
     for window, index in sorted(chosen, reverse=True):

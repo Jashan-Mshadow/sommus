@@ -63,18 +63,23 @@ VOICES = {
     "Sadaltager": "knowledgeable", "Sulafat": "warm",
 }  # fmt: skip
 # Quick, non-personal tools Gemini calls itself. Everything else goes through ask_sommus.
+# Tabs and windows since 2026-11-26: with no tool for them Gemini told him "I cannot close browser tabs or control
+# window full screening" (voice.log 20:53) and never asked Sommus, which could.
 DIRECT_TOOLS = (
     "get_battery", "get_volume", "set_volume", "set_mute", "get_brightness", "set_brightness", "media_control",
     "get_now_playing", "open_app", "quit_app", "list_apps", "open_url", "lock_screen", "sleep_display", "get_wifi",
     "plug_on", "plug_off", "plug_status", "ble_plug_on", "ble_plug_off", "ble_plug_status",  # the fan
+    "close_browser_tabs", "focus_browser_tab",  # Chrome tabs by name or "current": no titles read out
+    "snap_window", "move_window", "move_window_to_display", "minimize_window", "hide_app", "arrange_side_by_side",
 )  # fmt: skip
 ASK_SOMMUS = {
     "name": "ask_sommus",
     "description": (
         "Hand a request to Sommus's main brain, which reaches Jashan's email, messages, calendar, classes and "
-        "rooms, deadlines, to-do list, notes, reminders, contacts, files, Chrome tabs, the web and the shell, "
-        "and remembers facts about him. Use it for anything personal, anything current, and anything you have no "
-        "tool for. It returns a short answer; say it in your own words."
+        "rooms, deadlines, to-do list, notes, reminders, contacts, files, what's in his Chrome tabs, Terminal tabs "
+        "(read, type into, open, close), the web and the shell, and remembers facts about him. Use it for anything "
+        "personal, anything current, and anything on the Mac you have no tool for: never tell him something can't "
+        "be done before asking it. It returns a short answer; say it in your own words."
     ),
     "parameters_json_schema": {
         "type": "object",
@@ -185,8 +190,13 @@ own material ("my notes", "my course notes", "section 1.7", "the lecture", "my s
 first so the answer follows what his course actually says, then explain it in your own words.
 
 Tools: use your Mac tools for volume, brightness, music, apps and the screen, then say the result in a few
-words. For anything about his life or accounts — classes, schedule, deadlines, to-do list, email, messages,
-notes, reminders, contacts, files, browser tabs — or anything current (weather, news, the time somewhere),
+words. Chrome tabs: close_browser_tabs with "current" for "this tab" / "that tab" (the one just opened), or the
+site's name ("YouTube"; all_matching for "all my YouTube tabs"); focus_browser_tab to switch to one. Windows:
+snap_window (left, right, maximize — what "full screen it" usually means —, center), arrange_side_by_side,
+move_window_to_display, minimize_window, hide_app. Do several steps in a row when he asks for them in one go.
+For anything about his life or accounts — classes, schedule, deadlines, to-do list, email, messages,
+notes, reminders, contacts, files, what's in his tabs, Terminal — or anything current (weather, news, the time
+somewhere), or anything on the Mac you have no tool for,
 call ask_sommus with his request in his words plus any context from the conversation. Don't announce quick
 actions; only before a lookup that takes a while (calendar, email, the web) say something short, and when the
 result arrives always say it: a holding line is never the whole reply. ask_sommus
